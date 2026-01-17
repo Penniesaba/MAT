@@ -1,0 +1,25 @@
+[project]
+name = "detection"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "black>=25.9.0",
+    "docker>=7.1.0",
+    "freezegun>=1.5.5",
+    "pytest>=8.4.2",
+]
+
+[project.scripts]
+mcptox-benchmark = "examples.benchmarks.mcptox.run_mcptox_benchmark:main"
+
+[tool.uv]
+package = true
+
+[tool.setuptools]
+packages = ["detection", "examples"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"

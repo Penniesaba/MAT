@@ -1,0 +1,6 @@
+# Pipeline feature flags and default profiles.
+# profile:
+#   enabled_pipelines:
+#     - static
+#   options:
+#     policy: hardened

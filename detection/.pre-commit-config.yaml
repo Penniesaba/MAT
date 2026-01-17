@@ -1,0 +1,42 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: debug-statements
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.3.0
+    hooks:
+      - id: codespell
+        args: [--ignore-words=detection/docs/ignore_words.txt]
+        additional_dependencies: []
+  - repo: local
+    hooks:
+      - id: black
+        name: Format Python with Black via uv
+        entry: uv
+        language: system
+        files: ^(detection/|pytest/)
+        types: [python]
+        args:
+          - run
+          - python
+          - -m
+          - black
+      - id: pytest
+        name: Run pytest suite via uv
+        entry: uv
+        language: system
+        pass_filenames: false
+        files: ^(detection/|pytest/|tests/)
+        args:
+          - run
+          - python
+          - -m
+          - pytest
+          - detection/tests

@@ -1,0 +1,311 @@
+# Capability definitions for static detection.
+
+[[capabilities]]
+name = "command_exec"
+description = "Ability to spawn shell commands or subprocesses."
+weight = 25.0
+base_confidence = 0.4
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "keyword"
+  patterns = [
+    "subprocess.",
+    "os.system(",
+    "os.popen(",
+    "pexpect.spawn(",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "regex"
+  pattern = "subprocess\\.(run|Popen|call)"
+
+  [[capabilities.indicators]]
+  languages = ["typescript", "javascript"]
+  type = "keyword"
+  patterns = [
+    "child_process",
+    "exec(",
+    "spawn(",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["metadata"]
+  type = "keyword"
+  case_sensitive = false
+  patterns = [
+    "exec",
+    "bash",
+    "eval",
+    "shell",
+    "rm -rf",
+    "chmod",
+    "chown",
+  ]
+
+[[capabilities]]
+name = "file_read"
+description = "Ability to read files from the host filesystem."
+weight = 15.0
+base_confidence = 0.35
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "keyword"
+  patterns = [
+    "open(",
+    "pathlib.Path(",
+    "os.listdir(",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "regex"
+  pattern = "open\\([^,]+,\\s*['\"]r"
+
+  [[capabilities.indicators]]
+  languages = ["typescript", "javascript"]
+  type = "keyword"
+  patterns = [
+    "fs.readFile",
+    "fs.readdir",
+    "fs.createReadStream",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["metadata"]
+  type = "keyword"
+  case_sensitive = false
+  patterns = [
+    "~/.ssh",
+    "~/.cursor",
+    "/etc/passwd",
+    "read file",
+    "extract",
+    "steal",
+  ]
+
+[[capabilities]]
+name = "file_write"
+description = "Ability to create or modify files on the host filesystem."
+weight = 15.0
+base_confidence = 0.35
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "keyword"
+  patterns = [
+    "open(",
+    "pathlib.Path(",
+    "os.makedirs(",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "regex"
+  pattern = "open\\([^,]+,\\s*['\"](a|w|wb|ab)"
+
+  [[capabilities.indicators]]
+  languages = ["typescript", "javascript"]
+  type = "keyword"
+  patterns = [
+    "fs.writeFile",
+    "fs.appendFile",
+    "fs.createWriteStream",
+    "fs.mkdir",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["metadata"]
+  type = "keyword"
+  case_sensitive = false
+  patterns = [
+    "overwrite",
+    "write",
+    "append",
+    "modify",
+    "log",
+  ]
+
+[[capabilities]]
+name = "network_outbound"
+description = "Ability to perform outbound network requests."
+weight = 20.0
+base_confidence = 0.4
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "keyword"
+  patterns = [
+    "requests.",
+    "httpx.",
+    "urllib.request",
+    "socket.create_connection",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "regex"
+  pattern = "requests\\.(get|post|put|delete|head)"
+
+  [[capabilities.indicators]]
+  languages = ["typescript", "javascript"]
+  type = "keyword"
+  patterns = [
+    "fetch(",
+    "axios.",
+    "http.request",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["metadata"]
+  type = "keyword"
+  case_sensitive = false
+  patterns = [
+    "http://",
+    "https://",
+    "curl",
+    "post",
+    "upload",
+  ]
+
+[[capabilities]]
+name = "network_inbound"
+description = "Ability to expose inbound servers or listeners."
+weight = 20.0
+base_confidence = 0.35
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "keyword"
+  patterns = [
+    "Flask(",
+    "FastAPI(",
+    "socketserver.",
+    "SimpleXMLRPCServer",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "regex"
+  pattern = "socket\\.bind"
+
+  [[capabilities.indicators]]
+  languages = ["typescript", "javascript"]
+  type = "keyword"
+  patterns = [
+    "express(",
+    "http.createServer",
+    "ws.Server",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["metadata"]
+  type = "keyword"
+  case_sensitive = false
+  patterns = [
+    "listen",
+    "webhook",
+    "callback",
+    "port",
+    "server",
+  ]
+
+[[capabilities]]
+name = "env_access"
+description = "Ability to read environment variables or sensitive configuration."
+weight = 10.0
+base_confidence = 0.3
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "keyword"
+  patterns = [
+    "os.environ",
+    "dotenv",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["typescript", "javascript"]
+  type = "keyword"
+  patterns = [
+    "process.env",
+    "dotenv",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["metadata"]
+  type = "keyword"
+  case_sensitive = false
+  patterns = [
+    "api key",
+    "environment variable",
+    "secret",
+    "token",
+    "credential",
+  ]
+
+[[capabilities]]
+name = "param_override"
+description = "Instructions that override or ignore user-supplied parameters."
+weight = 12.0
+base_confidence = 0.35
+
+  [[capabilities.indicators]]
+  languages = ["metadata"]
+  type = "keyword"
+  case_sensitive = false
+  patterns = [
+    "override",
+    "force",
+    "must set",
+    "replace",
+    "regardless of user",
+    "always set",
+    "ignore user input",
+  ]
+
+[[capabilities]]
+name = "tool_sequence_hijack"
+description = "Instructions that force unexpected tool call ordering or dependencies."
+weight = 12.0
+base_confidence = 0.35
+
+  [[capabilities.indicators]]
+  languages = ["metadata"]
+  type = "keyword"
+  case_sensitive = false
+  patterns = [
+    "before calling",
+    "must first",
+    "prior to using",
+    "pre-authorization",
+    "always call",
+    "call first",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["metadata"]
+  type = "regex"
+  pattern = "call\\s+[a-z0-9_]+\\s+first"
+  case_sensitive = false
+
+[[capabilities]]
+name = "prompt_injection"
+description = "Instructions that tell the assistant to ignore the user or follow attacker-provided prompts."
+weight = 18.0
+base_confidence = 0.4
+
+  [[capabilities.indicators]]
+  languages = ["metadata"]
+  type = "keyword"
+  case_sensitive = false
+  patterns = [
+    "ignore the user",
+    "priority higher than",
+    "do not follow",
+    "follow the instructions below",
+    "this description's priority",
+    "disregard the user's",
+  ]

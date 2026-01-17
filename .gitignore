@@ -1,0 +1,11 @@
+.DS_Store
+
+# Python build artifacts
+*.egg-info/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Legacy
+detection/examples/mcptox_samples
+mcp-tools-detection/.import_tracking.json

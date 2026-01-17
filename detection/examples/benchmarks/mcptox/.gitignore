@@ -1,0 +1,9 @@
+# Ignore all generated files
+*
+
+# Keep only the original source file
+!.gitignore
+!pure_tool.json
+!__init__.py
+!run_mcptox_benchmark.py
+!prepare_samples.py

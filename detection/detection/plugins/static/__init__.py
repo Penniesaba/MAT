@@ -1,0 +1,1 @@
+"""Static analysis plugin namespace."""

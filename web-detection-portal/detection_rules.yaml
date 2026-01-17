@@ -1,0 +1,39 @@
+suspicious_keywords:
+  file_access:
+    - "~/.ssh"
+    - "~/.cursor"
+    - "/etc/passwd"
+    - "read file"
+    - "config"
+    - "credentials"
+    - "password"
+    - "secret"
+    - ".env"
+  network:
+    - "http://"
+    - "https://"
+    - "curl"
+    - "POST"
+    - "GET"
+    - "request"
+    - "fetch"
+    - "download"
+    - "exfiltrate"
+  execution:
+    - "exec"
+    - "eval"
+    - "bash"
+    - "sh"
+    - "system"
+    - "subprocess"
+    - "command"
+    - "shell"
+
+risk_scoring:
+  file_access: 15
+  network: 10
+  execution: 20
+
+threshold:
+  block: 30
+  warn: 15

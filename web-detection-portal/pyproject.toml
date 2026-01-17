@@ -1,0 +1,38 @@
+[project]
+name = "mcp-tools-detection"
+version = "0.1.0"
+description = "MCP Tool Detection System - Web application for detecting malicious patterns in Model Context Protocol tool descriptions"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+keywords = ["mcp", "security", "detection", "tool-poisoning", "llm"]
+
+dependencies = [
+    "flask>=3.0.0",
+    "pyyaml>=6.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+database = [
+    "sqlalchemy>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/mcp-tools-detection"
+Documentation = "https://github.com/yourusername/mcp-tools-detection#readme"
+Repository = "https://github.com/yourusername/mcp-tools-detection"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311", "py312"]

@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  mcp-sandbox:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mcp-security-sandbox:latest
+    container_name: mcp-dynamic-analyzer
+
+    # Privileged mode required for eBPF
+    privileged: true
+
+    # Additional capabilities for eBPF
+    cap_add:
+      - SYS_ADMIN
+      - SYS_RESOURCE
+      - SYS_PTRACE
+      - NET_ADMIN
+
+    # Security options
+    security_opt:
+      - apparmor:unconfined
+
+    # Resource limits to prevent fork bombs
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+          pids: 512
+
+    # Mount points
+    volumes:
+      # Target code to analyze (read-only)
+      - ${TARGET_PATH:-./target}:/target:ro
+      # Log output directory (read-write)
+      - ${LOG_PATH:-./logs}:/logs:rw
+      # BPF filesystem (required for eBPF)
+      - /sys/kernel/debug:/sys/kernel/debug:ro
+      - /sys/kernel/tracing:/sys/kernel/tracing:ro
+      - /sys/fs/bpf:/sys/fs/bpf:rw
+
+    # Environment variables
+    environment:
+      - MONITOR_TIMEOUT=${MONITOR_TIMEOUT:-30}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CEF_VERSION=0
+      - DEVICE_VENDOR=MCP-Security
+      - DEVICE_PRODUCT=Dynamic-Detector
+      - DEVICE_VERSION=1.0
+
+    # Network isolation
+    networks:
+      - isolated_net
+
+    # DNS settings (block external DNS for safety)
+    dns:
+      - 127.0.0.1
+
+networks:
+  isolated_net:
+    driver: bridge
+    internal: false  # Set to true for complete network isolation
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
