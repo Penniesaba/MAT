@@ -35,6 +35,9 @@ uv venv
 
 # Install dependencies
 uv sync
+
+# Initialize Vulnerable Lab Submodule (Optional)
+git submodule update --init --recursive
 ```
 
 ### Basic Usage
@@ -51,6 +54,14 @@ uv run python detection/cli.py ./my-mcp-server \
   --format json \
   --rules detection/rules/keywords.toml \
   --policy-dir detection/mitigation/policy_templates
+
+# Run dynamic analysis (Docker required)
+# 1. Build the sandbox image (first time only)
+docker build -t mcp-security-sandbox:latest sandbox
+
+# 2. Analyze a target (e.g., from the vulnerable lab)
+uv run python detection/cli.py examples/vulnerable-mcp-servers-lab/vulnerable-mcp-server-malicious-code-exec \
+  --pipeline dynamic
 ```
 
 ### Example Output
@@ -111,27 +122,25 @@ The framework identifies **9 capability types** across two categories:
 
 The framework was validated against the **MCPTox dataset** - 493 malicious tool descriptions from academic research (paper: `Model_Context_Protocol_Security.pdf`).
 
-### Detection Coverage by Attack Category
+### Detection Coverage by Capability
 
-| Attack Category | Samples | Detected | Coverage | Status |
-|-----------------|---------|----------|----------|--------|
-| Code Injection | 24 | 23 | **96%** | ✅ Excellent |
-| Instruction Tampering | 21 | 19 | **90%** | ✅ Excellent |
-| Service Disruption | 74 | 63 | **85%** | ✅ Strong |
-| Credential Leakage | 40 | 31 | **78%** | ✅ Strong |
-| Financial Loss | 21 | 16 | **76%** | ✅ Good |
-| Information Manipulation | 111 | 84 | **76%** | ✅ Good |
-| Privacy Leakage | 97 | 69 | **71%** | ✅ Good |
-| Message Hijacking | 15 | 10 | **67%** | ⚠️ Moderate |
-| Data Tampering | 45 | 28 | **62%** | ⚠️ Moderate |
-| Infrastructure Damage | 41 | 22 | **54%** | ⚠️ Needs Improvement |
+| Capability | Samples | Detected | Coverage |
+|------------|---------|----------|----------|
+| `command_exec` | 46 | 46 | **100%** |
+| `env_access` | 24 | 24 | **100%** |
+| `file_read` | 43 | 43 | **100%** |
+| `file_write` | 179 | 179 | **100%** |
+| `network_inbound` | 41 | 41 | **100%** |
+| `network_outbound` | 47 | 47 | **100%** |
+| `param_override` | 60 | 60 | **100%** |
+| `prompt_injection` | 87 | 87 | **100%** |
+| `tool_sequence_hijack` | 136 | 136 | **100%** |
 
-**Overall:** 465 of 491 samples detected (94.7% coverage)
+**Overall:** 367 of 491 samples detected (74.7% coverage)
 
 **Key Insights:**
-- **Excellent** detection for syscall-based attacks (command execution, code injection)
-- **Strong** coverage for semantic attacks (90% instruction tampering)
-- **Weakness:** Infrastructure damage patterns (54%) - improvement targeted for Phase 2
+- **Excellent** detection when capability indicators are present (100% strict match).
+- **Coverage Gap:** 124 samples (25.3%) had no explicit capability indicators in the dataset metadata, though some may still be detected by broader rules.
 
 **Benchmark Scripts:**
 - Run benchmark: `uv run mcptox-benchmark`
