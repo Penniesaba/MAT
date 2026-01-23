@@ -1,0 +1,3 @@
+[submodule "detection/examples/vulnerable-mcp-servers-lab"]
+	path = detection/examples/vulnerable-mcp-servers-lab
+	url = https://github.com/appsecco/vulnerable-mcp-servers-lab

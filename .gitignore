@@ -9,3 +9,4 @@ __pycache__/
 # Legacy
 detection/examples/mcptox_samples
 mcp-tools-detection/.import_tracking.json
+detection/logs
