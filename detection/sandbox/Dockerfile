@@ -40,6 +40,11 @@ RUN apt-get update && apt-get install -y \
     psmisc \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Node.js 20.x
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
 # Use system Python 3 and install additional packages
 RUN apt-get update && apt-get install -y \
     python3-pip \
@@ -57,6 +62,7 @@ RUN mkdir -p /target /logs /monitor
 # Copy eBPF monitoring scripts
 COPY monitors/ebpf_monitor.py /monitor/
 COPY monitors/bpf_programs.c /monitor/
+COPY monitors/fuzzer.py /monitor/
 COPY monitors/entrypoint.sh /monitor/
 
 # Make entrypoint executable

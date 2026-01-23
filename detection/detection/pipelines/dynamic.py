@@ -18,38 +18,44 @@ def run_dynamic_pipeline(
     static_result: Optional[DetectionResult] = None,
 ) -> DetectionResult:
     """Run dynamic analysis using Docker sandbox with eBPF monitoring.
-    
+
     Args:
         target_path: Path to MCP tool to analyze
         registry: Detector registry (not used but kept for compatibility)
         sandbox_timeout: Maximum sandbox execution time in seconds
         static_result: Optional static analysis result to merge with
-        
+
     Returns:
         DetectionResult with runtime findings
-        
+
     Raises:
         RuntimeError: If Docker or sandbox is not available
     """
     # Import dynamic analyzer
     from detection.plugins.dynamic import DynamicBehaviorAnalyzer
-    
+
     # Initialize sandbox
     try:
         sandbox = DockerSandboxProvider()
     except RuntimeError as e:
         raise RuntimeError(f"Dynamic analysis unavailable: {e}") from e
-    
+
     # Execute in sandbox
     sandbox_result = sandbox.run(target_path, timeout=sandbox_timeout)
-    
+
+    # Save raw logs
+    logs_dir = Path("logs")
+    logs_dir.mkdir(exist_ok=True)
+    log_file = logs_dir / f"{target_path.name}_events.cef"
+    log_file.write_text(sandbox_result.logs, encoding="utf-8")
+
     # Analyze behavior
     analyzer = DynamicBehaviorAnalyzer()
     findings = analyzer.analyze(sandbox_result.logs, target_path)
-    
+
     # Calculate total score
     total_score = sum(f.confidence * f.score_weight for f in findings)
-    
+
     # Determine risk level
     if total_score >= 70:
         risk_level = "critical"
@@ -59,26 +65,40 @@ def run_dynamic_pipeline(
         risk_level = "medium"
     else:
         risk_level = "low"
-    
+
     # Add telemetry notes
     telemetry = sandbox_result.telemetry
     notes = f"""
 === Dynamic Analysis Telemetry ===
 
-Execution time: {telemetry.get('execution_time', 0):.2f}s
+Execution time: {telemetry.get("execution_time", 0):.2f}s
 Exit code: {sandbox_result.exit_code}
 
-Captured events: {telemetry.get('total_events', 0)}
-  - File operations: {telemetry.get('file_events', 0)}
-  - Network activity: {telemetry.get('network_events', 0)}
-  - Process management: {telemetry.get('process_events', 0)}
+Captured events: {telemetry.get("total_events", 0)}
+  - File operations: {telemetry.get("file_events", 0)}
+  - Network activity: {telemetry.get("network_events", 0)}
+  - Process management: {telemetry.get("process_events", 0)}
+  - Command executions: {telemetry.get("command_executions", 0)}
 """
-    
-    if telemetry.get('sensitive_files'):
+
+    if telemetry.get("executed_commands"):
+        notes += "\n⚠️  Executed Commands:\n"
+        for cmd in telemetry["executed_commands"]:
+            notes += f"  - {cmd}\n"
+
+    if telemetry.get("sensitive_files"):
         notes += "\n⚠️  Sensitive paths accessed:\n"
-        for path in telemetry['sensitive_files'][:5]:
+        for path in telemetry["sensitive_files"][:5]:
             notes += f"  - {path}\n"
-    
+
+    # Add log location
+    notes += f"\nFull logs saved to: {log_file}\n"
+
+    # Add log preview
+    notes += "\n=== Raw Logs Preview (Last 20 lines) ===\n"
+    log_lines = sandbox_result.logs.strip().split("\n")
+    notes += "\n".join(log_lines[-20:])
+
     # Create result
     result = DetectionResult(
         server_name=target_path.name,
@@ -86,13 +106,13 @@ Captured events: {telemetry.get('total_events', 0)}
         total_score=total_score,
         risk_level=risk_level,
         mitigations=[],
-        notes=notes.strip()
+        notes=notes.strip(),
     )
-    
+
     # Merge with static result if provided
     if static_result:
         result = _merge_results(static_result, result)
-    
+
     return result
 
 
@@ -104,26 +124,26 @@ def run_two_stage_pipeline(
     dynamic_timeout: int = 30,
 ) -> DetectionResult:
     """Run two-stage detection: static analysis → dynamic if high-risk.
-    
+
     Args:
         target_path: Path to MCP tool to analyze
         registry: Detector registry with static analyzers
         policy_dir: Directory containing mitigation policy templates
         risk_threshold: Minimum score to trigger dynamic analysis
         dynamic_timeout: Maximum sandbox execution time in seconds
-        
+
     Returns:
         DetectionResult with combined static + dynamic findings
     """
     from detection.pipelines.static import run_static_pipeline
-    
+
     # Stage 1: Static analysis
     static_result = run_static_pipeline(target_path, registry, policy_dir)
-    
+
     # Check if we should run dynamic analysis
     if static_result.total_score < risk_threshold:
         return static_result
-    
+
     # Stage 2: Dynamic analysis
     try:
         dynamic_result = run_dynamic_pipeline(
@@ -138,15 +158,17 @@ def run_two_stage_pipeline(
         return static_result
 
 
-def _merge_results(static: DetectionResult, dynamic: DetectionResult) -> DetectionResult:
+def _merge_results(
+    static: DetectionResult, dynamic: DetectionResult
+) -> DetectionResult:
     """Merge static and dynamic results, combining findings."""
     # Create a map of capabilities
     capability_map = {}
-    
+
     # Add static findings
     for finding in static.findings:
         capability_map[finding.name] = finding
-    
+
     # Merge or add dynamic findings
     for dyn_finding in dynamic.findings:
         if dyn_finding.name in capability_map:
@@ -154,12 +176,13 @@ def _merge_results(static: DetectionResult, dynamic: DetectionResult) -> Detecti
             static_finding = capability_map[dyn_finding.name]
             merged_evidence = list(static_finding.evidence) + list(dyn_finding.evidence)
             merged_sources = set(static_finding.sources) | set(dyn_finding.sources)
-            
+
             # Use higher confidence
             confidence = max(static_finding.confidence, dyn_finding.confidence)
-            
+
             # Create merged finding
             from detection.core.models import CapabilityFinding
+
             capability_map[dyn_finding.name] = CapabilityFinding(
                 name=dyn_finding.name,
                 description=static_finding.description or dyn_finding.description,
@@ -170,11 +193,11 @@ def _merge_results(static: DetectionResult, dynamic: DetectionResult) -> Detecti
             )
         else:
             capability_map[dyn_finding.name] = dyn_finding
-    
+
     # Create merged result
     merged_findings = list(capability_map.values())
     total_score = sum(f.confidence * f.score_weight for f in merged_findings)
-    
+
     # Determine risk level
     if total_score >= 70:
         risk_level = "critical"
@@ -184,7 +207,7 @@ def _merge_results(static: DetectionResult, dynamic: DetectionResult) -> Detecti
         risk_level = "medium"
     else:
         risk_level = "low"
-    
+
     return DetectionResult(
         server_name=static.server_name,
         findings=merged_findings,

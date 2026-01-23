@@ -89,6 +89,12 @@ class DockerSandboxProvider:
             self.client.images.get(self.image)
         except ImageNotFound:
             sandbox_dir = Path(__file__).parent.parent
+            # Check for Dockerfile in project root sandbox directory if not in package
+            if not (sandbox_dir / "Dockerfile").exists():
+                root_sandbox = sandbox_dir.parent.parent / "sandbox"
+                if (root_sandbox / "Dockerfile").exists():
+                    sandbox_dir = root_sandbox
+
             dockerfile_path = sandbox_dir / "Dockerfile"
 
             raise RuntimeError(
@@ -140,7 +146,7 @@ class DockerSandboxProvider:
                     target="/target",
                     source=str(target_mount.absolute()),
                     type="bind",
-                    read_only=True,
+                    read_only=False,
                 ),
                 Mount(
                     target="/logs",
@@ -169,6 +175,20 @@ class DockerSandboxProvider:
                 ),
             ]
 
+            # Mount local monitors directory for development
+            # This allows iterating on scripts without rebuilding the image
+            root_dir = Path(__file__).parent.parent.parent.parent
+            monitors_dir = root_dir / "sandbox" / "monitors"
+            if monitors_dir.exists():
+                mounts.append(
+                    Mount(
+                        target="/monitor",
+                        source=str(monitors_dir.absolute()),
+                        type="bind",
+                        read_only=True,
+                    )
+                )
+
             # Container configuration
             container_config = {
                 "image": self.image,
@@ -179,7 +199,7 @@ class DockerSandboxProvider:
                 },
                 "network_mode": self.network_mode,
                 "detach": True,
-                "remove": True,  # Auto-remove after exit
+                "remove": False,  # Manual remove to capture logs
                 "privileged": True,  # Required for eBPF
                 "cap_add": ["SYS_ADMIN", "SYS_RESOURCE", "SYS_PTRACE", "NET_ADMIN"],
                 "security_opt": ["apparmor:unconfined"],
@@ -188,12 +208,15 @@ class DockerSandboxProvider:
 
             # Run container
             start_time = time.time()
+            container = None
+            container_output = ""
             try:
                 container = self.client.containers.run(**container_config)
 
                 # Wait for container to finish (with timeout + buffer)
                 result = container.wait(timeout=timeout + 10)
                 exit_code = result.get("StatusCode", -1)
+                container_output = container.logs().decode("utf-8", errors="ignore")
 
             except docker.errors.ContainerError as e:
                 return SandboxResult(
@@ -207,16 +230,27 @@ class DockerSandboxProvider:
 
             finally:
                 elapsed = time.time() - start_time
+                if container:
+                    try:
+                        container.remove(force=True)
+                    except:
+                        pass
 
             # Read CEF logs
             cef_log_path = logs_mount / "events.cef"
             if cef_log_path.exists():
-                logs_content = cef_log_path.read_text()
+                cef_content = cef_log_path.read_text()
             else:
-                logs_content = "(No CEF logs generated)"
+                cef_content = "(No CEF logs generated)"
+
+            # Combine logs
+            logs_content = (
+                f"--- Container Output ---\n{container_output}\n\n"
+                f"--- CEF Logs ---\n{cef_content}"
+            )
 
             # Parse telemetry from CEF logs
-            telemetry = self._parse_cef_logs(logs_content)
+            telemetry = self._parse_cef_logs(cef_content)
             telemetry["execution_time"] = elapsed
             telemetry["exit_code"] = exit_code
             telemetry["target_path"] = str(target_path)
@@ -253,6 +287,7 @@ class DockerSandboxProvider:
         file_events = 0
         network_events = 0
         process_events = 0
+        command_executions = 0
         sensitive_paths = set()
         network_destinations = set()
         executed_commands = set()
@@ -292,19 +327,37 @@ class DockerSandboxProvider:
 
             elif "PROC_" in signature_id:
                 process_events += 1
-                # Extract executed commands
-                if "dproc=" in extensions or "cs1=" in extensions:
+                if signature_id == "PROC_EXEC":
+                    command_executions += 1
+                    # Extract executed commands
+                    cmd = None
                     if "dproc=" in extensions:
                         cmd = extensions.split("dproc=")[1].split()[0]
-                    else:
+                    elif "cs1=" in extensions and "cs1Label=Command" in extensions:
                         cmd = extensions.split("cs1=")[1].split()[0]
-                    executed_commands.add(cmd)
+
+                    if cmd:
+                        # Filter infrastructure noise (runtime, build tools, sandbox scripts)
+                        noise_suffixes = [
+                            "/python3",
+                            "/python",
+                            "/node",
+                            "/npm",
+                            "/npx",
+                            "/timeout",
+                            "/chmod",
+                            "/run.sh",
+                            "/entrypoint.sh",
+                        ]
+                        if not any(cmd.endswith(s) for s in noise_suffixes):
+                            executed_commands.add(cmd)
 
         return {
             "total_events": len(lines),
             "file_events": file_events,
             "network_events": network_events,
             "process_events": process_events,
+            "command_executions": command_executions,
             "sensitive_paths": sorted(sensitive_paths),
             "network_destinations": sorted(network_destinations),
             "executed_commands": sorted(executed_commands),
@@ -318,6 +371,13 @@ class DockerSandboxProvider:
         """
         sandbox_dir = Path(__file__).parent.parent
         dockerfile_path = sandbox_dir / "Dockerfile"
+
+        if not dockerfile_path.exists():
+            # Try finding sandbox directory in project root
+            root_sandbox = sandbox_dir.parent.parent / "sandbox"
+            if (root_sandbox / "Dockerfile").exists():
+                sandbox_dir = root_sandbox
+                dockerfile_path = sandbox_dir / "Dockerfile"
 
         if not dockerfile_path.exists():
             raise FileNotFoundError(f"Dockerfile not found at {dockerfile_path}")

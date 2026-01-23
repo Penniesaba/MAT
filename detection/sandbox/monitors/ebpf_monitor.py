@@ -12,12 +12,13 @@ Requirements:
 """
 
 import os
-import sys
-import time
 import socket
 import struct
+import sys
+import time
+from ctypes import c_char, c_uint8, c_uint32, c_uint64
 from datetime import datetime
-from ctypes import c_uint32, c_uint64, c_char, c_uint8
+
 from bcc import BPF
 
 # CEF (Common Event Format) configuration from environment
@@ -58,20 +59,37 @@ SEVERITY_MAP = {
 
 # Sensitive paths for enhanced severity
 SENSITIVE_PATHS = [
-    "/etc/passwd", "/etc/shadow", "/etc/sudoers",
-    "/root/.ssh", "/home/.ssh", "/.aws/credentials",
-    "/.ssh/id_rsa", "/.ssh/id_ed25519", "/.env",
+    "/etc/passwd",
+    "/etc/shadow",
+    "/etc/sudoers",
+    "/root/.ssh",
+    "/home/.ssh",
+    "/.aws/credentials",
+    "/.ssh/id_rsa",
+    "/.ssh/id_ed25519",
+    "/.env",
 ]
 
 # Suspicious commands
 SUSPICIOUS_COMMANDS = [
-    "bash", "sh", "nc", "netcat", "wget", "curl",
-    "python", "perl", "ruby", "php", "chmod", "chown"
+    "bash",
+    "sh",
+    "nc",
+    "netcat",
+    "wget",
+    "curl",
+    "python",
+    "perl",
+    "ruby",
+    "php",
+    "chmod",
+    "chown",
 ]
 
 
 class EventData:
     """Structure matching the BPF event_data struct"""
+
     _fields_ = [
         ("event_type", c_uint32),
         ("pid", c_uint32),
@@ -136,7 +154,8 @@ class eBPFMonitor:
         # Rename process to allow filtering in BPF
         try:
             import ctypes
-            libc = ctypes.cdll.LoadLibrary('libc.so.6')
+
+            libc = ctypes.cdll.LoadLibrary("libc.so.6")
             # PR_SET_NAME = 15
             libc.prctl(15, b"ebpf-monitor", 0, 0, 0)
         except Exception as e:
@@ -174,12 +193,17 @@ class eBPFMonitor:
 
     def _attach_probes(self):
         """Attach eBPF probes to system calls using tracepoints"""
-        print(f"[*] Attaching tracepoints (tracepoints are architecture-independent)", file=sys.stderr)
-        
+        print(
+            f"[*] Attaching tracepoints (tracepoints are architecture-independent)",
+            file=sys.stderr,
+        )
+
         # Tracepoints are already attached via TRACEPOINT_PROBE macros in BPF code
         # No manual attachment needed - BCC handles this automatically
-        
-        print(f"[+] Tracepoints attached automatically via BPF program", file=sys.stderr)
+
+        print(
+            f"[+] Tracepoints attached automatically via BPF program", file=sys.stderr
+        )
 
     def _handle_event(self, cpu, data, size):
         """Handle events from BPF perf buffer"""
@@ -187,7 +211,55 @@ class eBPFMonitor:
 
         event_type = EVENT_TYPES.get(event.event_type, "UNKNOWN")
         comm = event.comm.decode("utf-8", errors="ignore")
+
+        # Filter system noise
+        if comm in [
+            "systemd-udevd",
+            "systemd-journal",
+            "dockerd",
+            "containerd",
+            "systemd",
+        ]:
+            return
+
         path = event.path.decode("utf-8", errors="ignore")
+
+        # Filter path noise for file operations
+        if event_type in ["FILE_OPEN", "FILE_READ", "FILE_WRITE", "FILE_UNLINK"]:
+            # Ignore common system libraries, config files, and runtime noise
+            ignore_prefixes = [
+                "/proc/",
+                "/sys/",
+                "/dev/",
+                "/usr/lib/",
+                "/lib/",
+                "/usr/share/",
+                "/target/node_modules/",
+                "/monitor/",
+            ]
+            ignore_exact = [
+                "/etc/hosts",
+                "/etc/resolv.conf",
+                "/etc/nsswitch.conf",
+                "/etc/gai.conf",
+                "/etc/ld.so.cache",
+                "/etc/localtime",
+                "/target/package.json",
+                "/target/index.js",
+                "/target/run.sh",
+            ]
+
+            # Always allow sensitive paths
+            is_sensitive = any(s in path for s in SENSITIVE_PATHS)
+
+            if not is_sensitive:
+                if path in ignore_exact:
+                    return
+                if any(path.startswith(p) for p in ignore_prefixes):
+                    return
+                if path.endswith(".pyc"):
+                    return
+
         timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
 
         # Build CEF extensions based on event type
@@ -205,7 +277,9 @@ class eBPFMonitor:
             extensions["act"] = event_type.split("_")[1].lower()
 
             if event_type in ["FILE_READ", "FILE_WRITE"]:
-                extensions["bytesIn" if event_type == "FILE_READ" else "bytesOut"] = str(event.size)
+                extensions["bytesIn" if event_type == "FILE_READ" else "bytesOut"] = (
+                    str(event.size)
+                )
 
             if event_type == "FILE_OPEN":
                 extensions["fileType"] = self._guess_file_type(path)
@@ -223,12 +297,14 @@ class eBPFMonitor:
                     extensions["dst"] = f"{ip_str}:{event.port}"
                     extensions["dpt"] = str(event.port)
                     extensions["proto"] = "tcp" if event.addr_family == 2 else "udp"
-                
+
                 extensions["cs1"] = str(event.addr_family)
                 extensions["cs1Label"] = "Family"
 
             elif event_type in ["NET_SEND", "NET_RECV"]:
-                extensions["bytesOut" if event_type == "NET_SEND" else "bytesIn"] = str(event.size)
+                extensions["bytesOut" if event_type == "NET_SEND" else "bytesIn"] = str(
+                    event.size
+                )
                 extensions["fd"] = str(event.fd)
 
             elif event_type == "NET_SOCKET":
@@ -247,9 +323,7 @@ class eBPFMonitor:
 
         # Log to CEF
         self.logger.log_event(
-            event_type,
-            {"name": self._event_name(event_type, extensions)},
-            extensions
+            event_type, {"name": self._event_name(event_type, extensions)}, extensions
         )
 
     def _event_name(self, event_type, extensions):
@@ -288,6 +362,7 @@ class eBPFMonitor:
         """Get username from UID"""
         try:
             import pwd
+
             return pwd.getpwuid(uid).pw_name
         except:
             return str(uid)
@@ -298,9 +373,15 @@ class eBPFMonitor:
             return "unknown"
         ext = path.split(".")[-1].lower()
         type_map = {
-            "py": "python", "js": "javascript", "json": "json",
-            "sh": "shell", "txt": "text", "log": "log",
-            "conf": "config", "yaml": "config", "toml": "config",
+            "py": "python",
+            "js": "javascript",
+            "json": "json",
+            "sh": "shell",
+            "txt": "text",
+            "log": "log",
+            "conf": "config",
+            "yaml": "config",
+            "toml": "config",
         }
         return type_map.get(ext, "unknown")
 
@@ -315,7 +396,10 @@ class eBPFMonitor:
         except KeyboardInterrupt:
             print("\n[!] Interrupted by user", file=sys.stderr)
 
-        print(f"[*] Monitoring complete. Captured {self.logger.event_count} events", file=sys.stderr)
+        print(
+            f"[*] Monitoring complete. Captured {self.logger.event_count} events",
+            file=sys.stderr,
+        )
         self.logger.close()
 
 
