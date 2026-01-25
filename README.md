@@ -27,17 +27,18 @@ graph TD
         C -->|AST & TOML Rules| D(Static Findings)
         
         B --> E[Dynamic Analysis Sandbox]
-        E -->|Docker + eBPF| F(Runtime Telemetry)
+        E -->|Docker + eBPF| F[Syscall Monitor]
+        F -->|Raw CEF Logs| G(Log Parser & Scorer)
         
-        D --> G[Risk Scoring System]
-        F --> G
-        G --> H[JSONL Output Stream]
+        D --> H[Risk Scoring System]
+        G --> H
+        H --> I[JSONL Output Stream]
     end
     
     subgraph "Web Portal (Consumer)"
-        H --> I[Detection Adapter]
-        I --> J[Visualization Dashboard]
-        I --> K[REST API]
+        I --> J[Detection Adapter]
+        J --> K[Visualization Dashboard]
+        J --> L[REST API]
     end
 ```
 
@@ -134,38 +135,107 @@ This script demonstrates the complete lifecycle:
 5.  Executes the malware and captures `execve` syscalls.
 6.  Outputs a comparative risk report.
 
-### 🔬 Lab Case Study: Vulnerable Filesystem Server
+### 🔬 Scanning Vulnerable Servers from the Lab
 
-Let's walk through a concrete example using the **Filesystem Workspace Actions** server (`detection/examples/vulnerable-mcp-servers-lab/vulnerable-mcp-server-filesystem-workspace-actions`), which contains a Path Traversal vulnerability.
+The `vulnerable-mcp-servers-lab` contains multiple intentionally vulnerable MCP servers for testing. Here's how to detect them:
 
-#### Scan for Vulnerabilities (Static Analysis)
-
-Use the detection engine CLI to identify security flaws in the target repository.
-
-> **Note**: Static analysis (default) is optimized for Python targets. For Node.js/Polyglot targets, use `--pipeline dynamic`.
+#### Static Analysis (Python Targets)
 
 ```bash
 cd detection
 
-# Run the CLI scanner against the vulnerable server path
-uv run python -m detection.cli examples/vulnerable-mcp-servers-lab/vulnerable-mcp-server-filesystem-workspace-actions
+# Scan a Python-based vulnerable server
+uv run python -m detection.cli \
+    examples/vulnerable-mcp-servers-lab/vulnerable-mcp-server-filesystem-workspace-actions \
+    --format json \
+    --output output/result.jsonl
 ```
 
-**Expected Output:**
-The tool will analyze the AST and identify dangerous capabilities:
+#### Dynamic Analysis (Node.js / Polyglot Targets)
+
+```bash
+cd detection
+
+# Scan a Node.js server using Docker + eBPF sandbox
+uv run python -m detection.cli \
+    examples/vulnerable-mcp-servers-lab/vulnerable-mcp-server-malicious-code-exec \
+    --pipeline dynamic \
+    --output output/result.jsonl
+```
+
+### 🔗 CLI to Web Portal Integration
+
+The system provides **real-time integration** between the CLI and Web Portal through a watched directory.
+
+#### How It Works
+
 ```text
-REPORT:
-Target: .../vulnerable-mcp-server-filesystem-workspace-actions
-Risk Level: HIGH
+┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│  CLI Scan   │ ──▶ │ detection/output │ ──▶ │   Web Portal    │
+│  --output   │     │   (*.jsonl)      │     │  (auto-import)  │
+└─────────────┘     └──────────────────┘     └─────────────────┘
+                           │
+                           ▼
+                    Auto-delete after
+                       import
+```
 
-Findings:
-[CRITICAL] Command Execution
-  - Evidence: subprocess.Popen(...)
-  - Confidence: 0.95
+#### Step-by-Step Workflow
 
-[HIGH] Arbitrary File Write
-  - Evidence: open(path, 'w')
-  - Confidence: 0.88
+**Terminal 1: Start the Web Portal**
+```bash
+cd web-detection-portal
+uv sync
+uv run python app.py
+
+# Output:
+# 👁  Watching directory: .../detection/output
+#    Patterns: ['*.jsonl', '*.json']
+#    Interval: 5s
+#    Delete after import: True
+# 🚀 Starting mcp-tools-detection server...
+```
+
+**Terminal 2: Run Detection and Output to Watched Directory**
+```bash
+cd detection
+
+# Scan and output to the watched directory
+uv run python -m detection.cli \
+    examples/vulnerable-mcp-servers-lab/vulnerable-mcp-server-filesystem-workspace-actions \
+    --format json \
+    --output output/scan_result.jsonl
+```
+
+**What Happens Automatically:**
+1. CLI writes `scan_result.jsonl` to `detection/output/`.
+2. Web Portal detects the new file within 5 seconds.
+3. Web Portal imports all results and displays them on the dashboard.
+4. Web Portal deletes the file after successful import.
+
+**Terminal 1 Output:**
+```text
+📥 Detected new file: scan_result.jsonl
+   ✓ Imported 1 results
+   ✓ Deleted scan_result.jsonl
+```
+
+#### Configuration Options
+
+Edit `web-detection-portal/config.py` to customize behavior:
+
+```python
+# Enable/disable directory watching
+WATCH_ENABLED = True
+
+# Directory to watch (default: detection/output)
+WATCH_DIRECTORY = Path("...") / "detection" / "output"
+
+# Polling interval in seconds
+WATCH_INTERVAL = 5
+
+# Auto-delete files after import
+DELETE_AFTER_IMPORT = True
 ```
 
 ---
@@ -201,10 +271,44 @@ mcp-tools-detection/
 | Category | Capability | Technology |
 | :--- | :--- | :--- |
 | **Static Code Analysis** | Syntax Tree Traversal, Taint Analysis | Python `ast`, Custom Visitors |
-| **Runtime Monitoring** | Syscall Interception (`exec`, `open`, `net`) | Linux eBPF, BCC |
+| **Runtime Monitoring** | Syscall Interception (`exec`, `open`, `net`) | Linux eBPF, BCC (Outputs CEF Logs) |
 | **Isolation** | Containerization, Network Namespace | Docker |
-| **Risk Scoring** | Weighted Heuristics | Custom Policy Engine |
+| **Risk Scoring** | Weighted Heuristics (Aggregates CEF Events) | Custom Policy Engine |
 | **Vulnerability Types** | RCE, File Access, Network C2, Prompt Injection | Hybrid Detection Rules |
+| **CLI Integration** | File output with `--output`, JSONL format | Direct file write |
+| **Web Integration** | Directory watching, auto-import, auto-delete | Background thread polling |
+
+## 🛠 CLI Reference
+
+```bash
+uv run python -m detection.cli <target> [options]
+```
+
+| Option | Description | Default |
+| :--- | :--- | :--- |
+| `<target>` | Path to MCP server directory | (required) |
+| `--pipeline` | Analysis mode: `static`, `dynamic`, `rag` | `static` |
+| `--format` | Output format: `markdown`, `json` | `markdown` |
+| `--output`, `-o` | Save to file (`.jsonl` for web compatibility) | stdout |
+| `--policy-dir` | Mitigation policy templates directory | `detection/mitigation/policy_templates` |
+| `--rules` | Detection rules file | `detection/rules/keywords.toml` |
+
+**Examples:**
+```bash
+# Quick scan (output to terminal)
+uv run python -m detection.cli path/to/server
+
+# JSON output for programmatic use
+uv run python -m detection.cli path/to/server --format json
+
+# Dynamic analysis with file output
+uv run python -m detection.cli path/to/server --pipeline dynamic -o output/result.jsonl
+
+# Batch scan multiple servers
+for server in examples/vulnerable-mcp-servers-lab/*/; do
+    uv run python -m detection.cli "$server" --format json -o output/batch.jsonl
+done
+```
 
 ## 🔗 Documentation
 
