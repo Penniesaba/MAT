@@ -3,12 +3,53 @@
 from __future__ import annotations
 
 import re
+import socket
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
 
 from detection.core.models import CapabilityFinding, EvidenceSource
 from detection.core.registry import DetectorRegistry
+
+
+@lru_cache(maxsize=256)
+def reverse_dns_lookup(ip: str) -> Optional[str]:
+    """Perform reverse DNS lookup on an IP address.
+
+    Args:
+        ip: IP address string (e.g., "104.16.11.34")
+
+    Returns:
+        Domain name if found, None otherwise
+    """
+    try:
+        hostname, _, _ = socket.gethostbyaddr(ip)
+        return hostname
+    except (socket.herror, socket.gaierror, OSError):
+        return None
+
+
+def format_network_destination(dst: str) -> str:
+    """Format network destination with domain name if available.
+
+    Args:
+        dst: Destination in "IP:port" format
+
+    Returns:
+        Formatted string like "registry.npmjs.org (104.16.11.34:443)"
+        or original "IP:port" if no domain found
+    """
+    if ":" not in dst:
+        return dst
+
+    ip, port = dst.rsplit(":", 1)
+    domain = reverse_dns_lookup(ip)
+
+    if domain:
+        return f"{domain} ({ip}:{port})"
+    else:
+        return dst
 
 
 def register(registry: DetectorRegistry) -> None:
@@ -20,37 +61,37 @@ def register(registry: DetectorRegistry) -> None:
 @dataclass
 class CEFEvent:
     """Parsed CEF (Common Event Format) log entry."""
-    
+
     signature_id: str
     severity: int
     extensions: dict[str, str]
-    
+
     @classmethod
     def parse(cls, cef_line: str) -> Optional["CEFEvent"]:
         """Parse a CEF-formatted log line.
-        
+
         Format: CEF:Version|Device Vendor|Device Product|Device Version|
                 Signature ID|Name|Severity|Extension
         """
         if not cef_line.startswith("CEF:"):
             return None
-        
+
         try:
             # Split CEF header and extensions
             parts = cef_line.split("|")
             if len(parts) < 8:
                 return None
-            
+
             signature_id = parts[4]
             severity = int(parts[6])
-            
+
             # Parse extensions (key=value pairs)
             extensions_str = "|".join(parts[7:])
             extensions = {}
             for match in re.finditer(r"(\w+)=([^\s]+(?:\s+[^\w=]+)?)", extensions_str):
                 key, value = match.groups()
                 extensions[key] = value.strip()
-            
+
             return cls(
                 signature_id=signature_id,
                 severity=severity,
@@ -62,14 +103,14 @@ class CEFEvent:
 
 class DynamicBehaviorAnalyzer:
     """Analyze runtime behavior from CEF logs and extract capabilities."""
-    
+
     def analyze(self, cef_logs: str, target_path: Path) -> List[CapabilityFinding]:
         """Analyze CEF logs and extract capability findings.
-        
+
         Args:
             cef_logs: Raw CEF-formatted logs from sandbox
             target_path: Path to analyzed tool (for context)
-            
+
         Returns:
             List of capability findings detected from runtime behavior
         """
@@ -79,13 +120,13 @@ class DynamicBehaviorAnalyzer:
             event = CEFEvent.parse(line.strip())
             if event:
                 events.append(event)
-        
+
         if not events:
             return []
-        
+
         # Extract capabilities from events
         findings = []
-        
+
         # Command execution
         exec_events = [e for e in events if e.signature_id in ("PROC_EXEC", "COMMAND_EXEC")]
         if exec_events:
@@ -96,7 +137,7 @@ class DynamicBehaviorAnalyzer:
                 if cmd:
                     commands.add(cmd)
                     evidence.append(f"Executed: {cmd}")
-            
+
             confidence = min(0.95, 0.60 + len(commands) * 0.1)
             findings.append(
                 CapabilityFinding(
@@ -108,14 +149,14 @@ class DynamicBehaviorAnalyzer:
                     sources=[EvidenceSource.DYNAMIC],
                 )
             )
-        
+
         # File operations
         file_events = [e for e in events if e.signature_id in ("FILE_READ", "FILE_OPEN", "FILE_WRITE")]
         if file_events:
             read_files = set()
             write_files = set()
             sensitive_files = []
-            
+
             for event in file_events:
                 filepath = event.extensions.get("dst", "")
                 if event.signature_id in ("FILE_READ", "FILE_OPEN"):
@@ -124,7 +165,7 @@ class DynamicBehaviorAnalyzer:
                         sensitive_files.append(filepath)
                 elif event.signature_id == "FILE_WRITE":
                     write_files.add(filepath)
-            
+
             # File read capability
             if read_files:
                 evidence = [f"Read: {f}" for f in list(read_files)[:5]]
@@ -133,7 +174,7 @@ class DynamicBehaviorAnalyzer:
                     confidence = 0.90
                 else:
                     confidence = 0.70
-                
+
                 findings.append(
                     CapabilityFinding(
                         name="file_read",
@@ -144,7 +185,7 @@ class DynamicBehaviorAnalyzer:
                         sources=[EvidenceSource.DYNAMIC],
                     )
                 )
-            
+
             # File write capability
             if write_files:
                 evidence = [f"Wrote: {f}" for f in list(write_files)[:5]]
@@ -158,18 +199,21 @@ class DynamicBehaviorAnalyzer:
                         sources=[EvidenceSource.DYNAMIC],
                     )
                 )
-        
+
         # Network operations
         net_events = [e for e in events if e.signature_id in ("NET_CONNECT", "NET_OUTBOUND")]
         if net_events:
             destinations = set()
             for event in net_events:
                 dst = event.extensions.get("dst", "")
-                if dst and not dst.startswith("127."):
+                # Filter out localhost and port 0 (incomplete connections like DNS lookups)
+                if dst and not dst.startswith("127.") and not dst.endswith(":0"):
                     destinations.add(dst)
-            
+
             if destinations:
-                evidence = [f"Connected to: {d}" for d in list(destinations)[:5]]
+                # Resolve IP addresses to domain names
+                resolved_destinations = [format_network_destination(d) for d in list(destinations)[:5]]
+                evidence = [f"Connected to: {d}" for d in resolved_destinations]
                 confidence = min(0.85, 0.60 + len(destinations) * 0.08)
                 findings.append(
                     CapabilityFinding(
@@ -181,7 +225,7 @@ class DynamicBehaviorAnalyzer:
                         sources=[EvidenceSource.DYNAMIC],
                     )
                 )
-        
+
         # Environment variable access
         env_events = [e for e in events if e.signature_id in ("ENV_READ", "ENV_ACCESS")]
         if env_events:
@@ -190,7 +234,7 @@ class DynamicBehaviorAnalyzer:
                 var = event.extensions.get("cs1") or event.extensions.get("msg", "")
                 if var:
                     env_vars.add(var)
-            
+
             if env_vars:
                 evidence = [f"Read env: {v}" for v in list(env_vars)[:5]]
                 findings.append(
@@ -203,7 +247,7 @@ class DynamicBehaviorAnalyzer:
                         sources=[EvidenceSource.DYNAMIC],
                     )
                 )
-        
+
         return findings
 
 
@@ -222,6 +266,6 @@ def _is_sensitive_path(path: str) -> bool:
         "secret",
         ".env",
     ]
-    
+
     path_lower = path.lower()
     return any(pattern.lower() in path_lower for pattern in sensitive_patterns)
