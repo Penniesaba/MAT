@@ -1,4 +1,6 @@
 import os
+import threading
+import time
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
@@ -328,12 +330,80 @@ def auto_import_detection_results():
     print("=" * 60)
 
 
+def watch_directory():
+    """Background thread to watch for new detection result files."""
+    if not config.WATCH_ENABLED:
+        return
+
+    watch_dir = config.WATCH_DIRECTORY
+    watch_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"👁  Watching directory: {watch_dir}")
+    print(f"   Patterns: {config.WATCH_PATTERNS}")
+    print(f"   Interval: {config.WATCH_INTERVAL}s")
+    print(f"   Delete after import: {config.DELETE_AFTER_IMPORT}")
+
+    processed_files = set()
+
+    while True:
+        try:
+            # Find matching files
+            for pattern in config.WATCH_PATTERNS:
+                for filepath in watch_dir.glob(pattern):
+                    if filepath in processed_files:
+                        continue
+
+                    print(f"\n📥 Detected new file: {filepath.name}")
+
+                    try:
+                        # Import the file
+                        if filepath.suffix == ".jsonl":
+                            results = adapter.convert_jsonl_file(filepath)
+                            for result in results:
+                                storage.save_result(result)
+                            print(f"   ✓ Imported {len(results)} results")
+                        elif filepath.suffix == ".json":
+                            import json
+                            with filepath.open("r", encoding="utf-8") as f:
+                                data = json.load(f)
+                            if isinstance(data, list):
+                                for item in data:
+                                    converted = adapter.convert_detection_result(item)
+                                    storage.save_result(converted)
+                                print(f"   ✓ Imported {len(data)} results")
+                            else:
+                                converted = adapter.convert_detection_result(data)
+                                storage.save_result(converted)
+                                print(f"   ✓ Imported 1 result")
+
+                        # Delete or mark as processed
+                        if config.DELETE_AFTER_IMPORT:
+                            filepath.unlink()
+                            print(f"   ✓ Deleted {filepath.name}")
+                        else:
+                            processed_files.add(filepath)
+
+                    except Exception as e:
+                        print(f"   ✗ Error importing {filepath.name}: {e}")
+                        processed_files.add(filepath)  # Skip on error
+
+        except Exception as e:
+            print(f"Watch error: {e}")
+
+        time.sleep(config.WATCH_INTERVAL)
+
+
 if __name__ == "__main__":
     # Create templates directory if it doesn't exist
     os.makedirs("templates", exist_ok=True)
 
     # Auto-import detection results on startup
     auto_import_detection_results()
+
+    # Start directory watcher in background thread
+    if config.WATCH_ENABLED:
+        watcher_thread = threading.Thread(target=watch_directory, daemon=True)
+        watcher_thread.start()
 
     # Run the application
     print(f"\n🚀 Starting mcp-tools-detection server...")

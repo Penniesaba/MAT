@@ -189,10 +189,39 @@ class DetectionAdapter:
         Example:
             Input: ["/path/to/file.json:bash", "/path/to/file.json:eval"]
             Output: ["bash", "eval"]
+
+        Preserves network evidence format:
+            Input: ["Connected to: 104.16.11.34:443"]
+            Output: ["104.16.11.34:443"]
         """
         cleaned = []
         for item in evidence:
-            # If item contains a colon, take only the part after the last colon
+            # Skip items with port 0 (incomplete socket connections)
+            if ":0" in item and "Connected to" in item:
+                continue
+
+            # Handle network evidence specially - preserve IP:port format
+            if item.startswith("Connected to:"):
+                # Extract "IP:port" from "Connected to: IP:port"
+                parts = item.split("Connected to:")
+                if len(parts) > 1:
+                    keyword = parts[1].strip()
+                    if keyword and not keyword.endswith(":0"):
+                        cleaned.append(keyword)
+                continue
+
+            # Handle "Executed:", "Read:", "Wrote:" prefixes
+            if item.startswith(("Executed:", "Read:", "Wrote:", "⚠")):
+                # Take everything after the first colon and space
+                if ": " in item:
+                    keyword = item.split(": ", 1)[1].strip()
+                else:
+                    keyword = item.strip()
+                if keyword:
+                    cleaned.append(keyword)
+                continue
+
+            # Default: If item contains a colon (file path evidence), take the last part
             if ":" in item:
                 # Split by colon and take the last part
                 keyword = item.split(":")[-1].strip()

@@ -19,6 +19,23 @@ DETECTION_JSONL_PATH = DETECTION_OUTPUT_DIR / DETECTION_JSONL_FILENAME
 # Track imported files to avoid duplicates
 IMPORT_TRACKING_FILE = Path(__file__).parent / ".import_tracking.json"
 
+# ===== Directory Watching Configuration =====
+
+# Enable automatic directory watching for new detection results
+WATCH_ENABLED = True
+
+# Directory to watch for incoming detection results (CLI outputs here)
+WATCH_DIRECTORY = Path(__file__).parent.parent / "detection" / "output"
+
+# File patterns to watch for
+WATCH_PATTERNS = ["*.jsonl", "*.json"]
+
+# Polling interval in seconds (for filesystem polling)
+WATCH_INTERVAL = 5
+
+# Delete files after successful import
+DELETE_AFTER_IMPORT = True
+
 # ===== Application Configuration =====
 
 # Flask server configuration
