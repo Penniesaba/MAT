@@ -483,6 +483,19 @@
             font-size: 0.8em;
             margin: 3px;
             font-family: 'Courier New', monospace;
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            cursor: pointer;
+        }
+
+        .keyword-tag:hover {
+            max-width: none;
+            white-space: normal;
+            word-break: break-all;
+            background: #333;
+            color: #fff;
         }
 
         .capability-tag {
