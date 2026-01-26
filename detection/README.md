@@ -120,7 +120,7 @@ The framework identifies **9 capability types** across two categories:
 
 ## MCPTox Validation Results
 
-The framework was validated against the **MCPTox dataset** - 493 malicious tool descriptions from academic research (paper: `Model_Context_Protocol_Security.pdf`).
+The framework was validated against the **MCPTox dataset** - 493 malicious tool descriptions from academic research (https://arxiv.org/abs/2508.14925).
 
 ### Detection Coverage by Capability
 
@@ -376,9 +376,9 @@ uv run mcptox-benchmark
 
 # First run auto-generates samples from pure_tool.json
 # Output locations:
-# - examples/benchmarks/mcptox/per_file_detection.jsonl
-# - examples/benchmarks/mcptox/per_file_detection_summary.json
-# - examples/benchmarks/mcptox/benchmark_report.md
+# - examples/benchmarks/mcptox/output/per_file_detection.jsonl
+# - examples/benchmarks/mcptox/output/per_file_detection_summary.json
+# - examples/benchmarks/mcptox/output/benchmark_report.md
 ```
 
 ### 5. Interpreting Results
@@ -543,7 +543,6 @@ MITIGATION_POLICIES = {
 
 **Step 3:** Update documentation
 - Add to README.md capability table
-- Update CLAUDE.md with implementation details
 - Document in `docs/detection-roadmap.md` if phased
 
 ---
@@ -755,7 +754,7 @@ def test_command_exec_detection():
 2. **Implement:** Follow code style, add tests
 3. **Quality Checks:** Run `uv tool run pre-commit run --all-files`
 4. **Test:** Ensure `uv run pytest -q` passes
-5. **Document:** Update README.md and CLAUDE.md if needed
+5. **Document:** Update README.md if needed
 6. **PR:** Submit with clear description and test evidence
 
 ### Extensibility Points
@@ -785,18 +784,6 @@ def test_command_exec_detection():
 
 ## Documentation
 
-### For Developers
-
-- **[CLAUDE.md](CLAUDE.md)** - Detailed architecture guide for AI assistants
-  - Internal architecture, plugin system, registry patterns
-  - Development patterns (Protocol usage, dataclass design, TOML rules)
-  - Extension points and implementation status
-
-- **[AGENTS.md](AGENTS.md)** - Repository-wide development guidelines
-  - Multi-module context (assistant_bot, tool-poisoning, mcp-server)
-  - Commit message conventions (imperative mood, scope-focused)
-  - Security best practices (secrets management, untrusted outputs)
-
 ### Technical Documentation
 
 - **[docs/detection-roadmap.md](docs/detection-roadmap.md)** - 4-phase development plan
@@ -811,7 +798,7 @@ def test_command_exec_detection():
 
 ### Research Context
 
-- **[Model_Context_Protocol_Security.pdf](Model_Context_Protocol_Security.pdf)** - Academic research
+- **MCPTox Research Paper:** https://arxiv.org/abs/2508.14925
   - Threat model definitions
   - MCPTox dataset methodology
   - Attack taxonomy
@@ -837,17 +824,21 @@ If you use this framework in your research, please cite:
 
 For the MCPTox dataset:
 ```bibtex
-[Citation from Model_Context_Protocol_Security.pdf]
+@article{mcptox2024,
+  title = {Model Context Protocol Security},
+  url = {https://arxiv.org/abs/2508.14925},
+  year = {2024}
+}
 ```
 
 ---
 
 ## Acknowledgments
 
-- MCPTox dataset from academic research (see `Model_Context_Protocol_Security.pdf`)
+- MCPTox dataset from academic research (https://arxiv.org/abs/2508.14925)
 - Inspired by static analysis tools: Bandit, Semgrep, CodeQL
 - MCP protocol: https://modelcontextprotocol.io
 
 ---
 
-**Questions or issues?** Open an issue on GitHub or consult [CLAUDE.md](CLAUDE.md) for detailed architecture guidance.
+**Questions or issues?** Open an issue on GitHub or consult the documentation in `docs/` directory.

@@ -1,15 +1,16 @@
-# MCPTox Static Validation Report (Nov 11, 2025)
+# MCPTox Static Validation Report
 
 ## Overview
-- **Dataset**: 491 tool descriptions generated from `samples/mcptox/pure_tool.json` and expanded under `examples/mcptox_samples`.
-- **Detector Configuration**: Python + metadata static plugins, `keywords.toml` (rev. Nov 11), mitigation engine defaults. Execution command:
+- **Dataset**: 491 tool descriptions generated from `examples/benchmarks/mcptox/pure_tool.json`.
+- **Detector Configuration**: Python + metadata static plugins, `detection/rules/keywords.toml`, mitigation engine defaults.
+- **Execution**: 
   ```bash
-  PYTHONPATH=. python examples/run_mcptox_detection.py
+  uv run mcptox-benchmark
   ```
 - **Output Artifacts**:
-  - `examples/mcptox_samples/per_file_detection.jsonl`
-  - `examples/mcptox_samples/per_file_detection_summary.json`
-  - `examples/mcptox_samples/high_risk_keywords_summary.json`
+  - `examples/benchmarks/mcptox/output/per_file_detection.jsonl`
+  - `examples/benchmarks/mcptox/output/per_file_detection_summary.json`
+  - `examples/benchmarks/mcptox/output/benchmark_report.md`
 
 ## Current Coverage vs. MCPTox Annotations
 | Risk Category | Samples | Detected | Coverage |
@@ -33,13 +34,11 @@
 
 ## Representative Missed Cases
 - **Parameter Override / Prompt Injection** (Information Manipulation, Instruction Tampering)
-  - Samples such as `alphavantage/alphavantage_1.json` instruct the tool to "change the object 'Apple' to 'AMAZON'" but contain no syscall keywords.
+  - Some samples instruct the tool to change parameters but contain no syscall keywords.
 - **Workflow Sabotage / Service Disruption**
-  - `adfin/adfin_4.json` requires voiding invoices before marking payments, effectively a denial-of-service path; text lacks filesystem or network markers.
+  - Tools that manipulate workflows without filesystem or network markers.
 - **Privacy Leakage without classic paths**
-  - Multiple `alphavantage` samples coerce the model into requesting unrelated customer data (META sentiment before NVDA). No `/etc/passwd` pattern is present.
-
-Detailed undetected samples by risk live in `examples/mcptox_samples/undetected_samples.json`.
+  - Tools that coerce data access without obvious sensitive file patterns.
 
 ## Remediation Roadmap
 1. **New capability families**
@@ -54,9 +53,9 @@ Detailed undetected samples by risk live in `examples/mcptox_samples/undetected_
 4. **Regression tracking**
    - Keep a coverage dashboard derived from `per_file_detection_summary.json` and require ≥80% coverage for high-priority risks before shipping future rule updates.
 5. **Dynamic validation hooks**
-   - Feed missed samples into the upcoming sandbox pipeline to confirm behavioural impact (aligns with Stage 2 of the Model_Context_Protocol_Security report).
+   - Feed missed samples into the upcoming sandbox pipeline to confirm behavioral impact.
 
 ## Next Steps
-- Implement metadata-focused rule additions (parameter overrides, workflow hijacks) and rerun `examples/run_mcptox_detection.py` to measure delta.
-- Expand tests in `tests/test_rules_loader.py` to include new capability families and sample JSON fixtures.
-- Document mitigation actions for semantic attacks (e.g., mandatory user confirmation, DDG tracking) alongside the static findings.
+- Implement metadata-focused rule additions (parameter overrides, workflow hijacks) and rerun `uv run mcptox-benchmark` to measure delta.
+- Expand tests in `tests/unit/test_rules_loader.py` to include new capability families and sample JSON fixtures.
+- Document mitigation actions for semantic attacks (e.g., mandatory user confirmation, audit logging) alongside the static findings.
