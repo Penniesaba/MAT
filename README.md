@@ -77,6 +77,80 @@ A ground-truth dataset of intentionally vulnerable MCP servers covering:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
+### Installation & Verification
+
+#### Step 1: Clone and Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/nyit-vancouver/mcp-tools-detection.git
+cd mcp-tools-detection
+
+# Initialize and update git submodules (required for vulnerable-mcp-servers-lab)
+git submodule update --init --recursive
+
+# Navigate to detection directory
+cd detection
+
+# Initialize Python environment
+uv sync
+```
+
+#### Step 2: Verify Installation
+
+Run the following commands to confirm successful installation:
+
+**1. Check CLI Access**
+```bash
+# Display help menu
+uv run python -m detection.cli --help
+```
+
+Expected output should show:
+```
+usage: cli.py [-h] [--pipeline {static,dynamic,rag}] [--format {markdown,json}]
+              [--output OUTPUT] [--policy-dir POLICY_DIR] [--rules RULES]
+              target
+```
+
+**2. Test Static Analysis**
+```bash
+# Run a quick scan on a sample vulnerable server
+uv run python -m detection.cli \
+    examples/vulnerable-mcp-servers-lab/vulnerable-mcp-server-filesystem-workspace-actions \
+    --format markdown
+```
+
+Expected output includes:
+- ✅ Detected capabilities (e.g., `file_read`, `file_write`, `command_exec`)
+- ✅ Risk score and risk level (e.g., `HIGH`)
+- ✅ Mitigation recommendations
+
+**3. Verify Docker Setup (Optional - for Dynamic Analysis)**
+```bash
+cd sandbox
+docker-compose build
+docker-compose up -d
+docker-compose down
+```
+
+If successful, you'll see:
+```
+✓ Building mcp-sandbox...
+✓ Container mcp-sandbox started
+```
+
+#### Step 3: Quick Validation Test
+
+Run this one-liner to verify end-to-end functionality:
+
+```bash
+cd detection
+uv run python -m detection.cli examples/vulnerable-mcp-servers-lab/vulnerable-mcp-server-filesystem-workspace-actions --format json | grep -q "risk_level" && echo "✅ Installation verified successfully!" || echo "❌ Installation verification failed"
+```
+
+---
+
 ### Phase 1: Run the Detection Benchmark
 
 This step executes the analysis pipeline against the MCPTox benchmark (491 samples).
