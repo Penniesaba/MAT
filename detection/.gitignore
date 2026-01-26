@@ -3,3 +3,23 @@ __pycache__
 .uv-cache/
 .pytest_cache/
 *.pyc
+
+# Temporary output directories
+logs/
+output/
+validation_results/
+
+# Benchmark generated files
+examples/benchmarks/*/output/
+examples/benchmarks/*/samples/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
