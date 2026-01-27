@@ -54,7 +54,7 @@ pip install uv
 ### 2. Clone/Download the Project
 
 ```bash
-cd mcp-tools-detection
+cd mcp-sec-audit
 cd web-detection portal
 ```
 
@@ -90,7 +90,7 @@ Navigate to: **http://localhost:3003**
 ## 📁 Project Structure
 
 ```
-mcp-tools-detection/
+mcp-sec-audit/
 ├── .python-version         # Python version for uv
 ├── pyproject.toml         # Project metadata and dependencies (replaces requirements.txt)
 ├── uv.lock                # Locked dependencies (auto-generated)
