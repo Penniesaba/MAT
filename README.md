@@ -1,4 +1,4 @@
-# MCP Security Tools Detection
+# MCP Security Auditor
 
 **Advanced Security Analysis Framework for Model Context Protocol (MCP) Servers**
 
@@ -83,8 +83,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ```bash
 # Clone the repository
-git clone https://github.com/nyit-vancouver/mcp-tools-detection.git
-cd mcp-tools-detection
+git clone https://github.com/nyit-vancouver/mcp-sec-audit.git
+cd mcp-sec-audit
 
 # Initialize and update git submodules (required for vulnerable-mcp-servers-lab)
 git submodule update --init --recursive
@@ -267,7 +267,7 @@ uv run python app.py
 #    Patterns: ['*.jsonl', '*.json']
 #    Interval: 5s
 #    Delete after import: True
-# 🚀 Starting mcp-tools-detection server...
+# 🚀 Starting mcp-sec-audit server...
 ```
 
 **Terminal 2: Run Detection and Output to Watched Directory**
@@ -317,7 +317,7 @@ DELETE_AFTER_IMPORT = True
 ## 📂 Project Structure
 
 ```text
-mcp-tools-detection/
+mcp-sec-audit/
 ├── detection/                            # [Artifact] Core Analysis Engine
 │   ├── detection/
 │   │   ├── core/                         # Analysis logic (AST, Graph)
