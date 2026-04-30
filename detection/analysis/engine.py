@@ -14,6 +14,7 @@ from pathlib import Path
 from detection.core.models import CapabilityFinding
 
 from .adapters.finding_adapter import adapt_findings
+from .extractors.dynamic import parse_cef_logs
 from .extractors.javascript_ts_tree_sitter import extract_jsts_facts
 from .extractors.python_ast import extract_python_facts
 from .facts.schema import (
@@ -23,10 +24,11 @@ from .facts.schema import (
     SinkFact,
 )
 from .passes.call_graph import build_call_graph, find_reachable_sinks
+from .passes.dynamic_correlation import correlate_dynamic
 from .passes.finding_builder import build_finding_facts
 from .passes.taint_lite import build_taint_lite_dataflows
 
-__all__ = ["run_ast_analysis"]
+__all__ = ["run_ast_analysis", "run_ast_analysis_with_dynamic"]
 
 _log = logging.getLogger(__name__)
 
@@ -49,6 +51,37 @@ def _filter_entrypoints(facts: list[Fact]) -> list[EntryPointFact]:
 def _filter_sinks(facts: list[Fact]) -> list[SinkFact]:
     """Narrow a Fact list to SinkFact entries (type-safe)."""
     return [f for f in facts if f.type == "sink"]
+
+
+# ----------------------------------------------------------------------
+# Internal helpers
+# ----------------------------------------------------------------------
+
+
+def _run_finding_pipeline(target_path: Path) -> list[FindingFact]:
+    """Run the full fact extraction and analysis pipeline.
+
+    Pipeline: file resolution → fact extraction → call graph → reachability → taint → finding facts
+
+    Returns:
+        List of FindingFact objects from the static analysis phase.
+    """
+    root, files = _resolve_files(target_path)
+    if not files:
+        _log.warning("No supported files found in %s", target_path)
+        return []
+
+    all_facts: list[Fact] = []
+    for file_path in files:
+        facts, errors = _extract_facts(root, file_path)
+        for err in errors:
+            _log.debug("Extraction warning in %s:%d — %s", err.file, err.line, err.message)
+        all_facts.extend(facts)
+
+    if not all_facts:
+        return []
+
+    return _analyze_facts(all_facts)
 
 
 # ----------------------------------------------------------------------
@@ -79,22 +112,35 @@ def run_ast_analysis(target_path: Path) -> list[CapabilityFinding]:
         - The function never raises an exception for a single bad file
         - If the entire target is inaccessible, an empty list is returned
     """
-    root, files = _resolve_files(target_path)
-    if not files:
-        _log.warning("No supported files found in %s", target_path)
-        return []
+    findings = _run_finding_pipeline(target_path)
+    return adapt_findings(findings)
 
-    all_facts: list[Fact] = []
-    for file_path in files:
-        facts, errors = _extract_facts(root, file_path)
-        for err in errors:
-            _log.debug("Extraction warning in %s:%d — %s", err.file, err.line, err.message)
-        all_facts.extend(facts)
 
-    if not all_facts:
-        return []
+def run_ast_analysis_with_dynamic(target_path: Path, cef_logs: str) -> list[CapabilityFinding]:
+    """Run the AST-based security analysis with dynamic correlation.
 
-    findings = _analyze_facts(all_facts)
+    This function performs a full pipeline:
+    1. Extract security facts (FunctionFact, ImportFact, CallFact,
+       EntryPointFact, SinkFact, SourceFact) from all Python files
+    2. Build a call graph and find entrypoint-to-sink reachability
+    3. Parse CEF runtime logs into RuntimeEventFact records
+    4. Correlate static findings with runtime events (Phase 6)
+    5. Convert FindingFact results to CapabilityFinding via the adapter
+
+    Args:
+        target_path: Path to a Python file or a directory containing Python
+            source files. Directory targets are scanned recursively.
+        cef_logs: CEF-formatted runtime log text from eBPF monitor.
+
+    Returns:
+        List of CapabilityFinding objects representing security findings.
+        Returns an empty list if no findings are produced or if the target
+        cannot be processed.
+    """
+    findings = _run_finding_pipeline(target_path)
+    runtime_events = parse_cef_logs(cef_logs)
+    if runtime_events:
+        findings = correlate_dynamic(findings, runtime_events)
     return adapt_findings(findings)
 
 

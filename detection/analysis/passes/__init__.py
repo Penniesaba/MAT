@@ -18,6 +18,7 @@ from analysis.passes.call_graph import (
     build_call_graph,
     find_reachable_sinks,
 )
+from analysis.passes.dynamic_correlation import correlate_dynamic
 from analysis.passes.finding_builder import (
     FindingFactsBuilder,
     build_finding_facts,
@@ -31,6 +32,7 @@ __all__ = [
     "build_call_graph",
     "build_finding_facts",
     "build_taint_lite_dataflows",
+    "correlate_dynamic",
     "find_reachable_sinks",
     "FindingFactsBuilder",
 ]
