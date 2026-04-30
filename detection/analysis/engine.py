@@ -14,6 +14,7 @@ from pathlib import Path
 from detection.core.models import CapabilityFinding
 
 from .adapters.finding_adapter import adapt_findings
+from .extractors.javascript_ts_tree_sitter import extract_jsts_facts
 from .extractors.python_ast import extract_python_facts
 from .facts.schema import (
     EntryPointFact,
@@ -27,6 +28,11 @@ from .passes.finding_builder import build_finding_facts
 __all__ = ["run_ast_analysis"]
 
 _log = logging.getLogger(__name__)
+
+# Supported file extensions for multi-language analysis
+_PYTHON_EXTENSIONS = frozenset({".py"})
+_JSTS_EXTENSIONS = frozenset({".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".tsx"})
+_SUPPORTED_EXTENSIONS = _PYTHON_EXTENSIONS | _JSTS_EXTENSIONS
 
 
 # ----------------------------------------------------------------------
@@ -74,7 +80,7 @@ def run_ast_analysis(target_path: Path) -> list[CapabilityFinding]:
     """
     root, files = _resolve_files(target_path)
     if not files:
-        _log.warning("No Python files found in %s", target_path)
+        _log.warning("No supported files found in %s", target_path)
         return []
 
     all_facts: list[Fact] = []
@@ -97,20 +103,32 @@ def run_ast_analysis(target_path: Path) -> list[CapabilityFinding]:
 
 
 def _resolve_files(target_path: Path) -> tuple[Path, list[Path]]:
-    """Resolve target to (root, list_of_python_files).
+    """Resolve target to (root, list_of_supported_files).
 
-    If target is a single .py file, root is its parent directory.
-    If target is a directory, root is that directory.
+    If target is a single supported file, root is its parent directory.
+    If target is a directory, root is that directory and files matching
+    supported extensions (.py, .js, .mjs, .cjs, .ts, .mts, .cts, .tsx) are collected.
+    Unsupported file extensions are silently ignored.
     """
     if target_path.is_file():
-        return target_path.parent, [target_path]
-    # Directory — recursively collect all .py files
-    files = sorted(target_path.rglob("*.py"))
-    return target_path, files
+        suffix = target_path.suffix.lower()
+        if suffix in _SUPPORTED_EXTENSIONS:
+            return target_path.parent, [target_path]
+        return target_path.parent, []
+
+    # Directory — recursively collect all supported files
+    files: list[Path] = []
+    for ext in _SUPPORTED_EXTENSIONS:
+        files.extend(target_path.rglob(f"*{ext}"))
+    return target_path, sorted(files)
 
 
 def _extract_facts(root: Path, file_path: Path) -> tuple[list[Fact], list[object]]:
-    """Extract facts from one Python file with graceful failure.
+    """Extract facts from one file with graceful failure.
+
+    Dispatches to the appropriate extractor based on file extension:
+    - .py -> extract_python_facts
+    - .js, .mjs, .cjs, .ts, .mts, .cts, .tsx -> extract_jsts_facts
 
     Returns (facts, errors) where errors are non-fatal ExtractionError tuples.
     """
@@ -120,8 +138,16 @@ def _extract_facts(root: Path, file_path: Path) -> tuple[list[Fact], list[object
         _log.debug("Could not read %s: %s", file_path, e)
         return [], []
 
+    suffix = file_path.suffix.lower()
+
     try:
-        facts, errors = extract_python_facts(root, file_path, source)
+        if suffix in _PYTHON_EXTENSIONS:
+            facts, errors = extract_python_facts(root, file_path, source)
+        elif suffix in _JSTS_EXTENSIONS:
+            facts, errors = extract_jsts_facts(root, file_path, source)
+        else:
+            _log.debug("Unsupported file extension: %s", suffix)
+            return [], []
         return facts, errors
     except Exception as e:
         _log.debug("Unexpected error extracting %s: %s", file_path, e)
