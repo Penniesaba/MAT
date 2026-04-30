@@ -7,6 +7,7 @@ Tests cover:
 - EntryPointFact: MCP decorator detection
 - SourceFact: MCP tool parameter sources
 - SinkFact: RCE/file/network sink detection
+- AssignFact: variable assignment tracking within function bodies
 - Graceful fail: SyntaxError and unsupported structures
 """
 
@@ -439,6 +440,87 @@ import os
 
         for f in facts:
             assert f.file == "src/server.py", f"Expected 'src/server.py', got: {f.file}"
+
+
+# ---------------------------------------------------------------------------
+# Test class: TestPythonAstExtractorAssignFact
+# ---------------------------------------------------------------------------
+
+
+class TestPythonAstExtractorAssignFact:
+    """Tests for AssignFact production in visit_Assign."""
+
+    def test_name_to_name_assignment_produces_assign_fact(
+        self, root: Path, file: Path
+    ) -> None:
+        """x = y inside a function produces AssignFact."""
+        source = """
+def test(cmd):
+    x = cmd
+"""
+        facts, errors = extract_python_facts(root, file, source)
+
+        assert len(errors) == 0, f"Expected no errors, got: {errors}"
+        assign_facts = [f for f in facts if f.type == "assign"]
+        assert len(assign_facts) == 1
+
+        assign = assign_facts[0]
+        assert assign.target == "x"
+        assert assign.value == "cmd"
+        assert assign.function_id.endswith(":test")
+        assert assign.snippet == "x = cmd"
+
+    def test_name_to_attribute_assignment_produces_assign_fact(
+        self, root: Path, file: Path
+    ) -> None:
+        """x = module.func inside a function produces AssignFact."""
+        source = """
+import subprocess
+
+def test():
+    sp_run = subprocess.run
+"""
+        facts, errors = extract_python_facts(root, file, source)
+
+        assert len(errors) == 0, f"Expected no errors, got: {errors}"
+        assign_facts = [f for f in facts if f.type == "assign"]
+        assert len(assign_facts) == 1
+
+        assign = assign_facts[0]
+        assert assign.target == "sp_run"
+        assert assign.value == "subprocess.run"
+        assert assign.snippet == "sp_run = subprocess.run"
+
+    def test_literal_assignment_does_not_produce_assign_fact(
+        self, root: Path, file: Path
+    ) -> None:
+        """x = "literal" does NOT produce AssignFact (no propagation value)."""
+        source = """
+def test():
+    x = "hello"
+"""
+        facts, errors = extract_python_facts(root, file, source)
+
+        assert len(errors) == 0, f"Expected no errors, got: {errors}"
+        assign_facts = [f for f in facts if f.type == "assign"]
+        assert len(assign_facts) == 0
+
+    def test_module_level_assignment_does_not_produce_assign_fact(
+        self, root: Path, file: Path
+    ) -> None:
+        """x = y at module level does NOT produce AssignFact (not in a function)."""
+        source = """
+import os
+
+x = system
+"""
+        facts, errors = extract_python_facts(root, file, source)
+
+        assert len(errors) == 0, f"Expected no errors, got: {errors}"
+        # Module-level assignments are used for alias tracking but don't produce AssignFact
+        # because they are not inside a function body
+        assign_facts = [f for f in facts if f.type == "assign"]
+        assert len(assign_facts) == 0
 
 
 # ---------------------------------------------------------------------------

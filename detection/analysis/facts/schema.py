@@ -239,6 +239,16 @@ class SourceFact(Fact):
 
 
 @dataclass(slots=True)
+class AssignFact(Fact):
+    """Represents a variable assignment within a function body."""
+
+    function_id: str = ""       # function_id of the enclosing function
+    target: str = ""            # left-hand side variable name
+    value: str = ""             # right-hand side expression (resolved name or raw expr)
+    snippet: str = ""           # source snippet e.g. "command = cmd.strip()"
+
+
+@dataclass(slots=True)
 class DataFlowFact(Fact):
     """Represents a data flow path from source to sink."""
 

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from analysis.facts.schema import (
+        AssignFact,
         CallFact,
         DataFlowFact,
         Fact,
@@ -109,6 +110,9 @@ def build_taint_lite_dataflows(
         f.id: f for f in facts if _is_sink_fact(f)
     }
 
+    # Collect AssignFact records for assign propagation
+    assign_facts: list[AssignFact] = [f for f in facts if f.type == "assign"]
+
     # Generate flows for each reachable (entrypoint, sink) pair
     flows: list[DataFlowFact] = []
 
@@ -147,6 +151,7 @@ def build_taint_lite_dataflows(
                 call_by_id=call_by_id,
                 func_by_id=func_by_id,
                 calls_by_func=calls_by_func,
+                assign_facts=assign_facts,
             )
             if same_func_flows:
                 flows.extend(same_func_flows)
@@ -186,6 +191,7 @@ def _try_same_function_flow(
     call_by_id: dict[str, CallFact],
     func_by_id: dict[str, FunctionFact],
     calls_by_func: dict[str, list[CallFact]],
+    assign_facts: list[AssignFact] | None = None,
 ) -> list[DataFlowFact]:
     """Try to prove same-function param -> sink propagation.
 
@@ -222,7 +228,7 @@ def _try_same_function_flow(
         return [_build_dataflow(source_id, sink_id, path, sink_fact)]
 
     # Case B: param -> var -> sink(var) via assignment
-    assign_path = _trace_assign_to_sink(source_name, sink_args, ep_func, calls_by_func)
+    assign_path = _trace_assign_to_sink(source_name, sink_args, ep_func, calls_by_func, assign_facts)
     if assign_path is not None:
         var_name, assign_line = assign_path
         path = [
@@ -273,13 +279,36 @@ def _trace_assign_to_sink(
     sink_args: tuple,
     func: FunctionFact,
     calls_by_func: dict[str, list[CallFact]],
+    assign_facts: list[AssignFact] | None = None,
 ) -> tuple[str, int] | None:
-    """Trace source -> var assignment chain within a function.
+    """Trace source -> var assignment chain using real AssignFact records.
 
-    Reserved for future AssignFact support. Currently returns None
-    because we don't have real assignment facts from extractors,
-    and heuristic approaches produce false positives.
+    Looks for assignments like `var = source_name` where var is later
+    passed to the sink.
+
+    Returns (var_name, assign_line) if found, None otherwise.
     """
+    if not assign_facts:
+        return None
+
+    # Get sink arg names
+    sink_arg_names: set[str] = set()
+    for arg in sink_args:
+        if arg.kind == "name":
+            sink_arg_names.add(arg.expr)
+
+    if not sink_arg_names:
+        return None
+
+    # Find assignments in this function where:
+    # - value == source_name
+    # - target is used as a sink argument
+    for assign in assign_facts:
+        if assign.function_id != func.id:
+            continue
+        if assign.value == source_name and assign.target in sink_arg_names:
+            return (assign.target, assign.line)
+
     return None
 
 

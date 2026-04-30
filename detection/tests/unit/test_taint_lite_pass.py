@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from analysis.facts.ids import make_dataflow_id
 from analysis.facts.schema import (
+    AssignFact,
     CallArg,
     CallFact,
     Confidence,
@@ -144,6 +145,26 @@ def _make_source(
     )
 
 
+def _make_assign(
+    assign_id: str,
+    function_id: str,
+    target: str,
+    value: str,
+    line: int,
+) -> AssignFact:
+    return AssignFact(
+        type="assign",
+        id=assign_id,
+        function_id=function_id,
+        target=target,
+        value=value,
+        snippet=f"{target} = {value}",
+        file="src/test.py",
+        line=line,
+        extractor="test",
+    )
+
+
 def _arg(name: str, index: int) -> CallArg:
     return CallArg(index=index, expr=name, kind="name")
 
@@ -209,17 +230,64 @@ class TestSameFunctionDirectParam:
 
 
 class TestSameFunctionAssignPropagation:
-    """source_param -> var via assign -> sink(var) in the same function.
+    """source_param -> var via assign -> sink(var) in the same function."""
 
-    NOTE: Without real AssignFact from extractors, assign propagation cannot
-    be reliably detected. The taint-lite pass returns None for assign
-    heuristics to avoid false positives. This test documents that behavior.
-    """
+    def test_assign_propagation_returns_dataflow_with_assign_fact(self) -> None:
+        """With real AssignFact, assign propagation produces DataFlowFact with ASSIGN step."""
+        # Arrange: func_a(cmd) -> x = cmd -> subprocess.run(x)
+        func_a_id = "python:src/test.py:func_a"
+        funcs = [
+            _make_function(func_a_id, "func_a", params=["cmd"]),
+        ]
+        call_id = "call1"
+        calls = [
+            _make_call(
+                call_id,
+                func_a_id,
+                "subprocess.run",
+                "subprocess.run(x)",
+                line=10,
+                args=[_arg("x", 0)],
+                normalized_callee="subprocess.run",
+            ),
+        ]
+        eps = [
+            _make_entrypoint("ep1", "run_tool", func_a_id),
+        ]
+        sinks = [
+            _make_sink("sink1", call_id, "rce", "subprocess.run"),
+        ]
+        sources = [
+            _make_source("src1", func_a_id, "cmd"),
+        ]
+        assigns = [
+            _make_assign("assign1", func_a_id, "x", "cmd", line=5),
+        ]
 
-    def test_assign_propagation_returns_empty_without_assign_fact(self) -> None:
-        # Arrange: entrypoint func_a(param=user) -> call with safe_input (a param)
-        # Without an actual AssignFact, we cannot prove user -> safe_input flow.
-        # The direct param check also fails because sink receives "safe_input", not "user".
+        all_facts: list[Fact] = [*funcs, *calls, *eps, *sinks, *sources, *assigns]
+        graph = build_call_graph(all_facts)
+        reachability = find_reachable_sinks(eps, sinks, graph)
+
+        # Act
+        dataflows = build_taint_lite_dataflows(all_facts, reachability)
+
+        # Assert
+        assert len(dataflows) == 1
+        df = dataflows[0]
+        assert df.source_id == "src1"
+        assert df.sink_id == "sink1"
+        assert len(df.path) == 3
+        assert df.path[0].kind == PathStepKind.PARAM
+        assert df.path[0].name == "cmd"
+        assert df.path[1].kind == PathStepKind.ASSIGN
+        assert df.path[1].from_ == "cmd"
+        assert df.path[1].to == "x"
+        assert df.path[2].kind == PathStepKind.CALL_ARG
+
+    def test_assign_propagation_no_flow_when_no_matching_assign(self) -> None:
+        """Without matching AssignFact (different value), no dataflow is produced."""
+        # Arrange: func_a(user) -> safe_input = "literal" -> sink(safe_input)
+        # The AssignFact has value="literal", not "user", so no flow
         func_a_id = "python:src/test.py:func_a"
         funcs = [
             _make_function(func_a_id, "func_a", params=["user", "safe_input"]),
@@ -245,15 +313,19 @@ class TestSameFunctionAssignPropagation:
         sources = [
             _make_source("src1", func_a_id, "user"),
         ]
+        # AssignFact has value="literal" (not "user"), so no propagation
+        assigns = [
+            _make_assign("assign1", func_a_id, "safe_input", "literal", line=5),
+        ]
 
-        all_facts: list[Fact] = [*funcs, *calls, *eps, *sinks, *sources]
+        all_facts: list[Fact] = [*funcs, *calls, *eps, *sinks, *sources, *assigns]
         graph = build_call_graph(all_facts)
         reachability = find_reachable_sinks(eps, sinks, graph)
 
         # Act
         dataflows = build_taint_lite_dataflows(all_facts, reachability)
 
-        # Assert: no assign heuristic → no dataflow for this pattern
+        # Assert: AssignFact value doesn't match source name → no dataflow
         assert dataflows == []
 
 

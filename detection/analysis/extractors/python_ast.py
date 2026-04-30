@@ -18,8 +18,10 @@ from ..facts.ids import (
     make_import_id,
     make_sink_id,
     make_source_id,
+    make_assign_id,
 )
 from ..facts.schema import (
+    AssignFact,
     CallArg,
     CallFact,
     CallKwarg,
@@ -793,6 +795,8 @@ class PythonFactExtractor(ast.NodeVisitor):
             return
 
         target = node.targets[0]
+        target_name = target.id
+        value_expr = self._get_expr_str(node.value)
         resolved_value: str | None = None
 
         if isinstance(node.value, ast.Name):
@@ -803,7 +807,25 @@ class PythonFactExtractor(ast.NodeVisitor):
             resolved_value = self._get_callee_str(node.value)
 
         if resolved_value:
-            self._assignment_aliases[target.id] = resolved_value
+            self._assignment_aliases[target_name] = resolved_value
+
+        # Only produce AssignFact if we're inside a function body (not module level)
+        current_func_id = self._get_current_function_id()
+        if current_func_id and resolved_value is not None and not current_func_id.endswith("<module>"):
+            # Only produce for name-to-name or name-to-attribute assignments
+            # Skip literal assignments (x = "string", x = 42)
+            if isinstance(node.value, (ast.Name, ast.Attribute)):
+                self.facts.append(AssignFact(
+                    type="assign",
+                    id=make_assign_id(self.root, self.file, node.lineno, target_name),
+                    file=self._get_relative_path(),
+                    line=node.lineno,
+                    extractor="python_ast",
+                    function_id=current_func_id,
+                    target=target_name,
+                    value=resolved_value,
+                    snippet=f"{target_name} = {value_expr}",
+                ))
 
         self.generic_visit(node)
 

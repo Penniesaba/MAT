@@ -133,6 +133,16 @@ def make_source_id(
     return f"source:{rel_posix}:{function_name}:{param_name}"
 
 
+def make_assign_id(root: Path, file: Path, line: int, target: str) -> str:
+    """Generate an AssignFact ID.
+
+    Format: assign:<relative_path>:<line>:<target>
+    """
+    rel = file.relative_to(root)
+    rel_posix = str(rel).replace("\\", "/")
+    return f"assign:{rel_posix}:{line}:{target}"
+
+
 def make_dataflow_id(source_name: str, sink_name: str) -> str:
     """Generate a DataFlowFact ID.
 
