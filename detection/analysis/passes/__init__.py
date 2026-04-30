@@ -22,6 +22,7 @@ from analysis.passes.finding_builder import (
     FindingFactsBuilder,
     build_finding_facts,
 )
+from analysis.passes.taint_lite import build_taint_lite_dataflows
 
 __all__ = [
     "CallChainLink",
@@ -29,6 +30,7 @@ __all__ = [
     "ReachabilityResult",
     "build_call_graph",
     "build_finding_facts",
+    "build_taint_lite_dataflows",
     "find_reachable_sinks",
     "FindingFactsBuilder",
 ]

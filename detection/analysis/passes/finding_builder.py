@@ -14,6 +14,7 @@ from typing import Any, Mapping
 from analysis.facts.ids import make_finding_id
 from analysis.facts.schema import (
     Confidence,
+    DataFlowFact,
     EntryPointFact,
     Fact,
     FindingFact,
@@ -42,6 +43,7 @@ _DEFAULT_CONFIDENCE = Confidence.MEDIUM
 def build_finding_facts(
     reachability_results: list[ReachabilityResult],
     facts: list[Fact],
+    dataflows: list[DataFlowFact] | None = None,
     *,
     skip_missing_sinks: bool = True,
 ) -> list[FindingFact]:
@@ -51,6 +53,8 @@ def build_finding_facts(
         reachability_results: List of ReachabilityResult from
             ``find_reachable_sinks()``.
         facts: Full fact list (used for sink + entrypoint lookups by id).
+        dataflows: Optional list of DataFlowFact from taint-lite analysis.
+            When provided, matching dataflows are correlated to findings.
         skip_missing_sinks: If True (default), reachability results whose
             sink_id has no corresponding SinkFact in ``facts`` are silently
             skipped instead of raising ValueError.
@@ -60,17 +64,18 @@ def build_finding_facts(
         by the input reachability_results order.
     """
     builder = FindingFactsBuilder(facts=facts, skip_missing_sinks=skip_missing_sinks)
-    return builder.build(reachability_results)
+    return builder.build(reachability_results, dataflows=dataflows)
 
 
 class FindingFactsBuilder:
     """Stateful builder that holds the fact index for efficient lookups."""
 
-    __slots__ = ("_fact_by_id", "_sink_by_id", "_ep_by_id", "_skip_missing_sinks")
+    __slots__ = ("_fact_by_id", "_sink_by_id", "_ep_by_id", "_dataflows_by_sink_id", "_skip_missing_sinks")
 
     def __init__(
         self,
         facts: list[Fact],
+        dataflows: list[DataFlowFact] | None = None,
         *,
         skip_missing_sinks: bool = True,
     ) -> None:
@@ -83,13 +88,43 @@ class FindingFactsBuilder:
         }
         self._skip_missing_sinks = skip_missing_sinks
 
+        # Build dataflow index by sink_id for O(1) lookup
+        self._dataflows_by_sink_id: dict[str, list[str]] = {}
+        if dataflows:
+            for df in dataflows:
+                sink_id = df.sink_id
+                if sink_id not in self._dataflows_by_sink_id:
+                    self._dataflows_by_sink_id[sink_id] = []
+                self._dataflows_by_sink_id[sink_id].append(df.id)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def build(self, reachability_results: list[ReachabilityResult]) -> list[FindingFact]:
-        """Convert a list of ReachabilityResult into FindingFact records."""
+    def build(
+        self,
+        reachability_results: list[ReachabilityResult],
+        dataflows: list[DataFlowFact] | None = None,
+    ) -> list[FindingFact]:
+        """Convert a list of ReachabilityResult into FindingFact records.
+
+        Args:
+            reachability_results: List of ReachabilityResult from
+                ``find_reachable_sinks()``.
+            dataflows: Optional list of DataFlowFact to correlate with findings.
+                If provided, matching dataflow IDs are attached to each finding.
+        """
         findings: list[FindingFact] = []
+
+        # Merge any late-passed dataflows into the index
+        if dataflows:
+            for df in dataflows:
+                sink_id = df.sink_id
+                if sink_id not in self._dataflows_by_sink_id:
+                    self._dataflows_by_sink_id[sink_id] = []
+                if df.id not in self._dataflows_by_sink_id[sink_id]:
+                    self._dataflows_by_sink_id[sink_id].append(df.id)
+
         for result in reachability_results:
             sink_fact = self._sink_by_id.get(result.sink_id)
             if sink_fact is None:
@@ -127,6 +162,9 @@ class FindingFactsBuilder:
         evidence = self._build_evidence(result, sink, entrypoint)
         call_chain = self._serialize_chain(result.call_chain)
 
+        # Retrieve correlated dataflow IDs for this sink
+        dataflow_ids = self._dataflows_by_sink_id.get(result.sink_id, [])
+
         return FindingFact(
             type="finding",
             id=finding_id,
@@ -141,6 +179,7 @@ class FindingFactsBuilder:
             sink_id=result.sink_id,
             call_chain=call_chain,
             evidence=evidence,
+            dataflows=dataflow_ids,
         )
 
     def _make_finding_name(

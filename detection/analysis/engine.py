@@ -24,6 +24,7 @@ from .facts.schema import (
 )
 from .passes.call_graph import build_call_graph, find_reachable_sinks
 from .passes.finding_builder import build_finding_facts
+from .passes.taint_lite import build_taint_lite_dataflows
 
 __all__ = ["run_ast_analysis"]
 
@@ -157,7 +158,7 @@ def _extract_facts(root: Path, file_path: Path) -> tuple[list[Fact], list[object
 def _analyze_facts(facts: list[Fact]) -> list[FindingFact]:
     """Run the full analysis pipeline on a fact list.
 
-    Pipeline: call graph → reachability → finding facts
+    Pipeline: call graph → reachability → taint-lite dataflows → finding facts
     """
     graph = build_call_graph(facts)
 
@@ -173,4 +174,6 @@ def _analyze_facts(facts: list[Fact]) -> list[FindingFact]:
         graph=graph,
     )
 
-    return build_finding_facts(reachability_results, facts)
+    dataflows = build_taint_lite_dataflows(facts, reachability_results)
+
+    return build_finding_facts(reachability_results, facts, dataflows=dataflows)
