@@ -31,76 +31,88 @@ No phase is marked complete without all six steps.
 
 ## Phase 1 - Fact Schema and Store
 
-- [ ] Add fact base types and schema module.
-- [ ] Implement deterministic ID generation with project-relative paths.
-- [ ] Implement store-level duplicate ID detection.
-- [ ] Add JSON/JSONL serialization and deserialization tests.
-- [ ] Add schema version tag for forward compatibility.
+- [x] Add fact base types and schema module.
+- [x] Implement deterministic ID generation with project-relative paths.
+- [x] Implement store-level duplicate ID detection.
+- [x] Add JSON/JSONL serialization and deserialization tests.
+- [x] Add schema version tag for forward compatibility.
 
 Exit gate:
 
-- [ ] Serialization roundtrip passes for all fact types.
-- [ ] Same filename in different directories does not collide.
+- [x] Serialization roundtrip passes for all fact types.
+- [x] Same filename in different directories does not collide.
 
 ## Phase 2 - Python Extractor MVP
 
-- [ ] Extract `FunctionFact`, `ImportFact`, `CallFact`, `EntryPointFact`,
+- [x] Extract `FunctionFact`, `ImportFact`, `CallFact`, `EntryPointFact`,
       `SourceFact` from Python AST.
-- [ ] Support import alias and basic assignment alias normalization.
-- [ ] Detect MCP entry decorators (`mcp.tool`, `server.tool`, equivalent forms).
-- [ ] Emit initial `SinkFact` for high-value RCE/file/network sinks.
+- [x] Support import alias and basic assignment alias normalization.
+- [x] Detect MCP entry decorators (`mcp.tool`, `server.tool`, equivalent forms).
+- [x] Emit initial `SinkFact` for high-value RCE/file/network sinks.
 
 Exit gate:
 
-- [ ] Supported-scope fixtures all pass.
-- [ ] Unsupported patterns fail gracefully with no crash.
+- [x] Supported-scope fixtures all pass.
+- [x] Unsupported patterns fail gracefully with no crash.
 
 ## Phase 3 - Call Graph, Reachability, Sink Detection, Adapter
 
-- [ ] Build call graph from `CallFact` and local function symbols.
-- [ ] Compute entrypoint-to-sink reachability.
-- [ ] Produce `FindingFact` with call-chain evidence.
-- [ ] Implement `FindingFact -> CapabilityFinding` adapter.
-- [ ] Validate old report renderers with adapted output.
+- [x] Build call graph from `CallFact` and local function symbols.
+- [x] Compute entrypoint-to-sink reachability.
+- [x] Produce `FindingFact` with call-chain evidence.
+- [x] Implement `FindingFact -> CapabilityFinding` adapter.
+- [x] Validate old report renderers with adapted output.
 
 Exit gate:
 
-- [ ] End-to-end finding includes entrypoint, sink, evidence, confidence.
-- [ ] Existing CLI report paths remain functional.
+- [x] End-to-end finding includes entrypoint, sink, evidence, confidence.
+- [x] Existing CLI report paths remain functional.
 
 ## Phase 4 - JavaScript/TypeScript Extractor
 
-- [ ] Integrate Tree-sitter parser bindings.
-- [ ] Support ESM import, CommonJS require, and destructured require.
-- [ ] Support MCP tool registration patterns with inline handlers.
-- [ ] Emit call and sink facts for node command/file/network behaviors.
+- [x] Integrate Tree-sitter parser bindings.
+- [x] Support ESM import, CommonJS require, and destructured require.
+- [x] Support MCP tool registration patterns with inline handlers.
+- [x] Emit call and sink facts for node command/file/network behaviors.
+- [x] Support class methods without extractor crashes.
+- [x] Support arrow function assignments as function contexts.
+- [x] Extract JS/TS call arguments for taint-lite.
+- [x] Emit `SourceFact` for MCP inline handler parameters.
+- [x] Emit simple JS/TS `AssignFact` records for same-function taint-lite.
+
+- [x] Infer `EntryPointKind` for JS/TS `server.resource(...)` and `server.prompt(...)`; currently JS/TS registrations are treated as MCP tool entries.
+- [x] Emit `SourceFact` for named handler registrations, e.g. `server.tool("run", runHandler)` where `runHandler(cmd)` is declared separately.
+- [x] Complete taint-lite evidence for named handler registrations, including `entrypoint param -> named handler param -> sink arg`.
+- [x] Support aliased destructured CommonJS require, e.g. `const { exec: ex } = require("child_process")`.
+- [x] Add regression tests for JS/TS resource/prompt kind inference, named handlers, and aliased destructured require.
 
 Exit gate:
 
-- [ ] JS/TS benchmark fixtures provide valid entry/call/sink extraction.
+- [x] JS/TS benchmark fixtures provide valid entry/call/sink extraction for supported inline-handler cases.
+- [x] JS/TS benchmark fixtures cover resource/prompt registrations and named-handler taint flows.
 
 ## Phase 5 - Taint-lite
 
-- [ ] Mark MCP parameters and trusted/untrusted source classes.
-- [ ] Track assignment propagation.
-- [ ] Track call argument propagation to sink parameters.
-- [ ] Emit `DataFlowFact` with ordered path steps.
+- [x] Mark MCP parameters and trusted/untrusted source classes.
+- [x] Track assignment propagation.
+- [x] Track call argument propagation to sink parameters.
+- [x] Emit `DataFlowFact` with ordered path steps.
 
 Exit gate:
 
-- [ ] `source -> assign -> sink_arg` path is reconstructable in reports.
+- [x] `source -> assign -> sink_arg` path is reconstructable in reports.
 
 ## Phase 6 - Dynamic Correlation
 
-- [ ] Convert runtime telemetry to `RuntimeEventFact`.
-- [ ] Implement static/dynamic matching heuristics with confidence scores.
-- [ ] Assign finding status (`potential`, `confirmed`, `runtime_only`).
-- [ ] Surface dynamic evidence references in final findings.
+- [x] Convert runtime telemetry to `RuntimeEventFact`.
+- [x] Implement static/dynamic matching heuristics with confidence scores.
+- [x] Assign finding status (`potential`, `confirmed`, `runtime_only`).
+- [x] Surface dynamic evidence references in final findings.
 
 Exit gate:
 
-- [ ] Confirmed findings always carry runtime evidence IDs.
-- [ ] Runtime-only findings are explicit and auditable.
+- [x] Confirmed findings always carry runtime evidence IDs.
+- [x] Runtime-only findings are explicit and auditable.
 
 ---
 

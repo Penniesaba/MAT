@@ -19,6 +19,8 @@ from ..facts.ids import (
     make_function_id,
     make_import_id,
     make_sink_id,
+    make_source_id,
+    make_assign_id,
 )
 from ..facts.schema import (
     CallArg,
@@ -36,6 +38,8 @@ from ..facts.schema import (
     ParamInfo,
     Severity,
     SinkFact,
+    SourceFact,
+    AssignFact,
 )
 
 
@@ -119,6 +123,13 @@ _MCP_REGISTRATION_PATTERNS: tuple[str, ...] = (
     "mcp.prompt",
 )
 
+# Mapping from method name (last segment of callee) to EntryPointKind
+_MCP_METHOD_TO_KIND: dict[str, EntryPointKind] = {
+    "tool": EntryPointKind.MCP_TOOL,
+    "resource": EntryPointKind.MCP_RESOURCE,
+    "prompt": EntryPointKind.MCP_PROMPT,
+}
+
 
 # ----------------------------------------------------------------------
 # Language detection and parser management
@@ -201,6 +212,9 @@ class JSTSFactExtractor:
         self._import_aliases: dict[str, str] = {}
         self._require_aliases: dict[str, str] = {}
 
+        # Named handler tracking for post-processing (identifier handlers in MCP registration)
+        self._named_handler_entrypoints: dict[str, str] = {}  # handler_name -> entrypoint_id
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -233,6 +247,9 @@ class JSTSFactExtractor:
 
         # Walk the tree
         self._walk_node(tree.root_node, source, tree)
+
+        # Post-processing: generate SourceFacts for named handlers
+        self._process_named_handlers(source)
 
         return self.facts, self.errors
 
@@ -268,29 +285,44 @@ class JSTSFactExtractor:
             # Handle imports (only at the top-level import_statement)
             self._handle_import(node)
 
-        elif node_type == "call_expression":
-            self._handle_call(node, source)
+        elif node_type in ("class_declaration", "class"):
+            self._handle_class_def(node)
+            for child in node.children:
+                self._walk_node(child, source, tree)
+            if self._class_stack:
+                self._class_stack.pop()
+            return
 
         elif node_type in ("function_declaration", "lexical_function_declaration"):
             self._handle_function_def(node)
+            for child in node.children:
+                self._walk_node(child, source, tree)
+            if self._function_stack:
+                self._function_stack.pop()
+            return
 
         elif node_type == "method_definition":
             self._handle_method_def(node)
+            for child in node.children:
+                self._walk_node(child, source, tree)
+            if self._function_stack:
+                self._function_stack.pop()
+            return
 
         elif node_type == "variable_declarator":
-            self._handle_variable_declarator(node, source)
+            pushed = self._handle_variable_declarator(node, source)
+            for child in node.children:
+                self._walk_node(child, source, tree)
+            if pushed and self._function_stack:
+                self._function_stack.pop()
+            return
+
+        elif node_type == "call_expression":
+            self._handle_call(node, source)
 
         # Recurse into children
         for child in node.children:
             self._walk_node(child, source, tree)
-
-        # Pop context after processing children
-        if node_type == "function_declaration":
-            self._function_stack.pop()
-        elif node_type == "lexical_function_declaration":
-            self._function_stack.pop()
-        elif node_type == "class":
-            self._class_stack.pop()
 
     # ------------------------------------------------------------------
     # Import handling
@@ -343,8 +375,9 @@ class JSTSFactExtractor:
                 )
                 self.facts.append(fact)
 
-                # Track alias
-                resolved = f"{module}.{name}"
+                # Track alias. For default imports, the local name usually denotes
+                # the module object itself (e.g. `import fs from "fs"`).
+                resolved = module if alias is None else f"{module}.{name}"
                 alias_key = alias if alias else name
                 self._import_aliases[alias_key] = resolved
 
@@ -411,6 +444,12 @@ class JSTSFactExtractor:
     # ------------------------------------------------------------------
     # Function/Method handling
     # ------------------------------------------------------------------
+
+    def _handle_class_def(self, node: tree_sitter.Node) -> None:
+        """Handle class declarations/expressions for method qualification."""
+        name_node = self._find_child_by_type(node, "identifier")
+        name = name_node.text.decode() if name_node is not None else "<anonymous_class>"
+        self._class_stack.append(name)
 
     def _handle_function_def(self, node: tree_sitter.Node) -> None:
         """Handle function declarations."""
@@ -492,11 +531,9 @@ class JSTSFactExtractor:
             return params
 
         for child in param_node.children:
-            if child.type == "required_parameter":
-                name_node = self._find_child_by_type(child, "identifier")
-                if name_node:
-                    params.append(ParamInfo(name=name_node.text.decode()))
-            elif child.type == "optional_parameter":
+            if child.type == "identifier":
+                params.append(ParamInfo(name=child.text.decode()))
+            elif child.type in ("required_parameter", "optional_parameter"):
                 name_node = self._find_child_by_type(child, "identifier")
                 if name_node:
                     params.append(ParamInfo(name=name_node.text.decode()))
@@ -513,32 +550,35 @@ class JSTSFactExtractor:
 
     def _handle_variable_declarator(
         self, node: tree_sitter.Node, source: str
-    ) -> None:
-        """Handle variable declarations for alias tracking."""
-        # Check for destructured require: const { readFile } = require("fs")
-        # The left side is object_pattern, right side is call_expression
-        left_node = self._find_child_by_type(node, "object_pattern")
-        right_node = self._find_child_by_type(node, "call_expression")
+    ) -> bool:
+        """Handle variable declarations.
 
-        if left_node is not None and right_node is not None:
-            # This is a destructuring pattern
-            name_node = self._find_child_by_type(right_node, "identifier")
+        Returns True when a function context was pushed for an arrow/function
+        expression assigned to a variable; the caller must pop it after walking
+        this node's children.
+        """
+        line = node.start_point[0] + 1
+
+        # Check for destructured require: const { readFile } = require("fs")
+        left_node = self._find_child_by_type(node, "object_pattern")
+        right_call = self._find_child_by_type(node, "call_expression")
+
+        if left_node is not None and right_call is not None:
+            name_node = self._find_child_by_type(right_call, "identifier")
             if name_node and name_node.text.decode() == "require":
-                # Get the module from arguments node's string child
-                args_node = self._find_child_by_type(right_node, "arguments")
+                args_node = self._find_child_by_type(right_call, "arguments")
                 if args_node:
                     module_node = self._find_child_by_type(args_node, "string")
                     if module_node:
                         module = self._get_string_value(module_node)
-                        # Extract each destructured name
                         for child in left_node.children:
                             if child.type == "shorthand_property_identifier_pattern":
                                 name = child.text.decode()
                                 fact = ImportFact(
                                     type="import",
-                                    id=make_import_id(self.root, self.file, node.start_point[0] + 1, f"{module}.{name}"),
+                                    id=make_import_id(self.root, self.file, line, f"{module}.{name}"),
                                     file=self._get_relative_path(),
-                                    line=node.start_point[0] + 1,
+                                    line=line,
                                     extractor="javascript_ts_tree_sitter",
                                     language="javascript",
                                     module=module,
@@ -547,40 +587,101 @@ class JSTSFactExtractor:
                                 )
                                 self.facts.append(fact)
                                 self._require_aliases[name] = f"{module}.{name}"
-            return
+                            elif child.type == "pair_pattern":
+                                # Handle aliased destructuring: const { exec: ex } = require("child_process")
+                                # pair_pattern children: [property_identifier (originalName), identifier (localAlias)]
+                                original_name_node = self._find_child_by_type(child, "property_identifier")
+                                local_alias_node = self._find_child_by_type(child, "identifier")
+                                if original_name_node and local_alias_node:
+                                    original_name = original_name_node.text.decode()
+                                    local_alias = local_alias_node.text.decode()
+                                    fact = ImportFact(
+                                        type="import",
+                                        id=make_import_id(self.root, self.file, line, f"{module}.{original_name}"),
+                                        file=self._get_relative_path(),
+                                        line=line,
+                                        extractor="javascript_ts_tree_sitter",
+                                        language="javascript",
+                                        module=module,
+                                        imported_name=original_name,
+                                        kind=ImportKind.REQUIRE_DESTRUCTURE,
+                                    )
+                                    self.facts.append(fact)
+                                    self._require_aliases[local_alias] = f"{module}.{original_name}"
+            return False
 
-        # Check for simple require: const fs = require("fs")
         name_node = self._find_child_by_type(node, "identifier")
-        value_node = self._find_child_by_type(node, "call_expression")
-
-        if name_node is None or value_node is None:
-            return
+        if name_node is None:
+            return False
 
         name = name_node.text.decode()
+        value_node = self._find_initializer_node(node)
+        if value_node is None:
+            return False
 
-        # Check if it's a require call
-        callee = self._find_child_by_type(value_node, "identifier")
-        if callee and callee.text.decode() == "require":
-            args_node = self._find_child_by_type(value_node, "arguments")
-            if args_node:
-                module_node = self._find_child_by_type(args_node, "string")
-                if module_node:
-                    module = self._get_string_value(module_node)
-                    # Create ImportFact for simple require
-                    fact = ImportFact(
-                        type="import",
-                        id=make_import_id(self.root, self.file, node.start_point[0] + 1, module),
-                        file=self._get_relative_path(),
-                        line=node.start_point[0] + 1,
-                        extractor="javascript_ts_tree_sitter",
-                        language="javascript",
-                        module=module,
-                        imported_name=None,
-                        alias=name,
-                        kind=ImportKind.REQUIRE,
-                    )
-                    self.facts.append(fact)
-                    self._require_aliases[name] = module
+        # const f = (x) => { ... } / const f = function(x) { ... }
+        if value_node.type in ("arrow_function", "function", "function_expression"):
+            qual_name = self._build_qualified_name(name)
+            self._function_stack.append(qual_name)
+            func_fact = FunctionFact(
+                type="function",
+                id=make_function_id("javascript", self.root, self.file, qual_name),
+                file=self._get_relative_path(),
+                line=value_node.start_point[0] + 1,
+                extractor="javascript_ts_tree_sitter",
+                language="javascript",
+                name=name,
+                qualified_name=qual_name,
+                end_line=value_node.end_point[0] + 1 if value_node.end_point else line,
+                params=self._extract_params(value_node),
+                enclosing_class=self._class_stack[-1] if self._class_stack else None,
+            )
+            self.facts.append(func_fact)
+            return True
+
+        # Check for simple require: const fs = require("fs")
+        if value_node.type == "call_expression":
+            callee = self._find_child_by_type(value_node, "identifier")
+            if callee and callee.text.decode() == "require":
+                args_node = self._find_child_by_type(value_node, "arguments")
+                if args_node:
+                    module_node = self._find_child_by_type(args_node, "string")
+                    if module_node:
+                        module = self._get_string_value(module_node)
+                        fact = ImportFact(
+                            type="import",
+                            id=make_import_id(self.root, self.file, line, module),
+                            file=self._get_relative_path(),
+                            line=line,
+                            extractor="javascript_ts_tree_sitter",
+                            language="javascript",
+                            module=module,
+                            imported_name=None,
+                            alias=name,
+                            kind=ImportKind.REQUIRE,
+                        )
+                        self.facts.append(fact)
+                        self._require_aliases[name] = module
+                return False
+
+        # Same-function assignment for taint-lite: const out = cmd;
+        current_func_id = self._current_mcp_handler_id or self._get_current_caller_id()
+        if not current_func_id.endswith("<module>"):
+            value_expr = self._get_expr_str(value_node)
+            if value_expr != "<expr>":
+                self.facts.append(AssignFact(
+                    type="assign",
+                    id=make_assign_id(self.root, self.file, line, name),
+                    file=self._get_relative_path(),
+                    line=line,
+                    extractor="javascript_ts_tree_sitter",
+                    function_id=current_func_id,
+                    target=name,
+                    value=value_expr,
+                    snippet=self._get_snippet(node, source),
+                ))
+
+        return False
 
     # ------------------------------------------------------------------
     # Call handling
@@ -622,16 +723,21 @@ class JSTSFactExtractor:
         args = self._find_children_by_type(node, "arguments")
         if args:
             arg_list_node = args[0]
-            for i, child in enumerate(arg_list_node.children):
-                if child.type == "argument":
-                    for arg_child in child.children:
-                        if arg_child.type in ("identifier", "string", "number",
-                                              "member_expression", "call_expression"):
-                            args_list.append(CallArg(
-                                index=i,
-                                expr=self._get_expr_str(arg_child),
-                                kind=self._get_expr_kind(arg_child),
-                            ))
+            arg_index = 0
+            for child in arg_list_node.children:
+                if child.type in ("(", ")", ","):
+                    continue
+                if child.type in (
+                    "identifier", "string", "template_string", "number", "true", "false", "null",
+                    "member_expression", "call_expression", "binary_expression", "object", "array",
+                    "arrow_function", "function", "function_expression",
+                ):
+                    args_list.append(CallArg(
+                        index=arg_index,
+                        expr=self._get_expr_str(child),
+                        kind=self._get_expr_kind(child),
+                    ))
+                    arg_index += 1
 
         # Build normalized callee
         normalized_callee = self._resolve_callee(callee_str)
@@ -660,16 +766,19 @@ class JSTSFactExtractor:
         self._check_sink(node, call_fact.id, normalized_callee)
 
     def _get_callee_str(self, node: tree_sitter.Node) -> str:
-        """Get string representation of callee."""
-        if node.type == "identifier":
+        """Get string representation of callee, including nested members."""
+        if node.type in ("identifier", "property_identifier", "shorthand_property_identifier"):
             return node.text.decode()
         elif node.type == "member_expression":
-            obj = self._find_child_by_type(node, "identifier")
-            prop = self._find_child_by_type(node, "property_identifier")
-            if obj and prop:
-                return f"{obj.text.decode()}.{prop.text.decode()}"
-            elif obj:
-                return obj.text.decode()
+            named = [c for c in node.children if c.is_named]
+            if len(named) >= 2:
+                return f"{self._get_callee_str(named[0])}.{self._get_callee_str(named[-1])}"
+            if named:
+                return self._get_callee_str(named[0])
+        elif node.type == "subscript_expression":
+            named = [c for c in node.children if c.is_named]
+            if named:
+                return self._get_callee_str(named[0])
         return "<unknown>"
 
     def _resolve_callee(self, callee: str) -> str:
@@ -705,13 +814,16 @@ class JSTSFactExtractor:
             return node.text.decode()
         elif node.type == "string":
             return self._get_string_value(node)
-        elif node.type == "number":
+        elif node.type == "template_string":
+            return node.text.decode()
+        elif node.type in ("number", "true", "false", "null"):
             return node.text.decode()
         elif node.type == "member_expression":
-            obj = self._find_child_by_type(node, "identifier")
-            prop = self._find_child_by_type(node, "property_identifier")
-            if obj and prop:
-                return f"{obj.text.decode()}.{prop.text.decode()}"
+            return self._get_callee_str(node)
+        elif node.type == "binary_expression":
+            named = [c for c in node.children if c.is_named]
+            if len(named) >= 2:
+                return f"{self._get_expr_str(named[0])} <op> {self._get_expr_str(named[-1])}"
         elif node.type == "call_expression":
             callee = self._find_child_by_type(node, "member_expression")
             if callee is None:
@@ -721,7 +833,21 @@ class JSTSFactExtractor:
         return "<expr>"
 
     def _get_expr_kind(self, node: tree_sitter.Node) -> str:
-        """Get expression kind."""
+        """Get normalized expression kind for cross-language passes."""
+        if node.type == "identifier":
+            return "name"
+        if node.type in ("string", "template_string", "number", "true", "false", "null"):
+            return "literal"
+        if node.type == "member_expression":
+            return "attribute"
+        if node.type == "call_expression":
+            return "call"
+        if node.type == "binary_expression":
+            return "binop"
+        if node.type == "object":
+            return "dict"
+        if node.type == "array":
+            return "list"
         return node.type
 
     def _get_snippet(self, node: tree_sitter.Node, source: str) -> str:
@@ -783,6 +909,7 @@ class JSTSFactExtractor:
                 if c.type in ("arrow_function", "identifier", "member_expression", "string")
             ]
             func_id = ""
+            entry_params: list[str] = []
             if len(children) > 1:
                 # Second argument is the handler (first is tool name string)
                 handler = children[1]
@@ -791,6 +918,8 @@ class JSTSFactExtractor:
                     qual_name = f"{ep_name}_handler"
                     func_id = make_function_id("javascript", self.root, self.file, qual_name)
 
+                    handler_params = self._extract_arrow_params(handler)
+                    entry_params = [p.name for p in handler_params]
                     func_fact = FunctionFact(
                         type="function",
                         id=func_id,
@@ -801,9 +930,23 @@ class JSTSFactExtractor:
                         name=f"{ep_name}_handler",
                         qualified_name=qual_name,
                         end_line=handler.end_point[0] + 1 if handler.end_point else handler.start_point[0] + 1,
-                        params=self._extract_arrow_params(handler),
+                        params=handler_params,
                     )
                     self.facts.append(func_fact)
+
+                    for param in handler_params:
+                        if not param.name.startswith("..."):
+                            self.facts.append(SourceFact(
+                                type="source",
+                                id=make_source_id(self.root, self.file, qual_name, param.name),
+                                file=self._get_relative_path(),
+                                line=handler.start_point[0] + 1,
+                                extractor="javascript_ts_tree_sitter",
+                                kind="mcp_tool_parameter",
+                                function_id=func_id,
+                                name=param.name,
+                                confidence=Confidence.HIGH,
+                            ))
 
                     # Walk the arrow function body with the handler as current context
                     # This ensures calls inside the handler have correct caller attribution
@@ -814,22 +957,35 @@ class JSTSFactExtractor:
                     finally:
                         self._current_mcp_handler_id = previous_handler_id
                 elif handler.type == "identifier":
-                    func_id = make_function_id("javascript", self.root, self.file, handler.text.decode())
+                    handler_name = handler.text.decode()
+                    func_id = make_function_id("javascript", self.root, self.file, handler_name)
+                    # Look up the FunctionFact to get params for EntryPointFact
+                    for fact in self.facts:
+                        if fact.type == "function" and fact.name == handler_name:
+                            entry_params = [p.name for p in fact.params if not p.name.startswith("...")]
+                            break
+                    # Track for post-processing: will generate SourceFacts for this function's params
+                    ep_id = make_entrypoint_id(self.root, self.file, ep_name)
+                    self._named_handler_entrypoints[handler_name] = ep_id
 
             if func_id:
+                # Determine EntryPointKind from callee method name (last segment)
+                method_name = callee_str.rsplit(".", 1)[-1] if "." in callee_str else ""
+                ep_kind = _MCP_METHOD_TO_KIND.get(method_name, EntryPointKind.MCP_TOOL)
                 ep_fact = EntryPointFact(
                     type="entrypoint",
                     id=make_entrypoint_id(self.root, self.file, ep_name),
                     file=self._get_relative_path(),
                     line=node.start_point[0] + 1,
                     extractor="javascript_ts_tree_sitter",
-                    kind=EntryPointKind.MCP_TOOL,
+                    kind=ep_kind,
                     name=ep_name,
                     function_id=func_id,
                     evidence=EntryPointEvidence(
                         kind="call_registration",
                         text=callee_str,
                     ),
+                    params=entry_params,
                     confidence=Confidence.HIGH,
                 )
                 self.facts.append(ep_fact)
@@ -842,11 +998,60 @@ class JSTSFactExtractor:
             return params
 
         for child in param_node.children:
-            if child.type == "required_parameter":
+            if child.type == "identifier":
+                params.append(ParamInfo(name=child.text.decode()))
+            elif child.type in ("required_parameter", "optional_parameter"):
                 name_node = self._find_child_by_type(child, "identifier")
                 if name_node:
                     params.append(ParamInfo(name=name_node.text.decode()))
+            elif child.type == "rest_parameter":
+                name_node = self._find_child_by_type(child, "identifier")
+                if name_node:
+                    params.append(ParamInfo(name=f"...{name_node.text.decode()}"))
         return params
+
+    # ------------------------------------------------------------------
+    # Post-processing: named handler SourceFact generation
+    # ------------------------------------------------------------------
+
+    def _process_named_handlers(self, source: str) -> None:
+        """Generate SourceFacts for named handlers that reference FunctionFacts.
+
+        When an MCP registration uses an identifier handler (e.g., server.tool("name", runHandler)),
+        we need to look up the referenced FunctionFact and generate SourceFacts for its parameters.
+        """
+        if not self._named_handler_entrypoints:
+            return
+
+        # Build a map from function name -> FunctionFact for quick lookup
+        func_facts_by_name: dict[str, FunctionFact] = {}
+        for fact in self.facts:
+            if fact.type == "function":
+                func_facts_by_name[fact.name] = fact
+
+        # For each named handler, find the referenced FunctionFact and generate SourceFacts
+        for handler_name, ep_id in self._named_handler_entrypoints.items():
+            if handler_name not in func_facts_by_name:
+                continue
+
+            func_fact = func_facts_by_name[handler_name]
+            func_id = func_fact.id
+
+            # Generate SourceFact for each parameter (except rest params)
+            for param in func_fact.params:
+                if param.name.startswith("..."):
+                    continue
+                self.facts.append(SourceFact(
+                    type="source",
+                    id=make_source_id(self.root, self.file, func_fact.qualified_name, param.name),
+                    file=self._get_relative_path(),
+                    line=func_fact.line,
+                    extractor="javascript_ts_tree_sitter",
+                    kind="mcp_tool_parameter",
+                    function_id=func_id,
+                    name=param.name,
+                    confidence=Confidence.HIGH,
+                ))
 
     # ------------------------------------------------------------------
     # Sink detection
@@ -893,9 +1098,20 @@ class JSTSFactExtractor:
     # ------------------------------------------------------------------
 
     def _find_child_by_type(self, node: tree_sitter.Node, child_type: str) -> tree_sitter.Node | None:
-        """Find first child of given type."""
+        """Find first direct child of given type."""
         for child in node.children:
             if child.type == child_type:
+                return child
+        return None
+
+    def _find_initializer_node(self, node: tree_sitter.Node) -> tree_sitter.Node | None:
+        """Return the RHS initializer node from a variable_declarator."""
+        seen_equals = False
+        for child in node.children:
+            if child.type == "=":
+                seen_equals = True
+                continue
+            if seen_equals and child.is_named:
                 return child
         return None
 
