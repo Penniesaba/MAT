@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -60,17 +61,11 @@ def _import_engine():
 
 
 def _make_python_file(content: str) -> Path:
-    """Create a temp Python file, returns Path. Caller should unlink it."""
-    # Use NamedTemporaryFile for cross-platform encoding support
-    f = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".py", delete=False, encoding="utf-8"
-    )
-    try:
-        f.write(content)
-        f.flush()
-        return Path(f.name)
-    finally:
-        f.close()
+    """Create a Python fixture in its own temp project directory."""
+    temp_dir = Path(tempfile.mkdtemp(prefix="ast-py-fixture-"))
+    path = temp_dir / "server.py"
+    path.write_text(content, encoding="utf-8")
+    return path
 
 
 def _cleanup(path: Path) -> None:
@@ -78,6 +73,8 @@ def _cleanup(path: Path) -> None:
         path.unlink()
     except OSError:
         pass
+    if path.parent.name.startswith("ast-py-fixture-"):
+        shutil.rmtree(path.parent, ignore_errors=True)
 
 
 # ----------------------------------------------------------------------

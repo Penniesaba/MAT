@@ -9,6 +9,7 @@ Phase 4 acceptance checks:
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -58,16 +59,11 @@ def _import_engine():
 
 
 def _make_jsts_file(content: str, suffix: str = ".js") -> Path:
-    """Create a temp JS/TS file, returns Path. Caller should unlink it."""
-    f = tempfile.NamedTemporaryFile(
-        mode="w", suffix=suffix, delete=False, encoding="utf-8"
-    )
-    try:
-        f.write(content)
-        f.flush()
-        return Path(f.name)
-    finally:
-        f.close()
+    """Create a JS/TS fixture in its own temp project directory."""
+    temp_dir = Path(tempfile.mkdtemp(prefix="ast-jsts-fixture-"))
+    path = temp_dir / f"server{suffix}"
+    path.write_text(content, encoding="utf-8")
+    return path
 
 
 def _cleanup(path: Path) -> None:
@@ -75,6 +71,8 @@ def _cleanup(path: Path) -> None:
         path.unlink()
     except OSError:
         pass
+    if path.parent.name.startswith("ast-jsts-fixture-"):
+        shutil.rmtree(path.parent, ignore_errors=True)
 
 
 # ----------------------------------------------------------------------
