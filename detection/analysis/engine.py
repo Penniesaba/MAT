@@ -205,21 +205,39 @@ def _analyze_facts(facts: list[Fact]) -> list[FindingFact]:
     """Run the full analysis pipeline on a fact list.
 
     Pipeline: call graph → reachability → taint-lite dataflows → finding facts
+
+    Path A (MCP Forward): entrypoints → sinks (requires MCP entrypoints)
+    Path B (Generic Reverse): sink → root function (works without MCP entrypoints)
     """
     graph = build_call_graph(facts)
 
     entrypoints = _filter_entrypoints(facts)
     sinks = _filter_sinks(facts)
 
-    if not entrypoints or not sinks:
-        return []
+    findings: list[FindingFact] = []
 
-    reachability_results = find_reachable_sinks(
-        entrypoints=entrypoints,
-        sinks=sinks,
-        graph=graph,
-    )
+    # Path A: MCP forward analysis (existing logic — requires entrypoints AND sinks)
+    if entrypoints and sinks:
+        reachability_results = find_reachable_sinks(
+            entrypoints=entrypoints,
+            sinks=sinks,
+            graph=graph,
+        )
 
-    dataflows = build_taint_lite_dataflows(facts, reachability_results)
+        dataflows = build_taint_lite_dataflows(facts, reachability_results)
 
-    return build_finding_facts(reachability_results, facts, dataflows=dataflows)
+        findings.extend(build_finding_facts(reachability_results, facts, dataflows=dataflows))
+
+    # Path B: Generic sink reverse trace (works even when no MCP entrypoints exist)
+    if sinks:
+        from .passes.reverse_sink_trace import find_sink_root_chains, build_sink_root_findings
+
+        root_chains = find_sink_root_chains(facts, graph)
+
+        # Deduplicate: skip sinks already covered by Path A
+        covered_sink_ids = {f.sink_id for f in findings if f.sink_id}
+        root_chains = [rc for rc in root_chains if rc.sink_id not in covered_sink_ids]
+
+        findings.extend(build_sink_root_findings(root_chains, facts))
+
+    return findings

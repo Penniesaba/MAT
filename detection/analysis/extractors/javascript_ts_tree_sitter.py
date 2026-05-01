@@ -83,7 +83,7 @@ _SINK_RULES: list[SinkRule] = [
         reason="Executes external commands via child_process",
     ),
     SinkRule(
-        patterns=("eval", "exec", "Function", "new Function"),
+        patterns=("eval", "Function", "new Function"),
         category="rce",
         rule_id="rce_dynamic",
         severity=Severity.HIGH,
