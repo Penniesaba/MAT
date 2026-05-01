@@ -16,7 +16,7 @@ import socket
 import struct
 import sys
 import time
-from ctypes import c_char, c_uint8, c_uint32, c_uint64
+from ctypes import c_char, c_uint8, c_uint32, c_uint64, c_int
 from datetime import datetime
 
 from bcc import BPF
@@ -103,6 +103,7 @@ class EventData:
         ("addr_family", c_uint32),
         ("port", c_uint32),
         ("ip", c_uint8 * 16),
+        ("stack_id", c_int),
     ]
 
 
@@ -274,6 +275,7 @@ class eBPFMonitor:
         # File system events
         if event_type in ["FILE_OPEN", "FILE_READ", "FILE_WRITE", "FILE_UNLINK"]:
             extensions["dst"] = path or f"fd:{event.fd}"
+            extensions["target_path"] = path
             extensions["act"] = event_type.split("_")[1].lower()
 
             if event_type in ["FILE_READ", "FILE_WRITE"]:
@@ -292,11 +294,13 @@ class eBPFMonitor:
                 if event.addr_family == 1:  # AF_UNIX
                     extensions["dst"] = path
                     extensions["proto"] = "unix"
+                    extensions["target_path"] = path
                 else:
                     ip_str = self._format_ip(event.ip, event.addr_family)
                     extensions["dst"] = f"{ip_str}:{event.port}"
                     extensions["dpt"] = str(event.port)
                     extensions["proto"] = "tcp" if event.addr_family == 2 else "udp"
+                    extensions["target_path"] = extensions.get("dst", "")
 
                 extensions["cs1"] = str(event.addr_family)
                 extensions["cs1Label"] = "Family"
@@ -317,14 +321,35 @@ class eBPFMonitor:
                 extensions["dproc"] = path
                 extensions["cs1"] = path
                 extensions["cs1Label"] = "Command"
+                extensions["command_args"] = path
             else:
                 extensions["cs1"] = "fork/clone"
                 extensions["cs1Label"] = "Action"
+
+        # Stack trace
+        if hasattr(event, 'stack_id') and event.stack_id >= 0:
+            stack_frames = self._symbolize_stack(event.stack_id)
+            if stack_frames:
+                extensions["ustack"] = "|".join(stack_frames)
 
         # Log to CEF
         self.logger.log_event(
             event_type, {"name": self._event_name(event_type, extensions)}, extensions
         )
+
+    def _symbolize_stack(self, stack_id):
+        """Symbolize user-space stack trace as hex addresses."""
+        if stack_id < 0:
+            return None
+        try:
+            addrs = self.bpf["stack_traces"].get_stack(stack_id)
+            frames = []
+            for addr in addrs:
+                # Format as hex address; can be resolved offline with addr2line
+                frames.append(f"0x{addr:x}")
+            return frames
+        except Exception:
+            return None
 
     def _event_name(self, event_type, extensions):
         """Generate human-readable event name"""

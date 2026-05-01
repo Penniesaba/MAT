@@ -66,6 +66,48 @@ class CEFEvent:
     severity: int
     extensions: dict[str, str]
 
+    @property
+    def ustack(self) -> list[str] | None:
+        """Parse ustack field (pipe-delimited stack frames)."""
+        raw = self.extensions.get("ustack")
+        if not raw:
+            return None
+        return raw.split("|")
+
+    @property
+    def script_file(self) -> str | None:
+        """Get script_file field."""
+        return self.extensions.get("script_file")
+
+    @property
+    def script_line(self) -> int | None:
+        """Parse script_line field as integer."""
+        raw = self.extensions.get("script_line")
+        if raw is None:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
+    @property
+    def logical_function(self) -> str | None:
+        """Get logical_function field."""
+        return self.extensions.get("logical_function")
+
+    @property
+    def command_args(self) -> list[str] | None:
+        """Parse command_args field (space-delimited arguments)."""
+        raw = self.extensions.get("command_args")
+        if not raw:
+            return None
+        return raw.split()
+
+    @property
+    def target_path(self) -> str | None:
+        """Get target_path field."""
+        return self.extensions.get("target_path")
+
     @classmethod
     def parse(cls, cef_line: str) -> Optional["CEFEvent"]:
         """Parse a CEF-formatted log line.

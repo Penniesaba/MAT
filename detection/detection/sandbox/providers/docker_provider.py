@@ -107,12 +107,19 @@ class DockerSandboxProvider:
                 f"  docker-compose build"
             )
 
-    def run(self, target_path: Path, *, timeout: int = 60) -> SandboxResult:
+    def run(
+        self,
+        target_path: Path,
+        *,
+        timeout: int = 60,
+        execution_mode: str = "mcp_fuzz",
+    ) -> SandboxResult:
         """Execute target in Docker sandbox with eBPF monitoring.
 
         Args:
             target_path: Path to MCP tool directory or Python file
             timeout: Maximum execution time in seconds
+            execution_mode: Execution mode - "mcp_fuzz" or "direct_exec"
 
         Returns:
             SandboxResult with logs, telemetry, and exit code
@@ -196,6 +203,8 @@ class DockerSandboxProvider:
                 "environment": {
                     "MONITOR_TIMEOUT": str(timeout),
                     "LOG_LEVEL": os.getenv("LOG_LEVEL", "INFO"),
+                    "MODE": execution_mode,
+                    "TARGET_CMD": "",  # Set below after determining target
                 },
                 "network_mode": self.network_mode,
                 "detach": True,
@@ -259,6 +268,7 @@ class DockerSandboxProvider:
                 logs=logs_content,
                 telemetry=telemetry,
                 exit_code=exit_code,
+                execution_mode=execution_mode,
             )
 
     def _parse_cef_logs(self, cef_logs: str) -> dict[str, Any]:

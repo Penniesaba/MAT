@@ -120,6 +120,31 @@ def _parse_cef_line(line: str) -> RuntimeEventFact | None:
     # Extract timestamp from rt
     timestamp = extensions.get("rt")
 
+    # Extract new extended fields (backward compatible — missing fields become None/empty)
+    ustack_raw = extensions.get("ustack")
+    ustack: list[str] | None = None
+    if ustack_raw:
+        ustack = ustack_raw.split("|")
+
+    script_file = extensions.get("script_file")
+    script_line: int | None = None
+    script_line_raw = extensions.get("script_line")
+    if script_line_raw is not None:
+        try:
+            script_line = int(script_line_raw)
+        except ValueError:
+            logger.debug("Failed to parse script_line '%s' as int", script_line_raw)
+            script_line = None
+
+    logical_function = extensions.get("logical_function")
+
+    command_args_raw = extensions.get("command_args")
+    command_args: list[str] | None = None
+    if command_args_raw:
+        command_args = command_args_raw.split()
+
+    target_path = extensions.get("target_path")
+
     # Generate ID
     if pid is not None and syscall is not None:
         fact_id = make_runtime_event_id(syscall, pid)
@@ -143,6 +168,12 @@ def _parse_cef_line(line: str) -> RuntimeEventFact | None:
         correlated_entrypoint=None,
         correlated_sink=None,
         confidence=None,
+        ustack=ustack,
+        script_file=script_file,
+        script_line=script_line,
+        logical_function=logical_function,
+        command_args=command_args,
+        target_path=target_path,
     )
 
 

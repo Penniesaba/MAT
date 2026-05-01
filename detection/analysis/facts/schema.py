@@ -271,6 +271,12 @@ class RuntimeEventFact(Fact):
     correlated_entrypoint: str | None = None
     correlated_sink: str | None = None
     confidence: Confidence | None = None
+    ustack: list[str] | None = None
+    script_file: str | None = None
+    script_line: int | None = None
+    logical_function: str | None = None
+    command_args: list[str] | None = None
+    target_path: str | None = None
 
 
 @dataclass(slots=True)

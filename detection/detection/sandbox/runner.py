@@ -14,6 +14,7 @@ class SandboxResult:
     logs: str
     telemetry: Mapping[str, object]
     exit_code: int
+    execution_mode: str = "mcp_fuzz"
 
 
 class SandboxProvider(Protocol):
@@ -21,5 +22,5 @@ class SandboxProvider(Protocol):
 
     name: str
 
-    def run(self, target_path: Path, *, timeout: int = 60) -> SandboxResult:
+    def run(self, target_path: Path, *, timeout: int = 60, execution_mode: str = "mcp_fuzz") -> SandboxResult:
         """Execute the target in an isolated environment."""

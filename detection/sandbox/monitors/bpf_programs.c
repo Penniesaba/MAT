@@ -47,6 +47,7 @@ struct event_data {
     u32 addr_family;    // AF_INET, AF_INET6, AF_UNIX
     u32 port;           // Network port
     u8  ip[16];         // IPv4/IPv6 address
+    int stack_id;       // User-space stack trace ID
 };
 
 // Temporary storage for open/openat arguments
@@ -61,6 +62,7 @@ struct fd_info_t {
 };
 
 BPF_PERF_OUTPUT(events);
+BPF_STACK_TRACE(stack_traces, 1024);
 
 // Per-CPU arrays to avoid stack limit issues
 BPF_PERCPU_ARRAY(event_heap, struct event_data, 1);
@@ -146,7 +148,9 @@ TRACEPOINT_PROBE(syscalls, sys_exit_openat) {
             event->flags = saved_args->flags;
             bpf_get_current_comm(&event->comm, sizeof(event->comm));
             __builtin_memcpy(event->path, saved_args->fname, sizeof(event->path));
-            
+
+            event->stack_id = stack_traces.get_stackid(args, BPF_F_USER_STACK);
+
             events.perf_submit(args, event, sizeof(*event));
         }
     }
@@ -235,15 +239,21 @@ TRACEPOINT_PROBE(syscalls, sys_enter_unlinkat) {
         event->pid = get_curr_pid();
         event->uid = bpf_get_current_uid_gid();
         event->timestamp = bpf_ktime_get_ns();
-        
+
         bpf_get_current_comm(&event->comm, sizeof(event->comm));
+
+        // Read pathname from unlinkat args
         bpf_probe_read_user_str(event->path, sizeof(event->path), args->pathname);
-        
+
+        event->stack_id = stack_traces.get_stackid(args, BPF_F_USER_STACK);
+
         events.perf_submit(args, event, sizeof(*event));
     }
     return 0;
 }
 
+// ============================================================================
+// NETWORK MONITORING
 // ============================================================================
 // PROCESS MONITORING
 // ============================================================================
@@ -260,10 +270,12 @@ TRACEPOINT_PROBE(syscalls, sys_enter_execve) {
         event->pid = get_curr_pid();
         event->uid = bpf_get_current_uid_gid();
         event->timestamp = bpf_ktime_get_ns();
-        
+
         bpf_get_current_comm(&event->comm, sizeof(event->comm));
         bpf_probe_read_user_str(event->path, sizeof(event->path), args->filename);
-        
+
+        event->stack_id = stack_traces.get_stackid(args, BPF_F_USER_STACK);
+
         events.perf_submit(args, event, sizeof(*event));
     }
     return 0;
@@ -333,7 +345,9 @@ TRACEPOINT_PROBE(syscalls, sys_enter_connect) {
             bpf_probe_read_user(&sun, sizeof(sun), uaddr);
             bpf_probe_read_user_str(event->path, sizeof(event->path), sun.sun_path);
         }
-        
+
+        event->stack_id = stack_traces.get_stackid(args, BPF_F_USER_STACK);
+
         events.perf_submit(args, event, sizeof(*event));
     }
     return 0;
