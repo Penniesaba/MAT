@@ -3,10 +3,11 @@
 # MCP Security Sandbox Entrypoint
 #
 # This script:
-# 1. Starts eBPF monitoring in background
-# 2. Executes the Fuzzer which wraps the target MCP tool OR direct execution
-# 3. Waits for analysis to complete
-# 4. Exits with status
+# 1. Phase 1: Prepares target (npm install etc.) - BEFORE monitor starts
+# 2. Phase 2: Starts eBPF monitoring in background
+# 3. Phase 3: Executes the Fuzzer or direct execution
+# 4. Waits for analysis to complete
+# 5. Exits with status
 
 set -e
 
@@ -31,102 +32,137 @@ if [ ! -d "/sys/kernel/debug/tracing" ]; then
     exit 1
 fi
 
+# Allow BPF perf event attachment (required for tracepoints)
+echo 0 > /proc/sys/kernel/perf_event_paranoid 2>/dev/null || true
+
 # Check if target directory exists
 if [ ! -d "/target" ]; then
     echo "[ERROR] Target directory /target not mounted"
     exit 1
 fi
 
-# Start eBPF monitor in background
-echo "[*] Starting eBPF monitor..."
-python3 /monitor/ebpf_monitor.py &
-MONITOR_PID=$!
+# ============================================================================
+# Phase 1: Prepare cgroup boundary + target (BEFORE monitor starts)
+# ============================================================================
 
-# Give monitor time to attach probes
-sleep 2
+# Verify cgroup v2 is in use and /sys/fs/cgroup is writable
+if [ ! -f "/sys/fs/cgroup/cgroup.controllers" ] && [ ! -d "/sys/fs/cgroup/unified" ]; then
+    echo "[ERROR] cgroup v2 not detected. This sandbox requires cgroup v2."
+    exit 1
+fi
 
-if [ "$MODE" = "direct_exec" ]; then
-    echo "[*] Mode: direct_exec"
+if [ ! -w "/sys/fs/cgroup" ]; then
+    echo "[ERROR] /sys/fs/cgroup is not writable."
+    exit 1
+fi
 
-    # Determine target
-    EXEC_CMD=""
-    if [ -n "$TARGET_CMD" ]; then
-        EXEC_CMD="$TARGET_CMD"
-    elif [ -f "/target/run.sh" ]; then
-        chmod +x /target/run.sh
-        EXEC_CMD="/target/run.sh"
-    else
-        # Auto-detect: prefer .js, then .py
-        JS_FILE=$(find /target -name "*.js" -not -path "*/node_modules/*" -type f | head -n 1)
-        PY_FILE=$(find /target -name "*.py" -type f | head -n 1)
-        if [ -n "$JS_FILE" ]; then
-            EXEC_CMD="node $JS_FILE"
-        elif [ -n "$PY_FILE" ]; then
-            EXEC_CMD="python3 $PY_FILE"
-        fi
+# Create target cgroup for the MCP server
+MCP_TARGET_CGROUP_PATH="/sys/fs/cgroup/mcp-target"
+if [ ! -d "$MCP_TARGET_CGROUP_PATH" ]; then
+    mkdir -p "$MCP_TARGET_CGROUP_PATH"
+fi
+
+# Verify cgroup.procs is writable
+if [ ! -w "$MCP_TARGET_CGROUP_PATH/cgroup.procs" ]; then
+    echo "[ERROR] $MCP_TARGET_CGROUP_PATH/cgroup.procs is not writable."
+    exit 1
+fi
+
+# Compute cgroup inode number (used by eBPF to correlate PIDs)
+MCP_TARGET_CGROUP_ID=$(stat -c "%i" "$MCP_TARGET_CGROUP_PATH" 2>/dev/null)
+if [ -z "$MCP_TARGET_CGROUP_ID" ]; then
+    echo "[ERROR] Failed to stat $MCP_TARGET_CGROUP_PATH"
+    exit 1
+fi
+
+export MCP_TARGET_CGROUP_PATH
+export MCP_TARGET_CGROUP_ID
+
+echo "[*] Target cgroup: $MCP_TARGET_CGROUP_PATH (id=$MCP_TARGET_CGROUP_ID)"
+
+# Prepare target command
+TARGET_CMD=()
+TARGET_CMD_DISPLAY=""
+
+if [ -f "/target/run.sh" ]; then
+    chmod +x /target/run.sh
+    TARGET_CMD=("/target/run.sh")
+    TARGET_CMD_DISPLAY="/target/run.sh"
+elif [ -f "/target/package.json" ]; then
+    if [ ! -d "/target/node_modules" ]; then
+        echo "[*] Installing Node dependencies..."
+        cd /target && npm install && cd /
     fi
-
-    if [ -z "$EXEC_CMD" ]; then
-        echo "[ERROR] No target to execute in direct_exec mode"
-        kill $MONITOR_PID 2>/dev/null || true
-        exit 1
+    TARGET_CMD=("node" "/target/index.js")
+    TARGET_CMD_DISPLAY="node /target/index.js"
+elif [ -f "/target/vulnerable-mcp-server-filesystem-workspace-actions-mcp.py" ]; then
+    if [ ! -d "/target/sandbox-workspace" ]; then
+        mkdir -p /target/sandbox-workspace
     fi
-
-    echo "[*] Executing: $EXEC_CMD"
-    timeout ${MONITOR_TIMEOUT} $EXEC_CMD || true
-
+    TARGET_CMD=("python3" "/target/vulnerable-mcp-server-filesystem-workspace-actions-mcp.py" "/target/sandbox-workspace")
+    TARGET_CMD_DISPLAY="python3 /target/vulnerable-mcp-server-filesystem-workspace-actions-mcp.py /target/sandbox-workspace"
 else
-    # mcp_fuzz mode (existing behavior)
-    echo "[*] Mode: mcp_fuzz"
-
-    # Determine Target Command
-    TARGET_CMD=""
-
-    # Priority 1: run.sh
-    if [ -f "/target/run.sh" ]; then
-        echo "[*] Found run.sh"
-        chmod +x /target/run.sh
-        TARGET_CMD="/target/run.sh"
-
-    # Priority 2: Node.js package
-    elif [ -f "/target/package.json" ]; then
-        echo "[*] Found package.json"
-        if [ ! -d "/target/node_modules" ]; then
-            echo "[*] Installing Node dependencies..."
-            cd /target && npm install && cd /
-        fi
-        TARGET_CMD="node /target/index.js"
-
-    # Priority 3: Special case for filesystem-actions (needs argument)
-    elif [ -f "/target/vulnerable-mcp-server-filesystem-workspace-actions-mcp.py" ]; then
-        echo "[*] Found filesystem-actions server"
-        if [ ! -d "/target/sandbox-workspace" ]; then
-            mkdir -p /target/sandbox-workspace
-        fi
-        TARGET_CMD="python3 /target/vulnerable-mcp-server-filesystem-workspace-actions-mcp.py /target/sandbox-workspace"
-
-    # Priority 4: Generic Python script
+    JS_FILE=$(find /target -name "*.js" -not -path "*/node_modules/*" -type f | head -n 1)
+    if [ -n "$JS_FILE" ]; then
+        TARGET_CMD=("node" "$JS_FILE")
+        TARGET_CMD_DISPLAY="node $JS_FILE"
     else
         SCRIPT=$(find /target -name "*.py" -type f | head -n 1)
         if [ -n "$SCRIPT" ]; then
-            echo "[*] Found Python script: $SCRIPT"
-            TARGET_CMD="python3 $SCRIPT"
+            TARGET_CMD=("python3" "$SCRIPT")
+            TARGET_CMD_DISPLAY="python3 $SCRIPT"
         fi
     fi
+fi
 
-    if [ -z "$TARGET_CMD" ]; then
-        echo "[ERROR] No runnable target found in /target"
-        kill $MONITOR_PID 2>/dev/null || true
-        exit 1
+if [ ${#TARGET_CMD[@]} -eq 0 ]; then
+    echo "[ERROR] No runnable target found in /target"
+    exit 1
+fi
+
+# ============================================================================
+# Pre-Monitor Setup Hook
+# ============================================================================
+
+if [ -f "/target/setup.sh" ]; then
+    chmod +x /target/setup.sh
+    echo "[*] Running target setup before monitor..."
+    /target/setup.sh
+fi
+
+# ============================================================================
+# Phase 2: Start eBPF monitor
+# ============================================================================
+
+
+echo "[*] Starting eBPF monitor..."
+python3 /monitor/ebpf_monitor.py &
+MONITOR_PID=$!
+sleep 2
+
+# ============================================================================
+# Phase 3: Execute target
+# ============================================================================
+if [ "$MODE" = "direct_exec" ]; then
+    echo "[*] Mode: direct_exec, executing: $TARGET_CMD_DISPLAY"
+
+    # Add ourselves to the target cgroup, then exec the target command.
+    # timeout returns 124 on timeout, which we normalize to 0 per monitor semantics.
+    set +e
+    timeout ${MONITOR_TIMEOUT} bash -lc 'set -e; echo $$ > "$MCP_TARGET_CGROUP_PATH/cgroup.procs"; exec "$@"' _ "${TARGET_CMD[@]}"
+    EXIT_CODE=$?
+    set -e
+    if [ $EXIT_CODE -eq 124 ]; then
+        echo "[*] Analysis timed out (expected)"
+        EXIT_CODE=0
     fi
-
-    echo "[*] Starting Fuzzer against: $TARGET_CMD"
+else
+    echo "[*] Mode: mcp_fuzz, fuzzer targeting: $TARGET_CMD_DISPLAY"
 
     # Run Fuzzer (which runs Target) with timeout
-    timeout ${MONITOR_TIMEOUT} python3 /monitor/fuzzer.py $TARGET_CMD &
+    timeout ${MONITOR_TIMEOUT} python3 /monitor/fuzzer.py "${TARGET_CMD[@]}" &
     FUZZER_PID=$!
 
-    # Wait for Fuzzer
     wait $FUZZER_PID
     EXIT_CODE=$?
 

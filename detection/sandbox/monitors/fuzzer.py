@@ -5,10 +5,27 @@ Wraps an MCP server process, handles initialization, and fuzzes available tools.
 """
 
 import json
+import os
 import subprocess
 import sys
 import threading
 import time
+
+
+MCP_TARGET_CGROUP_PATH = os.environ.get("MCP_TARGET_CGROUP_PATH", "")
+
+
+def _join_target_cgroup():
+    """Write this process's PID to the target cgroup.procs to place the
+    server child (not the fuzzer) in the target cgroup."""
+    if not MCP_TARGET_CGROUP_PATH:
+        raise RuntimeError("MCP_TARGET_CGROUP_PATH is not set")
+    cgroup_procs_path = os.path.join(MCP_TARGET_CGROUP_PATH, "cgroup.procs")
+    pid = os.getpid()
+    with open(cgroup_procs_path, "w") as f:
+        f.write(str(pid))
+    # After this preexec_fn returns, the shell child will exec the server.
+    # The server inherits this cgroup membership across exec; child processes inherit it across fork.
 
 
 def read_stream(stream, callback):
@@ -28,16 +45,26 @@ class MCAFuzzer:
         self.tools = []
 
     def start(self):
+        if not MCP_TARGET_CGROUP_PATH:
+            raise RuntimeError(
+                "MCP_TARGET_CGROUP_PATH not set; cannot start fuzzer without cgroup boundary"
+            )
         print(f"Starting server with command: {self.command}")
-        self.process = subprocess.Popen(
-            self.command,
-            shell=True,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=sys.stderr,
-            text=True,
-            bufsize=1,
-        )
+        try:
+            self.process = subprocess.Popen(
+                self.command,
+                shell=True,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=sys.stderr,
+                text=True,
+                bufsize=1,
+                preexec_fn=_join_target_cgroup,
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to spawn server in target cgroup {MCP_TARGET_CGROUP_PATH}: {e}"
+            ) from e
         # Start reader thread
         t = threading.Thread(
             target=read_stream, args=(self.process.stdout, self.handle_line)

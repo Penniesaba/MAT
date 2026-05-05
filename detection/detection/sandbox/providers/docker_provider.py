@@ -161,25 +161,6 @@ class DockerSandboxProvider:
                     type="bind",
                     read_only=False,
                 ),
-                # eBPF requires access to kernel debug/tracing filesystems
-                Mount(
-                    target="/sys/kernel/debug",
-                    source="/sys/kernel/debug",
-                    type="bind",
-                    read_only=True,
-                ),
-                Mount(
-                    target="/sys/kernel/tracing",
-                    source="/sys/kernel/tracing",
-                    type="bind",
-                    read_only=True,
-                ),
-                Mount(
-                    target="/sys/fs/bpf",
-                    source="/sys/fs/bpf",
-                    type="bind",
-                    read_only=False,
-                ),
             ]
 
             # Mount local monitors directory for development
@@ -210,6 +191,7 @@ class DockerSandboxProvider:
                 "detach": True,
                 "remove": False,  # Manual remove to capture logs
                 "privileged": True,  # Required for eBPF
+                "pid_mode": "host",  # Share host PID namespace for eBPF PID consistency
                 "cap_add": ["SYS_ADMIN", "SYS_RESOURCE", "SYS_PTRACE", "NET_ADMIN"],
                 "security_opt": ["apparmor:unconfined"],
                 **self.resource_limits,
