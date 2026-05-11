@@ -155,7 +155,7 @@ CEF:0|MCP-Security|Dynamic-Detector|1.0|NET_CONNECT|Outbound Connection|7|rt=202
             result = run_dynamic_pipeline(
                 target_path=malicious_script,
                 registry=registry,
-                timeout=15
+                sandbox_timeout=15
             )
 
             # Verify results

@@ -16,7 +16,8 @@ import socket
 import struct
 import sys
 import time
-from ctypes import c_char, c_uint8, c_uint32, c_uint64
+import ctypes
+from ctypes import c_char, c_uint8, c_uint32, c_uint64, c_int
 from datetime import datetime
 
 from bcc import BPF
@@ -87,7 +88,7 @@ SUSPICIOUS_COMMANDS = [
 ]
 
 
-class EventData:
+class EventData(ctypes.Structure):
     """Structure matching the BPF event_data struct"""
 
     _fields_ = [
@@ -103,6 +104,7 @@ class EventData:
         ("addr_family", c_uint32),
         ("port", c_uint32),
         ("ip", c_uint8 * 16),
+        ("stack_id", c_int),
     ]
 
 
@@ -164,6 +166,9 @@ class eBPFMonitor:
         self.logger = CEFLogger()
         self.start_time = time.time()
 
+        # Record monitor PID for filtering own events
+        self._monitor_pid = os.getpid()
+
         # Load BPF program
         print(f"[*] Loading eBPF program from {bpf_program_path}", file=sys.stderr)
         with open(bpf_program_path, "r") as f:
@@ -171,8 +176,8 @@ class eBPFMonitor:
 
         self.bpf = BPF(text=bpf_code)
 
-        # Ignore own PID to prevent recursive logging loops
-        self._ignore_pid(os.getpid())
+        # Set target cgroup id from environment variable
+        self._set_target_cgroup_id()
 
         # Attach probes
         self._attach_probes()
@@ -182,14 +187,21 @@ class eBPFMonitor:
 
         print("[*] eBPF monitor started. Capturing events...", file=sys.stderr)
 
-    def _ignore_pid(self, pid):
-        """Add PID to ignored list"""
+    def _set_target_cgroup_id(self):
+        """Read MCP_TARGET_CGROUP_ID from env and write to BPF map target_cgroup_id[0]"""
+        cgroup_id_str = os.getenv("MCP_TARGET_CGROUP_ID")
+        if not cgroup_id_str:
+            raise ValueError("MCP_TARGET_CGROUP_ID environment variable is not set")
         try:
-            ignored_pids = self.bpf.get_table("ignored_pids")
-            ignored_pids[c_uint32(pid)] = c_uint8(1)
-            print(f"[*] Ignoring events from PID {pid}", file=sys.stderr)
-        except Exception as e:
-            print(f"[!] Failed to ignore PID {pid}: {e}", file=sys.stderr)
+            cgroup_id = int(cgroup_id_str)
+        except ValueError:
+            raise ValueError(f"MCP_TARGET_CGROUP_ID must be an integer, got: {cgroup_id_str!r}")
+        if cgroup_id <= 0:
+            raise ValueError(f"MCP_TARGET_CGROUP_ID must be positive, got: {cgroup_id}")
+
+        target_cgroup_map = self.bpf["target_cgroup_id"]
+        target_cgroup_map[c_uint32(0)] = c_uint64(cgroup_id)
+        print(f"[*] Monitoring target cgroup id {cgroup_id}", file=sys.stderr)
 
     def _attach_probes(self):
         """Attach eBPF probes to system calls using tracepoints"""
@@ -208,6 +220,10 @@ class eBPFMonitor:
     def _handle_event(self, cpu, data, size):
         """Handle events from BPF perf buffer"""
         event = self.bpf["events"].event(data)
+
+        # Skip events from monitor process itself
+        if event.pid == self._monitor_pid:
+            return
 
         event_type = EVENT_TYPES.get(event.event_type, "UNKNOWN")
         comm = event.comm.decode("utf-8", errors="ignore")
@@ -274,6 +290,7 @@ class eBPFMonitor:
         # File system events
         if event_type in ["FILE_OPEN", "FILE_READ", "FILE_WRITE", "FILE_UNLINK"]:
             extensions["dst"] = path or f"fd:{event.fd}"
+            extensions["target_path"] = path
             extensions["act"] = event_type.split("_")[1].lower()
 
             if event_type in ["FILE_READ", "FILE_WRITE"]:
@@ -292,11 +309,13 @@ class eBPFMonitor:
                 if event.addr_family == 1:  # AF_UNIX
                     extensions["dst"] = path
                     extensions["proto"] = "unix"
+                    extensions["target_path"] = path
                 else:
                     ip_str = self._format_ip(event.ip, event.addr_family)
                     extensions["dst"] = f"{ip_str}:{event.port}"
                     extensions["dpt"] = str(event.port)
                     extensions["proto"] = "tcp" if event.addr_family == 2 else "udp"
+                    extensions["target_path"] = extensions.get("dst", "")
 
                 extensions["cs1"] = str(event.addr_family)
                 extensions["cs1Label"] = "Family"
@@ -317,14 +336,36 @@ class eBPFMonitor:
                 extensions["dproc"] = path
                 extensions["cs1"] = path
                 extensions["cs1Label"] = "Command"
+                cmdline = self._read_proc_cmdline(event.pid)
+                extensions["command_args"] = cmdline or path
             else:
                 extensions["cs1"] = "fork/clone"
                 extensions["cs1Label"] = "Action"
+
+        # Stack trace
+        if hasattr(event, 'stack_id') and event.stack_id >= 0:
+            stack_frames = self._symbolize_stack(event.stack_id)
+            if stack_frames:
+                extensions["ustack"] = "|".join(stack_frames)
 
         # Log to CEF
         self.logger.log_event(
             event_type, {"name": self._event_name(event_type, extensions)}, extensions
         )
+
+    def _symbolize_stack(self, stack_id):
+        """Symbolize user-space stack trace as hex addresses."""
+        if stack_id < 0:
+            return None
+        try:
+            addrs = self.bpf["stack_traces"].get_stack(stack_id)
+            frames = []
+            for addr in addrs:
+                # Format as hex address; can be resolved offline with addr2line
+                frames.append(f"0x{addr:x}")
+            return frames
+        except Exception:
+            return None
 
     def _event_name(self, event_type, extensions):
         """Generate human-readable event name"""
@@ -357,6 +398,19 @@ class eBPFMonitor:
         elif family == 10:  # AF_INET6
             return socket.inet_ntop(socket.AF_INET6, bytes(ip_bytes))
         return "0.0.0.0"
+
+    def _read_proc_cmdline(self, pid):
+        """Read /proc/<pid>/cmdline for full command arguments."""
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                raw = f.read()
+            if raw:
+                args = raw.split(b"\x00")
+                args = [a.decode("utf-8", errors="ignore") for a in args if a]
+                return " ".join(args) if args else None
+        except (FileNotFoundError, PermissionError, OSError):
+            pass
+        return None
 
     def _get_username(self, uid):
         """Get username from UID"""

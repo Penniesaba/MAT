@@ -10,3 +10,8 @@ __pycache__/
 detection/examples/mcptox_samples
 mcp-tools-detection/.import_tracking.json
 detection/logs
+/.agents
+/opencode.json
+/opencode.schema.json
+/feat-ast-plan.md
+/AGETNS.md

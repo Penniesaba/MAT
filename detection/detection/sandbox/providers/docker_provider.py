@@ -107,12 +107,19 @@ class DockerSandboxProvider:
                 f"  docker-compose build"
             )
 
-    def run(self, target_path: Path, *, timeout: int = 60) -> SandboxResult:
+    def run(
+        self,
+        target_path: Path,
+        *,
+        timeout: int = 60,
+        execution_mode: str = "mcp_fuzz",
+    ) -> SandboxResult:
         """Execute target in Docker sandbox with eBPF monitoring.
 
         Args:
             target_path: Path to MCP tool directory or Python file
             timeout: Maximum execution time in seconds
+            execution_mode: Execution mode - "mcp_fuzz" or "direct_exec"
 
         Returns:
             SandboxResult with logs, telemetry, and exit code
@@ -154,25 +161,6 @@ class DockerSandboxProvider:
                     type="bind",
                     read_only=False,
                 ),
-                # eBPF requires access to kernel debug/tracing filesystems
-                Mount(
-                    target="/sys/kernel/debug",
-                    source="/sys/kernel/debug",
-                    type="bind",
-                    read_only=True,
-                ),
-                Mount(
-                    target="/sys/kernel/tracing",
-                    source="/sys/kernel/tracing",
-                    type="bind",
-                    read_only=True,
-                ),
-                Mount(
-                    target="/sys/fs/bpf",
-                    source="/sys/fs/bpf",
-                    type="bind",
-                    read_only=False,
-                ),
             ]
 
             # Mount local monitors directory for development
@@ -196,11 +184,14 @@ class DockerSandboxProvider:
                 "environment": {
                     "MONITOR_TIMEOUT": str(timeout),
                     "LOG_LEVEL": os.getenv("LOG_LEVEL", "INFO"),
+                    "MODE": execution_mode,
+                    "TARGET_CMD": "",  # Set below after determining target
                 },
                 "network_mode": self.network_mode,
                 "detach": True,
                 "remove": False,  # Manual remove to capture logs
                 "privileged": True,  # Required for eBPF
+                "pid_mode": "host",  # Share host PID namespace for eBPF PID consistency
                 "cap_add": ["SYS_ADMIN", "SYS_RESOURCE", "SYS_PTRACE", "NET_ADMIN"],
                 "security_opt": ["apparmor:unconfined"],
                 **self.resource_limits,
@@ -259,6 +250,7 @@ class DockerSandboxProvider:
                 logs=logs_content,
                 telemetry=telemetry,
                 exit_code=exit_code,
+                execution_mode=execution_mode,
             )
 
     def _parse_cef_logs(self, cef_logs: str) -> dict[str, Any]:

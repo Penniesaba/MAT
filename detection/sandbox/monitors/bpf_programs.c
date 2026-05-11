@@ -47,6 +47,7 @@ struct event_data {
     u32 addr_family;    // AF_INET, AF_INET6, AF_UNIX
     u32 port;           // Network port
     u8  ip[16];         // IPv4/IPv6 address
+    int stack_id;       // User-space stack trace ID
 };
 
 // Temporary storage for open/openat arguments
@@ -61,6 +62,7 @@ struct fd_info_t {
 };
 
 BPF_PERF_OUTPUT(events);
+BPF_STACK_TRACE(stack_traces, 1024);
 
 // Per-CPU arrays to avoid stack limit issues
 BPF_PERCPU_ARRAY(event_heap, struct event_data, 1);
@@ -83,14 +85,20 @@ static inline u64 get_curr_tid() {
     return bpf_get_current_pid_tgid();
 }
 
-static inline bool is_ignored() {
-    char comm[TASK_COMM_LEN];
-    bpf_get_current_comm(&comm, sizeof(comm));
-    // Check for "ebpf-monitor"
-    // We check enough characters to be reasonably sure
-    if (comm[0] == 'e' && comm[1] == 'b' && comm[2] == 'p' && comm[3] == 'f' && 
-        comm[4] == '-' && comm[5] == 'm') return true;
-    return false;
+// ============================================================================
+// CGROUP BOUNDARY (single target cgroup id)
+// ============================================================================
+
+// Single cgroup inode id to monitor (set at startup via env var)
+// Key: 0, Value: target cgroup inode id
+BPF_ARRAY(target_cgroup_id, u64, 1);
+
+// Check if current process belongs to the target cgroup
+static inline bool is_target() {
+    u32 key = 0;
+    u64 *val = target_cgroup_id.lookup(&key);
+    if (val == NULL || *val == 0) return false;
+    return bpf_get_current_cgroup_id() == *val;
 }
 
 // ============================================================================
@@ -99,7 +107,7 @@ static inline bool is_ignored() {
 
 // Tracepoint: openat (Enter)
 TRACEPOINT_PROBE(syscalls, sys_enter_openat) {
-    if (is_ignored()) return 0;
+    if (!is_target()) return 0;
 
     u64 tid = get_curr_tid();
     u32 zero = 0;
@@ -116,7 +124,7 @@ TRACEPOINT_PROBE(syscalls, sys_enter_openat) {
 
 // Tracepoint: openat (Exit)
 TRACEPOINT_PROBE(syscalls, sys_exit_openat) {
-    if (is_ignored()) return 0;
+    if (!is_target()) return 0;
 
     u64 tid = get_curr_tid();
     struct open_args_t *saved_args = active_opens.lookup(&tid);
@@ -146,7 +154,9 @@ TRACEPOINT_PROBE(syscalls, sys_exit_openat) {
             event->flags = saved_args->flags;
             bpf_get_current_comm(&event->comm, sizeof(event->comm));
             __builtin_memcpy(event->path, saved_args->fname, sizeof(event->path));
-            
+
+            event->stack_id = stack_traces.get_stackid(args, BPF_F_USER_STACK);
+
             events.perf_submit(args, event, sizeof(*event));
         }
     }
@@ -157,7 +167,7 @@ TRACEPOINT_PROBE(syscalls, sys_exit_openat) {
 
 // Tracepoint: read (Enter)
 TRACEPOINT_PROBE(syscalls, sys_enter_read) {
-    if (is_ignored()) return 0;
+    if (!is_target()) return 0;
 
     u32 fd = args->fd;
     u64 key = ((u64)get_curr_pid() << 32) | fd;
@@ -186,7 +196,7 @@ TRACEPOINT_PROBE(syscalls, sys_enter_read) {
 
 // Tracepoint: write (Enter)
 TRACEPOINT_PROBE(syscalls, sys_enter_write) {
-    if (is_ignored()) return 0;
+    if (!is_target()) return 0;
 
     u32 fd = args->fd;
     u64 key = ((u64)get_curr_pid() << 32) | fd;
@@ -215,7 +225,7 @@ TRACEPOINT_PROBE(syscalls, sys_enter_write) {
 
 // Tracepoint: close (Enter)
 TRACEPOINT_PROBE(syscalls, sys_enter_close) {
-    if (is_ignored()) return 0;
+    if (!is_target()) return 0;
 
     u32 fd = args->fd;
     u64 key = ((u64)get_curr_pid() << 32) | fd;
@@ -225,7 +235,7 @@ TRACEPOINT_PROBE(syscalls, sys_enter_close) {
 
 // Tracepoint: unlinkat (Enter)
 TRACEPOINT_PROBE(syscalls, sys_enter_unlinkat) {
-    if (is_ignored()) return 0;
+    if (!is_target()) return 0;
 
     u32 zero = 0;
     struct event_data *event = event_heap.lookup(&zero);
@@ -235,22 +245,28 @@ TRACEPOINT_PROBE(syscalls, sys_enter_unlinkat) {
         event->pid = get_curr_pid();
         event->uid = bpf_get_current_uid_gid();
         event->timestamp = bpf_ktime_get_ns();
-        
+
         bpf_get_current_comm(&event->comm, sizeof(event->comm));
+
+        // Read pathname from unlinkat args
         bpf_probe_read_user_str(event->path, sizeof(event->path), args->pathname);
-        
+
+        event->stack_id = stack_traces.get_stackid(args, BPF_F_USER_STACK);
+
         events.perf_submit(args, event, sizeof(*event));
     }
     return 0;
 }
 
 // ============================================================================
+// NETWORK MONITORING
+// ============================================================================
 // PROCESS MONITORING
 // ============================================================================
 
 // Tracepoint: execve (Enter)
 TRACEPOINT_PROBE(syscalls, sys_enter_execve) {
-    if (is_ignored()) return 0;
+    if (!is_target()) return 0;
 
     u32 zero = 0;
     struct event_data *event = event_heap.lookup(&zero);
@@ -260,18 +276,25 @@ TRACEPOINT_PROBE(syscalls, sys_enter_execve) {
         event->pid = get_curr_pid();
         event->uid = bpf_get_current_uid_gid();
         event->timestamp = bpf_ktime_get_ns();
-        
+
         bpf_get_current_comm(&event->comm, sizeof(event->comm));
         bpf_probe_read_user_str(event->path, sizeof(event->path), args->filename);
-        
+
+        event->stack_id = stack_traces.get_stackid(args, BPF_F_USER_STACK);
+
         events.perf_submit(args, event, sizeof(*event));
     }
     return 0;
 }
 
-// Tracepoint: fork (Sched)
+// ============================================================================
+// FORK/CLONE MONITORING - fork event reporting for target cgroup
+// ============================================================================
+
+// Tracepoint: sched_process_fork - report fork events only for target cgroup
 TRACEPOINT_PROBE(sched, sched_process_fork) {
-    if (is_ignored()) return 0;
+    // Only report PROC_FORK event for processes in target cgroup
+    if (!is_target()) return 0;
 
     u32 zero = 0;
     struct event_data *event = event_heap.lookup(&zero);
@@ -281,9 +304,12 @@ TRACEPOINT_PROBE(sched, sched_process_fork) {
         event->pid = get_curr_pid();
         event->uid = bpf_get_current_uid_gid();
         event->timestamp = bpf_ktime_get_ns();
-        
+
         bpf_get_current_comm(&event->comm, sizeof(event->comm));
-        
+
+        // Write child_pid to fd field for logging purposes only
+        event->fd = args->child_pid;
+
         events.perf_submit(args, event, sizeof(*event));
     }
     return 0;
@@ -295,7 +321,7 @@ TRACEPOINT_PROBE(sched, sched_process_fork) {
 
 // Tracepoint: connect (Enter)
 TRACEPOINT_PROBE(syscalls, sys_enter_connect) {
-    if (is_ignored()) return 0;
+    if (!is_target()) return 0;
 
     u32 zero = 0;
     struct event_data *event = event_heap.lookup(&zero);
@@ -333,7 +359,9 @@ TRACEPOINT_PROBE(syscalls, sys_enter_connect) {
             bpf_probe_read_user(&sun, sizeof(sun), uaddr);
             bpf_probe_read_user_str(event->path, sizeof(event->path), sun.sun_path);
         }
-        
+
+        event->stack_id = stack_traces.get_stackid(args, BPF_F_USER_STACK);
+
         events.perf_submit(args, event, sizeof(*event));
     }
     return 0;
