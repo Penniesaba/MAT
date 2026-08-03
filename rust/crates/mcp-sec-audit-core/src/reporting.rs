@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use anyhow::Result;
 use serde::Serialize;
 
@@ -16,6 +18,7 @@ pub struct MarkdownRenderOptions {
     pub include_raw_rule_results: bool,
     pub include_raw_taint_results: bool,
     pub include_raw_agent_results: bool,
+    pub include_facts: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +27,7 @@ pub struct JsonlRenderOptions {
     pub include_raw_rule_results: bool,
     pub include_raw_taint_results: bool,
     pub include_raw_agent_results: bool,
+    pub include_facts: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -39,6 +43,7 @@ impl From<&ReportConfig> for MarkdownRenderOptions {
             include_raw_rule_results: config.include_raw_rule_results,
             include_raw_taint_results: config.include_raw_taint_results,
             include_raw_agent_results: config.include_raw_agent_results,
+            include_facts: config.include_facts,
         }
     }
 }
@@ -50,6 +55,7 @@ impl From<&ReportConfig> for JsonlRenderOptions {
             include_raw_rule_results: config.include_raw_rule_results,
             include_raw_taint_results: config.include_raw_taint_results,
             include_raw_agent_results: config.include_raw_agent_results,
+            include_facts: config.include_facts,
         }
     }
 }
@@ -61,6 +67,7 @@ impl Default for MarkdownRenderOptions {
             include_raw_rule_results: false,
             include_raw_taint_results: false,
             include_raw_agent_results: false,
+            include_facts: false,
         }
     }
 }
@@ -72,6 +79,7 @@ impl Default for JsonlRenderOptions {
             include_raw_rule_results: true,
             include_raw_taint_results: true,
             include_raw_agent_results: true,
+            include_facts: true,
         }
     }
 }
@@ -86,6 +94,15 @@ pub fn render_jsonl(result: &StaticAnalysisResult, options: &JsonlRenderOptions)
         event: "summary",
         data: &result.summary,
     })?);
+
+    if options.include_facts {
+        for fact in &result.facts {
+            lines.push(serde_json::to_string(&JsonlRecord {
+                event: "fact",
+                data: fact,
+            })?);
+        }
+    }
 
     if options.include_fused_results {
         for finding in &result.fused_findings {
@@ -131,6 +148,7 @@ pub fn render_markdown(result: &StaticAnalysisResult, options: &MarkdownRenderOp
         format!("# Static Analysis Summary — {}", result.summary.target),
         String::new(),
         format!("- Risk Level: {}", result.summary.risk_level),
+        format!("- Facts: {}", result.summary.fact_count),
         format!("- Fused Findings: {}", result.summary.fused_finding_count),
         format!("- Rule Results: {}", result.summary.rule_result_count),
         format!("- Taint Results: {}", result.summary.taint_result_count),
@@ -139,6 +157,18 @@ pub fn render_markdown(result: &StaticAnalysisResult, options: &MarkdownRenderOp
 
     if let Some(severity) = &result.summary.highest_severity {
         lines.push(format!("- Highest Severity: {:?}", severity));
+    }
+
+    if options.include_facts {
+        lines.push(String::new());
+        lines.push("## Facts".to_string());
+        if result.facts.is_empty() {
+            lines.push("- None".to_string());
+        } else {
+            for (kind, count) in fact_type_counts(result) {
+                lines.push(format!("- {kind}: {count}"));
+            }
+        }
     }
 
     if options.include_fused_results {
@@ -200,6 +230,29 @@ pub fn render_markdown(result: &StaticAnalysisResult, options: &MarkdownRenderOp
     lines.join("\n")
 }
 
+fn fact_type_name(fact: &crate::Fact) -> &'static str {
+    match fact {
+        crate::Fact::Function(_) => "function",
+        crate::Fact::Import(_) => "import",
+        crate::Fact::Entrypoint(_) => "entrypoint",
+        crate::Fact::Call(_) => "call",
+        crate::Fact::Sink(_) => "sink",
+        crate::Fact::Source(_) => "source",
+        crate::Fact::Assign(_) => "assign",
+        crate::Fact::Dataflow(_) => "dataflow",
+        crate::Fact::RuntimeEvent(_) => "runtime_event",
+        crate::Fact::Finding(_) => "finding",
+    }
+}
+
+fn fact_type_counts(result: &StaticAnalysisResult) -> BTreeMap<&'static str, usize> {
+    let mut counts = BTreeMap::new();
+    for fact in &result.facts {
+        *counts.entry(fact_type_name(fact)).or_insert(0) += 1;
+    }
+    counts
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,6 +263,8 @@ mod tests {
         let json = render_json(&result).expect("render json");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse json");
 
+        assert!(value.get("facts").is_some());
+        assert_eq!(value["facts"].as_array().expect("facts array").len(), 1);
         assert!(value.get("rule_results").is_some());
         assert!(value.get("taint_results").is_some());
         assert!(value.get("agent_results").is_some());
@@ -223,12 +278,13 @@ mod tests {
         let jsonl = render_jsonl(&result, &JsonlRenderOptions::default()).expect("render jsonl");
         let lines = jsonl.lines().collect::<Vec<_>>();
 
-        assert_eq!(lines.len(), 5);
+        assert_eq!(lines.len(), 6);
         assert!(lines[0].contains(r#""event":"summary""#));
-        assert!(lines[1].contains(r#""event":"fused_finding""#));
-        assert!(lines[2].contains(r#""event":"rule_result""#));
-        assert!(lines[3].contains(r#""event":"taint_result""#));
-        assert!(lines[4].contains(r#""event":"agent_result""#));
+        assert!(lines[1].contains(r#""event":"fact""#));
+        assert!(lines[2].contains(r#""event":"fused_finding""#));
+        assert!(lines[3].contains(r#""event":"rule_result""#));
+        assert!(lines[4].contains(r#""event":"taint_result""#));
+        assert!(lines[5].contains(r#""event":"agent_result""#));
     }
 
     #[test]
@@ -243,6 +299,25 @@ mod tests {
     }
 
     #[test]
+    fn markdown_can_include_fact_summary() {
+        let result = crate::fixtures::synthetic_static_analysis_result();
+        let markdown = render_markdown(
+            &result,
+            &MarkdownRenderOptions {
+                include_fused_results: true,
+                include_raw_rule_results: false,
+                include_raw_taint_results: false,
+                include_raw_agent_results: false,
+                include_facts: true,
+            },
+        );
+
+        assert!(markdown.contains("- Facts: 1"));
+        assert!(markdown.contains("## Facts"));
+        assert!(markdown.contains("- source: 1"));
+    }
+
+    #[test]
     fn markdown_can_include_raw_sections() {
         let result = crate::fixtures::synthetic_static_analysis_result();
         let markdown = render_markdown(
@@ -252,6 +327,7 @@ mod tests {
                 include_raw_rule_results: true,
                 include_raw_taint_results: true,
                 include_raw_agent_results: true,
+                include_facts: false,
             },
         );
 

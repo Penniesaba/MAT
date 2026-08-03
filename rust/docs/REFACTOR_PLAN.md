@@ -22,7 +22,7 @@
 
 Rust 实现必须保留现有工作流依赖的用户可见行为：
 
-- 支持 Python、JavaScript、TypeScript 和 metadata 输入的静态扫描。
+- 支持 Python、JavaScript、TypeScript、Rust 和 metadata 输入的静态扫描，其中 Rust MCP server 源码应作为一等分析目标，而不是附加实验能力。
 - 支持通过现有沙箱分析流程进行动态扫描。
 - 保持现有 TOML 规则语义。
 - 保持现有风险、严重性、置信度和 finding 概念。
@@ -67,18 +67,19 @@ MCP 漏洞分类、漏洞原理和静态挖掘方法见 [`MCP_VULNERABILITY_TAXO
 | Phase 2：兼容数据模型         | 完成  | 定义 findings、results、facts、severity、confidence 等 Rust 共享模型。 | 模型可以序列化为稳定 JSON，用于兼容性测试。                                            |
 | Phase 3：配置与规则加载       | 完成  | 加载静态/动态运行配置和当前项目已有 TOML 规则。                             | Rust 可以读取运行配置和规则文件，并为三线静态分析和动态分析保留配置开关。                         |
 | Phase 4：统一结果与报告输出      | 完成  | 实现 JSON、JSONL 和 Markdown 报告输出。                             | synthetic 三线结果和融合结果可以渲染为所有支持格式，JSON 保留完整原始结果。                      |
-| Phase 5：静态扫描入口         | 未开始 | 建立 Rust static pipeline 外壳、文件发现流程和分析线调度。                    | CLI 可以扫描目标目录、识别支持的输入文件，并按配置启用规则线、污点线和 Agent 线。                  |
-| Phase 6：传统规则分析线        | 未开始 | 重构规则驱动的 legacy 静态检测路径。                                     | Rust 可以在聚焦 fixture 上检测关键词、regex、metadata 和危险 API finding。                  |
-| Phase 7：Python fact 提取 | 未开始 | 从 Python 源码中提取核心静态 facts。                                  | Python fixtures 可以产出预期的函数、导入、调用、入口、sink 和相关基础 facts。                |
+| Phase 5：静态扫描入口         | 完成  | 建立 Rust static pipeline 外壳、文件发现流程和分析线调度。                    | CLI 可以扫描目标目录、识别支持的输入文件，并按配置启用规则线、污点线和 Agent 线。                  |
+| Phase 6：传统规则分析线        | 完成  | 重构规则驱动的 legacy 静态检测路径。                                     | Rust 可以在聚焦 fixture 上检测关键词、regex、metadata 和危险 API finding。                  |
+| Phase 7：Python fact 提取 | 完成 | 从 Python 源码中提取核心静态 facts。                                  | Python fixtures 可以产出预期的函数、导入、调用、入口、source、assign、sink 等基础 facts；facts 已接入静态扫描结果，taint 默认禁用且显式启用时报错。                |
 | Phase 8：JS/TS fact 提取  | 未开始 | 从 JavaScript 和 TypeScript 源码中提取核心静态 facts。                 | JS/TS fixtures 可以产出预期的入口、调用、导入、sink 和相关基础 facts。                    |
-| Phase 9：调用关系分析         | 未开始 | 重构 call graph、可达性分析和反向 sink 追踪基础能力。                       | Rust 可以在聚焦 fixture 上从 entrypoint 或 root function 追踪到 sink。          |
-| Phase 10：轻量数据流分析       | 未开始 | 重构 taint-lite 分析能力。                                        | Rust 可以在聚焦 fixture 上识别基础的参数到 sink 传播路径。                             |
-| Phase 11：Agent 分析线      | 未开始 | 接入可配置的 Agent 辅助源码分析，生成独立的候选风险结果。                         | Agent 线可以按配置读取源码、facts 和已有分析结果，并输出结构化 `AgentAnalysisResult`。        |
-| Phase 12：静态结果融合与 finding 生成 | 未开始 | 将规则线、污点线和 Agent 线结果融合为最终静态 findings。                      | Rust 静态分析可以输出包含 evidence、severity、confidence、risk 和来源线索的融合 findings。 |
-| Phase 13：静态分析对齐        | 未开始 | 将 Rust 静态输出与 Python 实现进行对比。                                | 主要 fixtures 和 benchmark 路径完成对比，差异被记录为 bug、改进或可接受差异。                 |
-| Phase 14：动态分析兼容        | 未开始 | 通过 Rust CLI 支持完整动态分析，并按需复用现有运行时组件。                         | Rust CLI 可以完成一次动态扫描，并生成兼容报告输出。                                      |
-| Phase 15：Rust 原生动态分析评估 | 未开始 | 决定是否以及如何将动态运行时组件迁移到 Rust。                                  | 单独的动态设计文档记录决策、风险和迁移路径。                                              |
-| Phase 16：产品化收尾         | 未开始 | 完成 Rust 用户工作流、文档、测试、诊断和发布路径。                               | 用户可以从 `rust/` 构建、运行和测试 Rust 实现，并有清晰文档。                              |
+| Phase 9：Rust fact 提取   | 未开始 | 从 Rust MCP server 源码中提取核心静态 facts。                          | Rust fixtures 可以产出预期的函数、导入、调用、MCP 入口、sink 和相关基础 facts。             |
+| Phase 10：调用关系分析        | 未开始 | 重构 call graph、可达性分析和反向 sink 追踪基础能力。                       | Rust 可以在聚焦 fixture 上从 entrypoint 或 root function 追踪到 sink。          |
+| Phase 11：轻量数据流分析       | 未开始 | 重构 taint-lite 分析能力，并让 Python、JS/TS、Rust facts 进入统一数据流。     | Rust 可以在聚焦 fixture 上识别基础的参数到 sink 传播路径。                             |
+| Phase 12：Agent 分析线      | 未开始 | 接入可配置的 Agent 辅助源码分析，生成独立的候选风险结果。                         | Agent 线可以按配置读取源码、facts 和已有分析结果，并输出结构化 `AgentAnalysisResult`。        |
+| Phase 13：静态结果融合与 finding 生成 | 未开始 | 将规则线、污点线和 Agent 线结果融合为最终静态 findings。                      | Rust 静态分析可以输出包含 evidence、severity、confidence、risk 和来源线索的融合 findings。 |
+| Phase 14：静态分析对齐        | 未开始 | 将 Rust 静态输出与 Python 实现进行对比。                                | 主要 fixtures 和 benchmark 路径完成对比，差异被记录为 bug、改进或可接受差异。                 |
+| Phase 15：动态分析兼容        | 未开始 | 通过 Rust CLI 支持完整动态分析，并按需复用现有运行时组件。                         | Rust CLI 可以完成一次动态扫描，并生成兼容报告输出。                                      |
+| Phase 16：Rust 原生动态分析评估 | 未开始 | 决定是否以及如何将动态运行时组件迁移到 Rust。                                  | 单独的动态设计文档记录决策、风险和迁移路径。                                              |
+| Phase 17：产品化收尾         | 未开始 | 完成 Rust 用户工作流、文档、测试、诊断和发布路径。                               | 用户可以从 `rust/` 构建、运行和测试 Rust 实现，并有清晰文档。                              |
 
 ## 进度跟踪
 
@@ -92,7 +93,11 @@ MCP 漏洞分类、漏洞原理和静态挖掘方法见 [`MCP_VULNERABILITY_TAXO
 - `完成`
 - `暂缓`
 
+阶段验收不接受空实现或占位实现。某条分析线或某种语言能力如果在配置中标记为已启用，则该阶段必须实现该阶段承诺的完整功能；如果功能尚未实现，应保持禁用、返回明确错误，或在路线图中继续标记为未开始，不能用空结果伪装为完成。
+
 阶段开始时，将状态更新为 `进行中`。阶段结束时，如有必要更新验收标准，并将状态标记为 `完成`。
+
+Phase 7 已完成 Python fact extraction 基础能力：RustPython AST extractor 已产出 import、function、entrypoint、source、call、assign、sink facts，并已接入 `run_static_scan()` 的 `facts` 和 `summary.fact_count`。Phase 7 不包含完整 taint propagation、完整 call graph、finding fusion、Agent 分析或动态分析；taint line 在默认配置中保持禁用，显式启用时返回明确未实现错误。
 
 如果某个阶段需要超过本路线图粒度的技术细节，应创建单独文档，并在阶段行或表格下方的简短备注中链接该文档。
 
@@ -112,5 +117,8 @@ MCP 漏洞分类、漏洞原理和静态挖掘方法见 [`MCP_VULNERABILITY_TAXO
 - JSON 输出应保留完整三线原始结果和融合结果；Markdown 和 Web 展示由用户配置控制。
 - 动态分析在重构期间必须保持完整可用。
 - 在 Rust 原生动态分析迁移前，可以复用现有动态运行时组件。
+- Rust MCP server 已经有开源 SDK 和 server 项目生态，因此 Rust 源码静态分析应作为一等目标进入重构范围。
+- Python、JavaScript、TypeScript、Rust 四类源码都应进入同一套三线并行静态分析结构，最终输出统一 facts、独立三线结果和融合 findings。
+- 后续实现阶段不接受空实现作为完成状态；阶段验收必须对应可运行、可测试、可审查的真实能力。
 - 路线图保持简洁；实现细节写入单独阶段文档。
 - 每个阶段都需要可运行或可审查的验收标准，满足后才视为完成。

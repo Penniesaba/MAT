@@ -41,7 +41,7 @@ JSON 输出应始终保留完整三线原始结果和融合结果。Markdown、W
 
 - 覆盖 MCP 协议和 MCP server 实现相关安全缺陷。
 - 保留现有 Python 静态分析能力，并支持可度量对齐。
-- 支持 Python、JavaScript、TypeScript，后续扩展 Rust MCP server 源码分析。
+- 支持 Python、JavaScript、TypeScript、Rust 四类 MCP server 源码分析，并支持 metadata 输入分析。
 - 支持规则驱动检测、源码 fact 分析、调用关系分析、轻量数据流分析。
 - 支持 Agent 辅助源码审计，但不让 Agent 成为唯一安全结论来源。
 - 每条分析线都有独立结果，便于调试、benchmark 和误报/漏报分析。
@@ -103,6 +103,8 @@ RuleAnalysisResult             TaintAnalysisResult
 
 Agent 线默认不直接写入确定性 facts，而是消费源码、facts、规则线结果和污点线结果，生成独立的 Agent 分析结果。
 
+Rust 源码分析不是独立于三线结构之外的附加扫描器。Python、JavaScript、TypeScript、Rust 应使用各自适合的 parser、extractor 和规则，但最终都应输出统一 facts、统一三线结果模型，并进入同一个融合层。
+
 ## 6. 三条分析线
 
 ### 6.1 传统规则线
@@ -121,6 +123,8 @@ Agent 线默认不直接写入确定性 facts，而是消费源码、facts、规
 
 传统规则线应以 TOML 规则为主要输入。
 
+Rust 规则线应覆盖 Rust MCP server 常见危险 API 和 SDK 模式，例如 `std::process::Command`、`tokio::process::Command`、`std::fs`、`tokio::fs`、`reqwest`、`hyper`、`std::env::var`、`rmcp`、`rust-mcp-sdk`、tool handler 注册和 JSON-RPC `tools/call` 分发逻辑。Phase 6 已经在文件发现和规则匹配层支持 `.rs` 文本扫描，后续规则库应补齐 Rust 专用 capability indicators。
+
 早期规则系统不需要复刻完整 Semgrep 或 CodeQL 语言，但可以借鉴它们的思想：
 
 - rule id
@@ -138,6 +142,8 @@ Agent 线默认不直接写入确定性 facts，而是消费源码、facts、规
 
 传统规则线的输出应是独立的 `RuleAnalysisResult`。
 
+Phase 6 的第一版传统规则线采用 legacy TOML capability 规则，覆盖 keyword、regex、metadata `tool_content` 和危险 API 文本模式检测。该阶段按 capability 聚合结果：同一 capability 的多个文件或多个 indicator 命中合并为一个 `RuleAnalysisResult`。由于当前 legacy TOML 还没有显式 severity、OWASP MCP 和 recommendation 字段，Phase 6 暂时用 capability weight 派生 severity，并将 legacy 浮点 confidence 映射为 Rust `Confidence` 枚举。后续规则 schema 扩展后应改为显式配置这些审计字段。
+
 规则线的优点是速度快、解释性强、适合覆盖已知漏洞模式。缺点是对跨函数语义、复杂数据流和上下文理解能力有限。
 
 ### 6.2 污点分析线
@@ -151,6 +157,10 @@ MCP 暴露入口的外部输入，是否能够到达危险 sink？
 ```
 
 污点分析线应基于 Rust fact model 构建：
+
+Rust 污点线应先从轻量 fact extraction 开始，识别 Rust functions、impl methods、imports、calls、MCP entrypoints、sources、sinks 和 assignments。Rust parser 可在阶段实现时评估 `syn`、`tree-sitter-rust` 或 rust-analyzer syntax crates；早期目标不是完整 Rust 编译器级 symbol resolution，而是为 MCP entrypoint 到危险 sink 的可达性和 taint-lite 提供足够稳定的 facts。
+
+Phase 7 已完成 Python 侧 Rust-native fact extraction：基于 RustPython AST 产出 `ImportFact`、`FunctionFact`、`EntryPointFact`、`SourceFact`、`CallFact`、`AssignFact` 和 `SinkFact`，并接入 `run_static_scan()` 的 `facts` 与 `summary.fact_count`。该阶段只做事实提取和 sink 标记，不做完整 call graph、taint propagation、finding fusion、Agent 分析或动态分析。由于 taint line 仍属于 Phase 10/11，默认配置保持 `[static.taint].enabled = false`；显式启用时返回明确未实现错误，而不是空结果。
 
 - `FunctionFact`
 - `ImportFact`
@@ -198,6 +208,8 @@ Agent 分析线负责发现规则和污点分析不容易覆盖的问题。
 - 规则线初步结果。
 - 污点线初步结果。
 - 漏洞 taxonomy 和规则说明。
+
+Agent 线应能读取 Rust MCP server 源码和 Rust facts，辅助判断 tool description 与真实 Rust 行为是否一致、Rust server 是否暴露过多系统能力、参数是否进入命令/文件/网络 sink，以及 memory/vector-store 类型 server 是否存在 context over-sharing 风险。
 
 Agent 线适合发现：
 
@@ -504,13 +516,17 @@ recommendation = "Avoid passing MCP tool parameters into shell commands without 
   - 为污点线提供 Python facts。
 - Phase 8：JS/TS fact 提取
   - 为污点线提供 JS/TS facts。
-- Phase 9：调用关系分析
+- Phase 9：Rust fact 提取
+  - 为污点线提供 Rust MCP server facts。
+- Phase 10：调用关系分析
   - 支持 entrypoint 到 sink 的可达性分析。
-- Phase 10：轻量数据流分析
+- Phase 11：轻量数据流分析
   - 支持 source 到 sink 的 taint-lite。
-- Phase 11：静态 finding 生成
+- Phase 12：Agent 分析线
+  - 接入可配置的 Agent 辅助源码分析，生成独立的候选风险结果。
+- Phase 13：静态 finding 生成
   - 实现三线结果到 fused findings 的转换。
-- Phase 12：静态分析对齐
+- Phase 14：静态分析对齐
   - 与现有 Python 实现和 benchmark 对齐。
 
 Agent 分析线可以在规则线和污点线稳定后加入。早期文档和模型应先预留 Agent 结果结构，但不要求在 Phase 3 立即实现完整 Agent 调度。
@@ -531,7 +547,8 @@ Agent 分析线可以在规则线和污点线稳定后加入。早期文档和�
 
 3. fact extraction 测试
    - Python、JS、TS fixture 产出预期 facts。
-   - 后续 Rust fixture 产出预期 facts。
+   - Rust fixtures 应覆盖 `rmcp` / `rust-mcp-sdk` 风格 MCP tool handler、JSON-RPC `tools/call` 分发、`std::process::Command`、`std::fs`、`reqwest`、`std::env::var` 等 sink。
+   - Rust fact extraction 阶段验收必须产出真实 facts，不能用空 extractor 或空 result 作为完成标准。
 
 4. call graph 测试
    - entrypoint 到 sink 的调用链可达。
@@ -573,6 +590,7 @@ Agent 分析线可以在规则线和污点线稳定后加入。早期文档和�
 - JSON 保留完整原始数据，用户报告按配置裁剪。
 - 融合算法初期保持透明简单。
 - 每个阶段只实现该阶段验收需要的最小能力。
+- 后续阶段不应保留空实现作为“已完成”能力。分析线 shell 可以在早期作为调度占位存在，但一旦某阶段声明实现某条线或某种语言能力，就必须提供该阶段承诺的完整、可测试行为；未实现能力应保持关闭、明确报错或继续标记为未开始。
 
 ## 15. 后续实施建议
 
@@ -582,8 +600,11 @@ Agent 分析线可以在规则线和污点线稳定后加入。早期文档和�
 2. Phase 4 在报告输出中预留三线结果和融合结果结构。
 3. Phase 5 建立 static runner，能按配置启用/禁用分析线。
 4. Phase 6 完成传统规则线第一版。
-5. Phase 7 到 Phase 10 完成 fact extraction、call graph 和 taint-lite。
-6. Phase 11 实现 finding fusion。
-7. Agent 分析线先保留模型和配置，等规则线与污点线稳定后接入。
+5. Phase 7 完成 Python fact extraction。
+6. Phase 8 完成 JS/TS fact extraction。
+7. Phase 9 完成 Rust fact extraction。
+8. Phase 10 到 Phase 11 完成 call graph 和 taint-lite。
+9. Phase 12 接入 Agent 分析线。
+10. Phase 13 实现 finding fusion。
 
 该顺序可以让系统在早期就具备可运行、可测试、可对齐的静态分析能力，同时为 MCP 专用 Agent 审计能力保留扩展空间。

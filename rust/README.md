@@ -13,6 +13,9 @@ Useful commands:
 cargo test
 cargo run -p mcp-sec-audit-cli -- --help
 cargo run -p mcp-sec-audit-cli -- status
+cargo run -p mcp-sec-audit-cli -- config validate --config config/default.toml
+cargo run -p mcp-sec-audit-cli -- rules validate --rules ../detection/detection/rules/keywords.toml
+cargo run -p mcp-sec-audit-cli -- scan static --config config/default.toml --rules ../detection/detection/rules/keywords.toml --format markdown
 ```
 
 Roadmap: [`docs/REFACTOR_PLAN.md`](docs/REFACTOR_PLAN.md)

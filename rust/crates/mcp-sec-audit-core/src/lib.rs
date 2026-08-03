@@ -5,6 +5,7 @@ pub mod fixtures;
 pub mod model;
 pub mod reporting;
 pub mod rules;
+pub mod static_analysis;
 
 pub use config::{
     DynamicConfig, FusionConfig, ReportConfig, RuntimeConfig, ScanConfig, StaticAgentConfig,
@@ -21,9 +22,14 @@ pub use reporting::{
     render_markdown,
 };
 pub use rules::{CapabilityRule, IndicatorRule, RuleBook, load_rulebook, parse_rulebook_toml};
+pub use static_analysis::{
+    DiscoveredFile, DiscoverySummary, ExtractionDiagnostic, PythonExtractionResult, ScanLanguage,
+    StaticScanContext, detect_language, discover_files, extract_python_facts, extract_static_facts,
+    run_static_scan,
+};
 
 /// Current Rust rewrite phase implemented by this crate.
-pub const CURRENT_PHASE: &str = "phase4-unified-results-and-reporting";
+pub const CURRENT_PHASE: &str = "phase7-python-fact-extraction";
 
 /// Returns a short human-readable product name used by the CLI.
 pub fn product_name() -> &'static str {
@@ -41,7 +47,7 @@ mod tests {
 
     #[test]
     fn exposes_current_phase() {
-        assert_eq!(CURRENT_PHASE, "phase4-unified-results-and-reporting");
+        assert_eq!(CURRENT_PHASE, "phase7-python-fact-extraction");
     }
 
     #[test]
