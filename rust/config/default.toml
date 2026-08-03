@@ -1,0 +1,48 @@
+[scan]
+targets = ["."]
+exclude = ["node_modules", "target", ".venv", "dist"]
+languages = ["python", "javascript", "typescript", "rust"]
+
+[static]
+enabled = true
+save_facts = true
+
+[static.rule]
+enabled = true
+rule_paths = ["rules/mcp", "rules/languages"]
+mode = "strict"
+
+[static.taint]
+enabled = true
+forward = true
+backward = true
+max_depth = 8
+entrypoint_required = true
+
+[static.agent]
+enabled = false
+mode = "evidence_aware"
+provider = "claude"
+prompt_profile = "mcp_security_audit"
+max_files = 80
+include_low_confidence = false
+
+[dynamic]
+enabled = false
+sandbox = "existing_python_runtime"
+timeout_seconds = 120
+
+[fusion]
+enabled = true
+strategy = "weighted_evidence"
+require_confirmed_by = 1
+boost_when_multiple_lines_agree = true
+agent_only_as_advisory = true
+
+[report]
+formats = ["json", "markdown"]
+include_fused_results = true
+include_raw_rule_results = false
+include_raw_taint_results = false
+include_raw_agent_results = false
+include_facts = false
