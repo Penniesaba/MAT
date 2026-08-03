@@ -30,6 +30,11 @@ enum Command {
         #[command(subcommand)]
         command: ReportCommand,
     },
+    /// Run scan entrypoints.
+    Scan {
+        #[command(subcommand)]
+        command: ScanCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -67,12 +72,34 @@ enum ReportCommand {
 #[derive(Debug, Args)]
 struct ReportDemoArgs {
     /// Output format for the synthetic report.
-    #[arg(long, value_enum, default_value_t = DemoReportFormat::Markdown)]
-    format: DemoReportFormat,
+    #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
+    format: OutputFormat,
+}
+
+#[derive(Debug, Subcommand)]
+enum ScanCommand {
+    /// Run the Phase 5 static scan shell.
+    Static(StaticScanArgs),
+}
+
+#[derive(Debug, Args)]
+struct StaticScanArgs {
+    /// Path to the runtime TOML config file.
+    #[arg(long)]
+    config: PathBuf,
+    /// Override scan targets from the runtime config.
+    #[arg(long)]
+    target: Vec<PathBuf>,
+    /// Override rulebook paths from the runtime config.
+    #[arg(long)]
+    rules: Vec<PathBuf>,
+    /// Output format for the scan result.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
+    format: OutputFormat,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-enum DemoReportFormat {
+enum OutputFormat {
     Json,
     Jsonl,
     Markdown,
@@ -109,18 +136,16 @@ fn main() -> Result<()> {
         Some(Command::Report { command }) => match command {
             ReportCommand::Demo(args) => {
                 let result = mcp_sec_audit_core::fixtures::synthetic_static_analysis_result();
-                let rendered = match args.format {
-                    DemoReportFormat::Json => mcp_sec_audit_core::render_json(&result)?,
-                    DemoReportFormat::Jsonl => mcp_sec_audit_core::render_jsonl(
-                        &result,
-                        &mcp_sec_audit_core::JsonlRenderOptions::default(),
-                    )?,
-                    DemoReportFormat::Markdown => mcp_sec_audit_core::render_markdown(
-                        &result,
-                        &mcp_sec_audit_core::MarkdownRenderOptions::default(),
-                    ),
-                };
-                println!("{rendered}");
+                println!("{}", render_static_result(&result, args.format)?);
+            }
+        },
+        Some(Command::Scan { command }) => match command {
+            ScanCommand::Static(args) => {
+                let config = mcp_sec_audit_core::load_runtime_config(&args.config)?;
+                let target_overrides = (!args.target.is_empty()).then_some(args.target.as_slice());
+                let result =
+                    mcp_sec_audit_core::run_static_scan(&config, &args.rules, target_overrides)?;
+                println!("{}", render_static_result(&result, args.format)?);
             }
         },
         None => {
@@ -133,6 +158,23 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn render_static_result(
+    result: &mcp_sec_audit_core::StaticAnalysisResult,
+    format: OutputFormat,
+) -> Result<String> {
+    match format {
+        OutputFormat::Json => mcp_sec_audit_core::render_json(result),
+        OutputFormat::Jsonl => mcp_sec_audit_core::render_jsonl(
+            result,
+            &mcp_sec_audit_core::JsonlRenderOptions::default(),
+        ),
+        OutputFormat::Markdown => Ok(mcp_sec_audit_core::render_markdown(
+            result,
+            &mcp_sec_audit_core::MarkdownRenderOptions::default(),
+        )),
+    }
 }
 
 #[cfg(test)]

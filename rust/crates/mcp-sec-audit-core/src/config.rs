@@ -53,7 +53,7 @@ pub struct StaticRuleConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StaticTaintConfig {
-    #[serde(default = "default_true")]
+    #[serde(default = "default_false")]
     pub enabled: bool,
     #[serde(default = "default_true")]
     pub forward: bool,
@@ -168,7 +168,7 @@ impl Default for StaticRuleConfig {
 impl Default for StaticTaintConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             forward: true,
             backward: true,
             max_depth: default_max_depth(),
@@ -237,6 +237,10 @@ pub fn load_runtime_config(path: &Path) -> Result<RuntimeConfig> {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_false() -> bool {
+    false
 }
 
 fn default_targets() -> Vec<String> {
@@ -351,10 +355,31 @@ mod tests {
         assert_eq!(config.scan.targets, vec!["."]);
         assert!(config.static_.enabled);
         assert!(config.static_.rule.enabled);
+        assert!(!config.static_.taint.enabled);
         assert!(config.static_.taint.forward);
         assert!(!config.static_.agent.enabled);
         assert!(!config.dynamic.enabled);
         assert_eq!(config.fusion.strategy, "weighted_evidence");
         assert_eq!(config.report.formats, vec!["json", "markdown"]);
+    }
+
+    #[test]
+    fn default_taint_is_disabled() {
+        assert!(!RuntimeConfig::default().static_.taint.enabled);
+        assert!(!StaticTaintConfig::default().enabled);
+    }
+
+    #[test]
+    fn missing_taint_enabled_defaults_to_disabled() {
+        let config = parse_runtime_config_toml(
+            r#"
+            [static.taint]
+            max_depth = 4
+            "#,
+        )
+        .expect("parse config");
+
+        assert!(!config.static_.taint.enabled);
+        assert_eq!(config.static_.taint.max_depth, 4);
     }
 }

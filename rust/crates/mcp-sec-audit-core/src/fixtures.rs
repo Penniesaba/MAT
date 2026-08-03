@@ -4,8 +4,9 @@ use crate::{
     config::RuntimeConfig,
     model::{
         AgentAnalysisResult, CapabilityFinding, Confidence, ConfigSnapshot, DetectionResult,
-        EvidenceSource, FactBase, FindingFact, FindingStatus, FusedFinding, RuleAnalysisResult,
-        Severity, StaticAnalysisResult, StaticAnalysisSummary, TaintAnalysisResult,
+        EvidenceSource, Fact, FactBase, FindingFact, FindingStatus, FusedFinding,
+        RuleAnalysisResult, Severity, SourceFact, StaticAnalysisResult, StaticAnalysisSummary,
+        TaintAnalysisResult,
     },
     rules::{CapabilityRule, IndicatorRule, RuleBook},
 };
@@ -54,6 +55,21 @@ pub fn synthetic_finding_fact() -> FindingFact {
         evidence: vec!["subprocess.run(command)".to_string()],
         recommendation: Some("Avoid shell execution or enforce allowlisted commands".to_string()),
     }
+}
+
+pub fn synthetic_source_fact() -> Fact {
+    Fact::Source(SourceFact {
+        base: FactBase {
+            id: "source:server.py:tool_handler:command".to_string(),
+            file: "server.py".to_string(),
+            line: 40,
+            extractor: "phase7_fixture".to_string(),
+        },
+        kind: "mcp_tool_parameter".to_string(),
+        function_id: "python:server.py:tool_handler".to_string(),
+        name: "command".to_string(),
+        confidence: Confidence::High,
+    })
 }
 
 pub fn synthetic_runtime_config() -> RuntimeConfig {
@@ -138,6 +154,7 @@ pub fn synthetic_agent_analysis_result() -> AgentAnalysisResult {
 
 pub fn synthetic_static_analysis_result() -> StaticAnalysisResult {
     StaticAnalysisResult {
+        facts: vec![synthetic_source_fact()],
         rule_results: vec![synthetic_rule_analysis_result()],
         taint_results: vec![synthetic_taint_analysis_result()],
         agent_results: vec![synthetic_agent_analysis_result()],
@@ -166,6 +183,7 @@ pub fn synthetic_static_analysis_result() -> StaticAnalysisResult {
         }],
         summary: StaticAnalysisSummary {
             target: "demo-mcp-server".to_string(),
+            fact_count: 1,
             rule_result_count: 1,
             taint_result_count: 1,
             agent_result_count: 1,

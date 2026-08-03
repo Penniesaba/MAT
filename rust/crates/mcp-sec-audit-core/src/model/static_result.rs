@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::RuntimeConfig;
 
-use super::{Confidence, FindingStatus, Severity};
+use super::{Confidence, Fact, FindingStatus, Severity};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuleAnalysisResult {
@@ -77,6 +77,7 @@ pub struct FusedFinding {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StaticAnalysisSummary {
     pub target: String,
+    pub fact_count: usize,
     pub rule_result_count: usize,
     pub taint_result_count: usize,
     pub agent_result_count: usize,
@@ -93,6 +94,7 @@ pub struct ConfigSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StaticAnalysisResult {
+    pub facts: Vec<Fact>,
     pub rule_results: Vec<RuleAnalysisResult>,
     pub taint_results: Vec<TaintAnalysisResult>,
     pub agent_results: Vec<AgentAnalysisResult>,
@@ -120,11 +122,13 @@ mod tests {
         let result = crate::fixtures::synthetic_static_analysis_result();
         let value = serde_json::to_value(&result).expect("serialize static result");
 
+        assert!(value.get("facts").is_some());
         assert!(value.get("rule_results").is_some());
         assert!(value.get("taint_results").is_some());
         assert!(value.get("agent_results").is_some());
         assert!(value.get("fused_findings").is_some());
         assert!(value.get("summary").is_some());
+        assert!(value["summary"].get("fact_count").is_some());
         assert!(value.get("config_snapshot").is_some());
     }
 }

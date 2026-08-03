@@ -13,7 +13,7 @@ rule_paths = ["rules/mcp", "rules/languages"]
 mode = "strict"
 
 [static.taint]
-enabled = true
+enabled = false
 forward = true
 backward = true
 max_depth = 8
