@@ -9,6 +9,8 @@ mod functions;
 #[allow(dead_code)]
 mod imports;
 #[allow(dead_code)]
+mod mcp;
+#[allow(dead_code)]
 mod sinks;
 
 #[allow(unused_imports)]
