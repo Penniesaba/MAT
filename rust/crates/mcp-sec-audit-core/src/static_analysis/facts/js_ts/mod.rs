@@ -3,7 +3,14 @@ use crate::model::Fact;
 use super::ExtractionDiagnostic;
 
 #[allow(dead_code)]
+mod functions;
+#[allow(dead_code)]
 mod imports;
+
+#[allow(unused_imports)]
+pub(crate) use functions::{
+    build_qualified_name, create_function_fact, params_from_fn,
+};
 
 #[allow(unused_imports)]
 pub(crate) use imports::{
