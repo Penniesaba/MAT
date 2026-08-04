@@ -20,7 +20,7 @@ use swc_core::{
 };
 
 use crate::model::{
-    AssignFact, CallFact, Fact, FactBase, FunctionFact, ImportFact, ImportKind, SourceFact,
+    AssignFact, CallFact, Fact, FactBase, ImportFact, ImportKind, SourceFact,
 };
 
 use super::ExtractionDiagnostic;
@@ -205,23 +205,55 @@ impl JsTsFactExtractor {
         }
     }
 
-    /// Post-processing pass: backfill SourceFacts for named handler references.
+    /// Post-processing pass: backfill SourceFacts for named handler references
+    /// and fix up EntryPointFact function_ids to match qualified FunctionFact IDs.
     fn backfill_named_handlers(&mut self) {
-        // Build map: function_name -> FunctionFact
-        let mut func_by_name: BTreeMap<String, &FunctionFact> = BTreeMap::new();
+        // Collect FunctionFact info into owned data so we can mutate self.facts
+        // freely afterward.
+        struct FuncInfo {
+            func_id: String,
+            qualified_name: String,
+            line: u32,
+            params: Vec<crate::model::ParamInfo>,
+        }
+
+        let mut func_by_name: BTreeMap<String, FuncInfo> = BTreeMap::new();
         for fact in &self.facts {
             if let Fact::Function(f) = fact {
-                func_by_name.insert(f.name.clone(), f);
+                func_by_name.insert(
+                    f.name.clone(),
+                    FuncInfo {
+                        func_id: f.base.id.clone(),
+                        qualified_name: f.qualified_name.clone(),
+                        line: f.base.line,
+                        params: f.params.clone(),
+                    },
+                );
             }
         }
 
-        // Collect new facts to avoid borrowing self.facts mutably while iterating.
+        // Fix up EntryPointFact function_ids to match the actual qualified
+        // FunctionFact ID (e.g. class method "MyClass.myHandler" rather than
+        // the bare handler name used in process_named_handler).
+        for (handler_name, ep_id) in &self.named_handlers {
+            if let Some(info) = func_by_name.get(handler_name) {
+                for fact in &mut self.facts {
+                    if let Fact::Entrypoint(ep) = fact {
+                        if ep.base.id == *ep_id {
+                            ep.function_id = info.func_id.clone();
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Generate SourceFacts for each named handler's parameters.
         let mut new_sources: Vec<Fact> = Vec::new();
 
         for (handler_name, _ep_id) in &self.named_handlers {
-            if let Some(func_fact) = func_by_name.get(handler_name) {
-                let func_id = &func_fact.base.id;
-                for param in &func_fact.params {
+            if let Some(info) = func_by_name.get(handler_name) {
+                for param in &info.params {
                     if param.name.starts_with("...") {
                         continue;
                     }
@@ -230,15 +262,15 @@ impl JsTsFactExtractor {
                             id: format!(
                                 "source:{}:{}:{}",
                                 self.rel_path(),
-                                func_fact.qualified_name,
+                                info.qualified_name,
                                 param.name
                             ),
                             file: self.rel_path(),
-                            line: func_fact.base.line,
+                            line: info.line,
                             extractor: EXTRACTOR_NAME.to_string(),
                         },
                         kind: "mcp_tool_parameter".to_string(),
-                        function_id: func_id.clone(),
+                        function_id: info.func_id.clone(),
                         name: param.name.clone(),
                         confidence: crate::model::Confidence::High,
                     }));
@@ -271,13 +303,11 @@ pub fn extract_js_ts_facts(
     file: &Path,
     source: &str,
 ) -> JsTsExtractionResult {
-    // Skip .d.ts declaration files
-    if let Some(ext) = file.extension() {
-        if let Some(name) = file.file_stem() {
-            let name_str = name.to_string_lossy();
-            if ext == "ts" && name_str.ends_with(".d") {
-                return JsTsExtractionResult::empty();
-            }
+    // Skip .d.ts / .d.mts / .d.cts declaration files
+    if let Some(name) = file.file_stem() {
+        let name_str = name.to_string_lossy();
+        if name_str.ends_with(".d") {
+            return JsTsExtractionResult::empty();
         }
     }
 
