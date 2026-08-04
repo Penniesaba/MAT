@@ -372,6 +372,119 @@ def run_command(command: str):
         fs::remove_dir_all(root).expect("cleanup");
     }
 
+    #[test]
+    fn enabled_static_scan_includes_js_ts_facts() {
+        let root = temp_dir("scan-js-facts");
+        let rules = write_rulebook(&root, "rules.toml", "command_exec");
+        fs::write(
+            root.join("server.js"),
+            r#"
+const { exec } = require("child_process");
+
+const server = { tool: (name, handler) => ({ name, handler }) };
+
+server.tool("run_command", async (params) => {
+    const { command } = params;
+    exec(command, (error, stdout) => {
+        console.log(stdout);
+    });
+});
+"#,
+        )
+        .expect("write JS file");
+
+        let result =
+            run_static_scan(&RuntimeConfig::default(), &[rules], Some(&[root.clone()]))
+                .expect("run scan");
+
+        assert!(!result.facts.is_empty());
+        assert_eq!(result.summary.fact_count, result.facts.len());
+        assert!(
+            result.facts.iter().any(|fact| matches!(fact, Fact::Import(_)))
+        );
+        assert!(
+            result
+                .facts
+                .iter()
+                .any(|fact| matches!(fact, Fact::Function(_)))
+        );
+        assert!(
+            result
+                .facts
+                .iter()
+                .any(|fact| matches!(fact, Fact::Entrypoint(_)))
+        );
+        assert!(
+            result
+                .facts
+                .iter()
+                .any(|fact| matches!(fact, Fact::Source(_)))
+        );
+        assert!(
+            result
+                .facts
+                .iter()
+                .any(|fact| matches!(fact, Fact::Call(_)))
+        );
+        assert!(
+            result
+                .facts
+                .iter()
+                .any(|fact| matches!(fact, Fact::Sink(_)))
+        );
+        assert_eq!(result.summary.taint_result_count, 0);
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn enabled_static_scan_includes_typescript_facts() {
+        let root = temp_dir("scan-ts-facts");
+        let rules = write_rulebook(&root, "rules.toml", "command_exec");
+        fs::write(
+            root.join("server.ts"),
+            r#"
+import { exec } from "child_process";
+
+interface ToolParams {
+    command: string;
+}
+
+const server = {
+    tool(name: string, handler: (params: any) => Promise<any>) {
+        return { name, handler };
+    }
+};
+
+server.tool("run_command", async (params: ToolParams) => {
+    const { command } = params;
+    exec(command);
+});
+"#,
+        )
+        .expect("write TS file");
+
+        let result =
+            run_static_scan(&RuntimeConfig::default(), &[rules], Some(&[root.clone()]))
+                .expect("run scan");
+
+        assert!(!result.facts.is_empty());
+        assert!(
+            result
+                .facts
+                .iter()
+                .any(|fact| matches!(fact, Fact::Entrypoint(_)))
+        );
+        assert!(
+            result
+                .facts
+                .iter()
+                .any(|fact| matches!(fact, Fact::Sink(_)))
+        );
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
     fn write_rulebook(root: &Path, name: &str, capability: &str) -> PathBuf {
         let path = root.join(name);
         fs::write(
