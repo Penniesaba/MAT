@@ -3,9 +3,16 @@ use crate::model::Fact;
 use super::ExtractionDiagnostic;
 
 #[allow(dead_code)]
+mod calls;
+#[allow(dead_code)]
 mod functions;
 #[allow(dead_code)]
 mod imports;
+#[allow(dead_code)]
+mod sinks;
+
+#[allow(unused_imports)]
+pub(crate) use calls::{callee_to_string, extract_call_args, resolve_callee};
 
 #[allow(unused_imports)]
 pub(crate) use functions::{
@@ -16,6 +23,9 @@ pub(crate) use functions::{
 pub(crate) use imports::{
     extract_destructured_require, extract_esm_import, extract_require_call,
 };
+
+#[allow(unused_imports)]
+pub(crate) use sinks::check_sink;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JsTsDiagnostic {

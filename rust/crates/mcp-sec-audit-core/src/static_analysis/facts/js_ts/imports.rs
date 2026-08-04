@@ -20,23 +20,28 @@ pub(crate) fn extract_esm_import(
     for specifier in &n.specifiers {
         match specifier {
             swc_core::ecma::ast::ImportSpecifier::Named(named) => {
-                let imported_name = named.local.sym.to_string();
-                let alias = if named.imported.is_some() {
-                    named.imported.as_ref().map(|i| match i {
-                        swc_core::ecma::ast::ModuleExportName::Ident(id) => id.sym.to_string(),
-                        swc_core::ecma::ast::ModuleExportName::Str(s) => s.value.to_string(),
-                    })
-                } else {
-                    None
+                // For `import { readFile as rf } from "fs"`, SWC sets:
+                //   named.local    = rf       (local binding)
+                //   named.imported = readFile (exported name)
+                // Record imported_name = exported name and alias = local binding,
+                // and map local binding -> "module.exported_name" in import_aliases.
+                let local_binding = named.local.sym.to_string();
+                let (imported_name, alias) = match &named.imported {
+                    Some(imported) => {
+                        let exported = match imported {
+                            swc_core::ecma::ast::ModuleExportName::Ident(id) => id.sym.to_string(),
+                            swc_core::ecma::ast::ModuleExportName::Str(s) => s.value.to_string(),
+                        };
+                        (exported, Some(local_binding.clone()))
+                    }
+                    None => (local_binding.clone(), None),
                 };
-                let effective_alias = alias.clone();
-                let kind = if effective_alias.is_some() {
+                let kind = if alias.is_some() {
                     ImportKind::EsmImportAs
                 } else {
                     ImportKind::EsmNamedImport
                 };
-                let alias_key = effective_alias.clone().unwrap_or_else(|| imported_name.clone());
-                import_aliases.insert(alias_key.clone(), format!("{module}.{imported_name}"));
+                import_aliases.insert(local_binding, format!("{module}.{imported_name}"));
 
                 facts.push(Fact::Import(ImportFact {
                     base: FactBase {
@@ -48,7 +53,7 @@ pub(crate) fn extract_esm_import(
                     language: "javascript".to_string(),
                     module: module.clone(),
                     imported_name: Some(imported_name),
-                    alias: effective_alias,
+                    alias,
                     kind,
                 }));
             }
