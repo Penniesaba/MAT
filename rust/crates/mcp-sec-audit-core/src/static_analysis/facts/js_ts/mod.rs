@@ -2,6 +2,14 @@ use crate::model::Fact;
 
 use super::ExtractionDiagnostic;
 
+#[allow(dead_code)]
+mod imports;
+
+#[allow(unused_imports)]
+pub(crate) use imports::{
+    extract_destructured_require, extract_esm_import, extract_require_call,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JsTsDiagnostic {
     Fatal { file: String, message: String },
