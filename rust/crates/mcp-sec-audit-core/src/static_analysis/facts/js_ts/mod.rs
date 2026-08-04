@@ -472,6 +472,26 @@ impl Visit for JsTsFactExtractor {
                     }
                 }
 
+                // Handle function expression: const handler = function(params) { ... }
+                if let Expr::Fn(fn_expr) = init.as_ref() {
+                    if let Pat::Ident(id) = &declarator.name {
+                        let name = id.sym.to_string();
+                        let qual_name = functions::build_qualified_name(
+                            &self.function_stack, &self.class_stack, &name,
+                        );
+                        let line = self.line_of(declarator.span);
+                        let func_id = ids::make_js_ts_function_id(&self.root, &self.file, &qual_name);
+                        let params = functions::params_from_fn(&fn_expr.function, "");
+
+                        self.facts.push(Fact::Function(functions::create_function_fact(
+                            func_id, file.clone(), line, EXTRACTOR_NAME.to_string(),
+                            "javascript".to_string(), name.clone(), qual_name.clone(),
+                            self.line_of(fn_expr.function.span), params,
+                            self.class_stack.last().cloned(),
+                        )));
+                    }
+                }
+
                 // Simple assignment: const x = expr -> AssignFact
                 if let Pat::Ident(id) = &declarator.name {
                     if let Some(init_expr) = &declarator.init {

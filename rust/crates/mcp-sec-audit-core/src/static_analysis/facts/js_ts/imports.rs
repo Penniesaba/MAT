@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use swc_core::ecma::ast::{
-    CallExpr, Expr, ImportDecl, Lit, ObjectPatProp, Pat, PropName, VarDeclarator,
+    ImportDecl, ObjectPatProp, Pat, PropName, VarDeclarator,
 };
 
 use crate::model::{Fact, FactBase, ImportFact, ImportKind};
@@ -99,44 +99,6 @@ pub(crate) fn extract_esm_import(
 
 // --- CJS require() Handling ---
 
-#[allow(dead_code)]
-pub(crate) fn extract_require_call(
-    callee_name: &str,
-    n: &CallExpr,
-    file: &str,
-    line: u32,
-    extractor_name: &str,
-    facts: &mut Vec<Fact>,
-    require_aliases: &mut BTreeMap<String, String>,
-) -> bool {
-    // Returns true if this call was a require() call
-    if callee_name != "require" {
-        return false;
-    }
-    // A bare require("...") call does not bind a local alias; the map is
-    // reserved for Task 8 wiring (assignment/destructuring forms).
-    let _ = require_aliases;
-
-    let Some(module_name) = first_string_arg(n) else {
-        return false;
-    };
-
-    facts.push(Fact::Import(ImportFact {
-        base: FactBase {
-            id: format!("import:{file}:{line}:{module_name}"),
-            file: file.to_string(),
-            line,
-            extractor: extractor_name.to_string(),
-        },
-        language: "javascript".to_string(),
-        module: module_name.clone(),
-        imported_name: None,
-        alias: None,
-        kind: ImportKind::Require,
-    }));
-    true
-}
-
 pub(crate) fn extract_destructured_require(
     n: &VarDeclarator,
     module_name: &str,
@@ -163,6 +125,11 @@ pub(crate) fn extract_destructured_require(
                     Pat::Ident(id) => id.id.sym.to_string(),
                     _ => continue,
                 };
+                let alias = if key != value_name {
+                    Some(value_name.clone())
+                } else {
+                    None
+                };
                 require_aliases.insert(value_name.clone(), format!("{module_name}.{key}"));
 
                 facts.push(Fact::Import(ImportFact {
@@ -175,7 +142,7 @@ pub(crate) fn extract_destructured_require(
                     language: "javascript".to_string(),
                     module: module_name.to_string(),
                     imported_name: Some(key),
-                    alias: None,
+                    alias,
                     kind: ImportKind::RequireDestructure,
                 }));
             }
@@ -199,17 +166,6 @@ pub(crate) fn extract_destructured_require(
             }
             _ => {}
         }
-    }
-}
-
-// --- Helpers ---
-
-#[allow(dead_code)]
-fn first_string_arg(call: &CallExpr) -> Option<String> {
-    let arg = call.args.first()?;
-    match arg.expr.as_ref() {
-        Expr::Lit(Lit::Str(s)) => Some(s.value.to_string()),
-        _ => None,
     }
 }
 

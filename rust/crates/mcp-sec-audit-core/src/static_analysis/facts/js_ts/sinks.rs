@@ -57,8 +57,9 @@ static SINK_RULES: &[SinkRule] = &[
         reason: "Access to environment variables can leak credentials",
     },
     SinkRule {
-        patterns: &["connection.query", "db.run", "Model.find", "mysql.createConnection",
-                     "mongoose.Model"],
+        patterns: &["connection.query", "connection.execute", "db.run", "Model.find",
+                     "mysql.createConnection", "mysql.createPool", "mysql.query",
+                     "mongoose.Model", "mongoose.Query.prototype.exec"],
         category: "database_injection",
         rule_id: "js.database_injection",
         severity: Severity::Critical,
