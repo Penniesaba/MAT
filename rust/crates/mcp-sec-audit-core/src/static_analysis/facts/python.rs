@@ -651,6 +651,7 @@ impl<'a> PythonFactExtractor<'a> {
             params: params.clone(),
             decorators: decorator_texts.clone(),
             docstring: docstring_from_body(body),
+            return_type: None,
             enclosing_class,
         }));
 

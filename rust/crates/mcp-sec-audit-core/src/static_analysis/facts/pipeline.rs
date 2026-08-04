@@ -4,27 +4,45 @@ use anyhow::{Context, Result, bail};
 
 use crate::{Fact, ScanLanguage, static_analysis::pipeline::StaticScanContext};
 
-use super::extract_python_facts;
+use super::{extract_js_ts_facts, extract_python_facts, ExtractionDiagnostic};
 
 pub fn extract_static_facts(ctx: &StaticScanContext) -> Result<Vec<Fact>> {
     let mut facts = Vec::new();
     let mut diagnostics = Vec::new();
 
     for file in &ctx.discovered_files {
-        if file.language != ScanLanguage::Python {
-            continue;
+        match file.language {
+            ScanLanguage::Python => {
+                let source = fs::read_to_string(&file.path).with_context(|| {
+                    format!(
+                        "read Python source for fact extraction: {}",
+                        file.path.display()
+                    )
+                })?;
+                let root = file.path.parent().unwrap_or_else(|| file.path.as_path());
+                let result = extract_python_facts(root, &file.path, &source);
+                facts.extend(result.facts);
+                diagnostics.extend(result.diagnostics);
+            }
+            ScanLanguage::JavaScript | ScanLanguage::TypeScript => {
+                let source = fs::read_to_string(&file.path).with_context(|| {
+                    format!(
+                        "read JS/TS source for fact extraction: {}",
+                        file.path.display()
+                    )
+                })?;
+                let root = file.path.parent().unwrap_or_else(|| file.path.as_path());
+                let result = extract_js_ts_facts(root, &file.path, &source);
+                if result.has_fatal() {
+                    bail!("JS/TS fact extraction produced fatal errors");
+                }
+                facts.extend(result.facts);
+                diagnostics.extend(
+                    result.diagnostics.into_iter().map(ExtractionDiagnostic::from),
+                );
+            }
+            _ => continue,
         }
-
-        let source = fs::read_to_string(&file.path).with_context(|| {
-            format!(
-                "read Python source for fact extraction: {}",
-                file.path.display()
-            )
-        })?;
-        let root = file.path.parent().unwrap_or_else(|| file.path.as_path());
-        let result = extract_python_facts(root, &file.path, &source);
-        facts.extend(result.facts);
-        diagnostics.extend(result.diagnostics);
     }
 
     if !diagnostics.is_empty() {
@@ -38,7 +56,7 @@ pub fn extract_static_facts(ctx: &StaticScanContext) -> Result<Vec<Fact>> {
             })
             .collect::<Vec<_>>()
             .join("; ");
-        bail!("Python fact extraction produced diagnostics: {summary}");
+        bail!("fact extraction produced diagnostics: {summary}");
     }
 
     Ok(facts)
@@ -111,7 +129,7 @@ def run_command(command: str):
         let err = extract_static_facts(&ctx).expect_err("diagnostics should fail extraction");
         assert!(
             err.to_string()
-                .contains("Python fact extraction produced diagnostics")
+                .contains("fact extraction produced diagnostics")
         );
         assert!(err.to_string().contains("syntax_error"));
 
