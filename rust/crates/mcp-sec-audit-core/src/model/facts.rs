@@ -91,6 +91,7 @@ pub struct FunctionFact {
     pub params: Vec<ParamInfo>,
     pub decorators: Vec<String>,
     pub docstring: Option<String>,
+    pub return_type: Option<String>,
     pub enclosing_class: Option<String>,
 }
 
