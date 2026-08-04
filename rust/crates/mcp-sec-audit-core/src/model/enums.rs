@@ -21,6 +21,10 @@ pub enum ImportKind {
     EsmImport,
     EsmImportAs,
     EsmNamedImport,
+    Use,
+    UseAs,
+    UseGlob,
+    UseGroup,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

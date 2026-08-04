@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::{Fact, ScanLanguage, static_analysis::pipeline::StaticScanContext};
 
-use super::{extract_js_ts_facts, extract_python_facts, ExtractionDiagnostic};
+use super::{extract_js_ts_facts, extract_python_facts, extract_rust_facts, ExtractionDiagnostic};
 
 pub fn extract_static_facts(ctx: &StaticScanContext) -> Result<Vec<Fact>> {
     let mut facts = Vec::new();
@@ -40,6 +40,18 @@ pub fn extract_static_facts(ctx: &StaticScanContext) -> Result<Vec<Fact>> {
                 diagnostics.extend(
                     result.diagnostics.into_iter().map(ExtractionDiagnostic::from),
                 );
+            }
+            ScanLanguage::Rust => {
+                let source = fs::read_to_string(&file.path).with_context(|| {
+                    format!(
+                        "read Rust source for fact extraction: {}",
+                        file.path.display()
+                    )
+                })?;
+                let root = file.path.parent().unwrap_or_else(|| file.path.as_path());
+                let result = extract_rust_facts(root, &file.path, &source);
+                facts.extend(result.facts);
+                diagnostics.extend(result.diagnostics);
             }
             _ => continue,
         }
@@ -132,6 +144,48 @@ def run_command(command: str):
                 .contains("fact extraction produced diagnostics")
         );
         assert!(err.to_string().contains("syntax_error"));
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn extract_static_facts_reads_rust_discovered_files() {
+        let root = temp_dir("facts-pipeline-rust");
+        let file = root.join("server.rs");
+        fs::write(
+            &file,
+            r#"
+use std::process::Command;
+
+#[tool]
+async fn run_command(command: String) -> Result<String, String> {
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(&command)
+        .output()
+        .map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+"#,
+        )
+        .expect("write Rust file");
+
+        let ctx = StaticScanContext {
+            config: RuntimeConfig::default(),
+            rulebook_paths: Vec::new(),
+            discovered_files: vec![DiscoveredFile {
+                path: file,
+                language: ScanLanguage::Rust,
+            }],
+        };
+
+        let facts = extract_static_facts(&ctx).expect("extract facts");
+        assert!(facts.iter().any(|fact| matches!(fact, Fact::Import(_))));
+        assert!(facts.iter().any(|fact| matches!(fact, Fact::Function(_))));
+        assert!(facts.iter().any(|fact| matches!(fact, Fact::Entrypoint(_))));
+        assert!(facts.iter().any(|fact| matches!(fact, Fact::Source(_))));
+        assert!(facts.iter().any(|fact| matches!(fact, Fact::Call(_))));
+        assert!(facts.iter().any(|fact| matches!(fact, Fact::Sink(_))));
 
         fs::remove_dir_all(root).expect("cleanup");
     }

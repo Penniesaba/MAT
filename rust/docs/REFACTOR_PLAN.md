@@ -71,7 +71,7 @@ MCP 漏洞分类、漏洞原理和静态挖掘方法见 [`MCP_VULNERABILITY_TAXO
 | Phase 6：传统规则分析线        | 完成  | 重构规则驱动的 legacy 静态检测路径。                                     | Rust 可以在聚焦 fixture 上检测关键词、regex、metadata 和危险 API finding。                  |
 | Phase 7：Python fact 提取 | 完成 | 从 Python 源码中提取核心静态 facts。                                  | Python fixtures 可以产出预期的函数、导入、调用、入口、source、assign、sink 等基础 facts；facts 已接入静态扫描结果，taint 默认禁用且显式启用时报错。                |
 | Phase 8：JS/TS fact 提取  | 完成 | 从 JavaScript 和 TypeScript 源码中提取核心静态 facts。                 | JS/TS fixtures 可以产出预期的入口、调用、导入、sink 和相关基础 facts。                    |
-| Phase 9：Rust fact 提取   | 未开始 | 从 Rust MCP server 源码中提取核心静态 facts。                          | Rust fixtures 可以产出预期的函数、导入、调用、MCP 入口、sink 和相关基础 facts。             |
+| Phase 9：Rust fact 提取   | 完成 | 从 Rust MCP server 源码中提取核心静态 facts。                          | Rust fixtures 可以产出预期的函数、导入、调用、MCP 入口、sink 和相关基础 facts。             |
 | Phase 10：调用关系分析        | 未开始 | 重构 call graph、可达性分析和反向 sink 追踪基础能力。                       | Rust 可以在聚焦 fixture 上从 entrypoint 或 root function 追踪到 sink。          |
 | Phase 11：轻量数据流分析       | 未开始 | 重构 taint-lite 分析能力，并让 Python、JS/TS、Rust facts 进入统一数据流。     | Rust 可以在聚焦 fixture 上识别基础的参数到 sink 传播路径。                             |
 | Phase 12：Agent 分析线      | 未开始 | 接入可配置的 Agent 辅助源码分析，生成独立的候选风险结果。                         | Agent 线可以按配置读取源码、facts 和已有分析结果，并输出结构化 `AgentAnalysisResult`。        |
@@ -100,6 +100,8 @@ MCP 漏洞分类、漏洞原理和静态挖掘方法见 [`MCP_VULNERABILITY_TAXO
 Phase 7 已完成 Python fact extraction 基础能力：RustPython AST extractor 已产出 import、function、entrypoint、source、call、assign、sink facts，并已接入 `run_static_scan()` 的 `facts` 和 `summary.fact_count`。Phase 7 不包含完整 taint propagation、完整 call graph、finding fusion、Agent 分析或动态分析；taint line 在默认配置中保持禁用，显式启用时返回明确未实现错误。
 
 Phase 8 已完成 JS/TS fact extraction 基础能力：SWC AST extractor 已产出 import (ESM/CJS, 6 ImportKind)、function (4 种形态)、entrypoint (MCP 回调模式)、source (含递归解构展开)、call (含双轨别名解析)、assign、sink (8 类 JS 特定类别) facts，并已接入 `run_static_scan()` 的 `facts` 和 `summary.fact_count`。Phase 8 不包含完整 taint propagation、完整 call graph、finding fusion、Agent 分析或动态分析；taint line 在默认配置中保持禁用，显式启用时返回明确未实现错误。
+
+Phase 9 已完成 Rust fact extraction 基础能力：syn-based AST extractor 已产出 import (Use/UseAs/UseGlob/UseGroup, 4 种 Rust ImportKind)、function (fn decl + impl method, 含 doc comment、return type)、entrypoint (attribute macro `#[tool]`/`#[resource]`/`#[prompt]` + SDK 调用模式)、source (MCP tool 参数)、call (含 use alias 解析)、assign (let 绑定 + 赋值表达式)、sink (7 类 Rust 特定类别: command_execution, file_read, file_write, network_request, credential_leak, deserialization, unsafe_block) facts，并已接入 `run_static_scan()` 的 `facts` 和 `summary.fact_count`。Phase 9 不包含完整 taint propagation、完整 call graph、finding fusion、Agent 分析或动态分析；taint line 在默认配置中保持禁用，显式启用时返回明确未实现错误。行号当前使用占位值（同 Phase 8），因 proc_macro2::Span 在稳定 Rust 上不暴露 line/column。
 
 如果某个阶段需要超过本路线图粒度的技术细节，应创建单独文档，并在阶段行或表格下方的简短备注中链接该文档。
 

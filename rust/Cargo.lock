@@ -621,6 +621,7 @@ dependencies = [
  "serde",
  "serde_json",
  "swc_core",
+ "syn 2.0.119",
  "toml",
 ]
 
