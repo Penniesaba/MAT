@@ -99,6 +99,7 @@ pub(crate) fn extract_esm_import(
 
 // --- CJS require() Handling ---
 
+#[allow(dead_code)]
 pub(crate) fn extract_require_call(
     callee_name: &str,
     n: &CallExpr,
@@ -203,6 +204,7 @@ pub(crate) fn extract_destructured_require(
 
 // --- Helpers ---
 
+#[allow(dead_code)]
 fn first_string_arg(call: &CallExpr) -> Option<String> {
     let arg = call.args.first()?;
     match arg.expr.as_ref() {
