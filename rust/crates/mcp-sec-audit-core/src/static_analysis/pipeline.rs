@@ -75,12 +75,15 @@ pub fn run_static_scan(
 
     let facts = extract_static_facts(&ctx)?;
     let rule_results = lines::run_rule_line(&ctx, loaded_rulebook.as_ref())?;
-    let taint_results = lines::run_taint_line(&ctx)?;
+    let (taint_results, dataflow_facts) = lines::run_taint_line(&ctx, &facts)?;
     let agent_results = lines::run_agent_line(&ctx)?;
+
+    let mut all_facts = facts;
+    all_facts.extend(dataflow_facts);
 
     let summary = StaticAnalysisSummary {
         target: target_label(&targets),
-        fact_count: facts.len(),
+        fact_count: all_facts.len(),
         rule_result_count: rule_results.len(),
         taint_result_count: taint_results.len(),
         agent_result_count: agent_results.len(),
@@ -90,7 +93,7 @@ pub fn run_static_scan(
     };
 
     Ok(StaticAnalysisResult {
-        facts,
+        facts: all_facts,
         rule_results,
         taint_results,
         agent_results,
