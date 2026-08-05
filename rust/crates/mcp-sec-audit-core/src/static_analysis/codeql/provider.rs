@@ -168,18 +168,22 @@ mod tests {
     use super::*;
 
     #[test]
-    #[should_panic(expected = "codeql CLI not found in PATH")]
     fn missing_codeql_cli_panics_on_database_create() {
         // This test assumes codeql is NOT installed.
-        // If codeql IS installed, this test is skipped via #[ignore].
+        // If codeql IS installed, this test is skipped via the early return.
         if CliCodeqlProvider.check_available() {
-            return; // codeql is installed — skip the panic test
+            return; // codeql is installed — skip the test
         }
         let provider = CliCodeqlProvider;
         let tmp = std::env::temp_dir().join("mcp-sec-audit-codeql-test-missing");
         std::fs::create_dir_all(&tmp).expect("create tmp dir");
-        provider
+        let err = provider
             .create_database(&tmp, "python")
-            .expect("codeql database create should fail when CLI not found");
+            .expect_err("codeql database create should fail when CLI not found");
+        assert!(
+            err.to_string().contains("codeql CLI not found in PATH"),
+            "unexpected error message: {}",
+            err
+        );
     }
 }
