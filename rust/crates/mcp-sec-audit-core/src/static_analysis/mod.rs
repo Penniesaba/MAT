@@ -4,6 +4,7 @@ mod discovery;
 mod lines;
 mod pipeline;
 mod rule;
+mod taint;
 
 pub use discovery::{
     DiscoveredFile, DiscoverySummary, ScanLanguage, detect_language, discover_files,
