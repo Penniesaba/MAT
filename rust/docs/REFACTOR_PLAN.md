@@ -74,7 +74,9 @@ MCP 漏洞分类、漏洞原理和静态挖掘方法见 [`MCP_VULNERABILITY_TAXO
 | Phase 9：Rust fact 提取        | 完成  | 从 Rust MCP server 源码中提取核心静态 facts。                         | Rust fixtures 可以产出预期的函数、导入、调用、MCP 入口、sink 和相关基础 facts。                                              |
 | Phase 10：调用关系分析             | 完成 | 重构 call graph、可达性分析和反向 sink 追踪基础能力。                        | Rust 可以在聚焦 fixture 上从 entrypoint 或 root function 追踪到 sink。                                          |
 | Phase 11：轻量数据流分析            | 完成 | 重构 taint-lite 分析能力，并让 Python、JS/TS、Rust facts 进入统一数据流。     | Rust 可以在聚焦 fixture 上识别基础的参数到 sink 传播路径。                                                             |
-| Phase 12：Agent 分析线          | 未开始 | 接入可配置的 Agent 辅助源码分析，生成独立的候选风险结果。                           | Agent 线可以按配置读取源码、facts 和已有分析结果，并输出结构化 `AgentAnalysisResult`。                                        |
+| Phase 12：Agent 分析线          | 完成 | 接入可配置的 Agent 辅助源码分析，生成独立的候选风险结果。                           | Agent 线可以按配置读取源码、facts 和已有分析结果，并输出结构化 `AgentAnalysisResult`。                                        |
+
+Phase 12 已完成 Agent 辅助分析线实现。Agent 线通过 CLI 子进程调用外部 Agent 工具（claude），传入 MCP 安全审计 prompt 模板，Agent 自主使用工具探索源码并产出结构化 AgentAnalysisResult。同时完成了三线工程化解耦重构：规则线（rule/）、污点线（taint/）、Agent 线（agent/）各自独立目录，每条线有单一 pub fn run() 入口，pipeline.rs 纯编排。Fact 提取下沉至 taint 线内部，不再作为全局前置步骤。
 | Phase 13：静态结果融合与 finding 生成 | 未开始 | 将规则线、污点线和 Agent 线结果融合为最终静态 findings。                       | Rust 静态分析可以输出包含 evidence、severity、confidence、risk 和来源线索的融合 findings。                                |
 | Phase 14：静态分析对齐             | 未开始 | 将 Rust 静态输出与 Python 实现进行对比。                                | 主要 fixtures 和 benchmark 路径完成对比，差异被记录为 bug、改进或可接受差异。                                                 |
 | Phase 15：动态分析兼容             | 未开始 | 通过 Rust CLI 支持完整动态分析，并按需复用现有运行时组件。                         | Rust CLI 可以完成一次动态扫描，并生成兼容报告输出。                                                                      |

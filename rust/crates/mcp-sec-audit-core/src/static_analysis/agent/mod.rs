@@ -107,7 +107,6 @@ pub fn run(ctx: &StaticScanContext) -> Result<Vec<AgentAnalysisResult>> {
 mod tests {
     use super::*;
     use crate::RuntimeConfig;
-    use crate::static_analysis::DiscoveredFile;
 
     #[test]
     fn disabled_agent_returns_empty() {
