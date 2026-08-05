@@ -3,6 +3,10 @@ pub mod facts;
 mod agent;
 mod codeql;
 mod discovery;
+// TODO(fusion): remove `#[allow(dead_code)]` once Task 5 wires the fusion
+// pipeline into `pipeline.rs`; until then the matcher is built but uncalled.
+#[allow(dead_code)]
+pub(crate) mod fusion;
 mod pipeline;
 mod rule;
 mod taint;
