@@ -1,6 +1,6 @@
 use std::{collections::BTreeSet, fs};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use regex::RegexBuilder;
 use serde_json::Value;
 
@@ -23,7 +23,28 @@ struct CapabilityAccumulator {
     indicator_boosts: Vec<(String, f64)>,
 }
 
-pub fn analyze_rule_line(
+/// Rule line entry point. Handles config gating and rulebook validation,
+/// then delegates to the internal regex-based analyzer.
+pub fn run(
+    ctx: &StaticScanContext,
+    rulebook: Option<&RuleBook>,
+) -> Result<Vec<RuleAnalysisResult>> {
+    if !ctx.config.static_.rule.enabled {
+        return Ok(Vec::new());
+    }
+
+    let Some(rulebook) = rulebook else {
+        bail!("rule analysis line is enabled but no rulebook was loaded");
+    };
+
+    if rulebook.is_empty() {
+        bail!("rule analysis line is enabled but rulebook is empty");
+    }
+
+    analyze_rule_line(ctx, rulebook)
+}
+
+fn analyze_rule_line(
     ctx: &StaticScanContext,
     rulebook: &RuleBook,
 ) -> Result<Vec<RuleAnalysisResult>> {

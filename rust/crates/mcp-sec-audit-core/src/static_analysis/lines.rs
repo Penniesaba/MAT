@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 
 use crate::{
     AgentAnalysisResult, Fact, RuleAnalysisResult, RuleBook, TaintAnalysisResult,
@@ -9,19 +9,7 @@ pub fn run_rule_line(
     ctx: &StaticScanContext,
     rulebook: Option<&RuleBook>,
 ) -> Result<Vec<RuleAnalysisResult>> {
-    if !ctx.config.static_.rule.enabled {
-        return Ok(Vec::new());
-    }
-
-    let Some(rulebook) = rulebook else {
-        bail!("rule analysis line is enabled but no rulebook was loaded");
-    };
-
-    if rulebook.is_empty() {
-        bail!("rule analysis line is enabled but rulebook is empty");
-    }
-
-    rule::analyze_rule_line(ctx, rulebook)
+    rule::run(ctx, rulebook)
 }
 
 pub fn run_taint_line(
