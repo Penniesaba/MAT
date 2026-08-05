@@ -21,11 +21,11 @@ entrypoint_required = true
 
 [static.agent]
 enabled = false
-mode = "evidence_aware"
 provider = "claude"
-prompt_profile = "mcp_security_audit"
-max_files = 80
-include_low_confidence = false
+# prompt_template_path = "/path/to/custom-prompt.md"  # optional
+max_turns = 30
+timeout_seconds = 600
+extra_args = []
 
 [dynamic]
 enabled = false

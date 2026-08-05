@@ -69,16 +69,16 @@ pub struct StaticTaintConfig {
 pub struct StaticAgentConfig {
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default = "default_agent_mode")]
-    pub mode: String,
     #[serde(default = "default_agent_provider")]
     pub provider: String,
-    #[serde(default = "default_prompt_profile")]
-    pub prompt_profile: String,
-    #[serde(default = "default_max_files")]
-    pub max_files: u32,
     #[serde(default)]
-    pub include_low_confidence: bool,
+    pub prompt_template_path: Option<String>,
+    #[serde(default = "default_agent_max_turns")]
+    pub max_turns: u32,
+    #[serde(default = "default_agent_timeout")]
+    pub timeout_seconds: u64,
+    #[serde(default)]
+    pub extra_args: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,11 +181,11 @@ impl Default for StaticAgentConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            mode: default_agent_mode(),
             provider: default_agent_provider(),
-            prompt_profile: default_prompt_profile(),
-            max_files: default_max_files(),
-            include_low_confidence: false,
+            prompt_template_path: None,
+            max_turns: default_agent_max_turns(),
+            timeout_seconds: default_agent_timeout(),
+            extra_args: Vec::new(),
         }
     }
 }
@@ -276,20 +276,16 @@ fn default_max_depth() -> u32 {
     8
 }
 
-fn default_agent_mode() -> String {
-    "evidence_aware".to_string()
-}
-
 fn default_agent_provider() -> String {
     "claude".to_string()
 }
 
-fn default_prompt_profile() -> String {
-    "mcp_security_audit".to_string()
+fn default_agent_max_turns() -> u32 {
+    30
 }
 
-fn default_max_files() -> u32 {
-    80
+fn default_agent_timeout() -> u64 {
+    600
 }
 
 fn default_dynamic_sandbox() -> String {
@@ -330,7 +326,6 @@ mod tests {
 
             [static.agent]
             enabled = true
-            mode = "source_only"
 
             [dynamic]
             enabled = true
@@ -343,7 +338,14 @@ mod tests {
         assert!(config.static_.taint.enabled);
         assert_eq!(config.static_.taint.max_depth, 4);
         assert!(config.static_.agent.enabled);
-        assert_eq!(config.static_.agent.mode, "source_only");
+        assert_eq!(config.static_.agent.provider, "claude");
+        assert_eq!(config.static_.agent.max_turns, default_agent_max_turns());
+        assert_eq!(
+            config.static_.agent.timeout_seconds,
+            default_agent_timeout()
+        );
+        assert_eq!(config.static_.agent.prompt_template_path, None);
+        assert!(config.static_.agent.extra_args.is_empty());
         assert!(config.dynamic.enabled);
         assert_eq!(config.dynamic.timeout_seconds, 30);
     }
