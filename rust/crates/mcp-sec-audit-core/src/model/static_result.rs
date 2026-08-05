@@ -4,6 +4,30 @@ use crate::config::RuntimeConfig;
 
 use super::{Confidence, Fact, FindingStatus, Severity};
 
+/// Source location with file path and line number.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Location {
+    pub file: String,
+    pub line: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// A single step in a CodeQL dataflow path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DataFlowPathStep {
+    pub location: Location,
+    pub snippet: Option<String>,
+}
+
+/// CodeQL codeFlows representation — a full taint path through the program.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DataFlowPath {
+    pub steps: Vec<DataFlowPathStep>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuleAnalysisResult {
     pub result_id: String,
@@ -54,6 +78,55 @@ pub struct AgentAnalysisResult {
     pub limitations: Vec<String>,
 }
 
+/// Result from the CodeQL analysis line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeqlAnalysisResult {
+    pub result_id: String,
+    pub rule_id: String,
+    pub rule_name: String,
+    pub message: String,
+    pub severity: Severity,
+    pub locations: Vec<Location>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dataflow_path: Option<DataFlowPath>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sarif_snippet: Option<String>,
+    #[serde(default)]
+    pub related_rule_ids: Vec<String>,
+    #[serde(default)]
+    pub related_taint_ids: Vec<String>,
+    #[serde(default)]
+    pub related_agent_ids: Vec<String>,
+    #[serde(default = "default_verification_status")]
+    pub verification_status: String,
+    #[serde(default)]
+    pub limitations: Vec<String>,
+}
+
+fn default_verification_status() -> String {
+    "uncorroborated".to_string()
+}
+
+/// Composite output from the CodeQL line — structured results + raw SARIF + diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeqlOutput {
+    pub results: Vec<CodeqlAnalysisResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_sarif: Option<String>,
+    #[serde(default)]
+    pub diagnostics: Vec<String>,
+}
+
+impl CodeqlOutput {
+    pub fn empty() -> Self {
+        Self {
+            results: Vec::new(),
+            raw_sarif: None,
+            diagnostics: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FusedFinding {
     pub finding_id: String,
@@ -81,6 +154,7 @@ pub struct StaticAnalysisSummary {
     pub rule_result_count: usize,
     pub taint_result_count: usize,
     pub agent_result_count: usize,
+    pub codeql_result_count: usize,
     pub fused_finding_count: usize,
     pub highest_severity: Option<Severity>,
     pub risk_level: String,
@@ -98,6 +172,7 @@ pub struct StaticAnalysisResult {
     pub rule_results: Vec<RuleAnalysisResult>,
     pub taint_results: Vec<TaintAnalysisResult>,
     pub agent_results: Vec<AgentAnalysisResult>,
+    pub codeql_results: Vec<CodeqlAnalysisResult>,
     pub fused_findings: Vec<FusedFinding>,
     pub summary: StaticAnalysisSummary,
     pub config_snapshot: ConfigSnapshot,
@@ -130,5 +205,17 @@ mod tests {
         assert!(value.get("summary").is_some());
         assert!(value["summary"].get("fact_count").is_some());
         assert!(value.get("config_snapshot").is_some());
+    }
+
+    #[test]
+    fn static_analysis_json_preserves_codeql_results() {
+        let result = crate::fixtures::synthetic_static_analysis_result();
+        let value = serde_json::to_value(&result).expect("serialize static result");
+        assert!(value.get("codeql_results").is_some());
+        assert!(value["summary"].get("codeql_result_count").is_some());
+        assert_eq!(
+            value["summary"]["codeql_result_count"].as_u64(),
+            Some(1)
+        );
     }
 }

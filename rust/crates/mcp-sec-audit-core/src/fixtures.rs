@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use super::model::{CodeqlAnalysisResult, CodeqlOutput, Location};
+
 use crate::{
     config::RuntimeConfig,
     model::{
@@ -152,12 +154,36 @@ pub fn synthetic_agent_analysis_result() -> AgentAnalysisResult {
     }
 }
 
+pub fn synthetic_codeql_analysis_result() -> CodeqlAnalysisResult {
+    CodeqlAnalysisResult {
+        result_id: "codeql:py/command-injection:server.py:42".to_string(),
+        rule_id: "py/command-injection".to_string(),
+        rule_name: "Uncontrolled command line".to_string(),
+        message: "This command line depends on a user-provided value.".to_string(),
+        severity: Severity::High,
+        locations: vec![Location {
+            file: "server.py".to_string(),
+            line: 42,
+            column: Some(5),
+            message: Some("sink".to_string()),
+        }],
+        dataflow_path: None,
+        sarif_snippet: None,
+        related_rule_ids: Vec::new(),
+        related_taint_ids: Vec::new(),
+        related_agent_ids: Vec::new(),
+        verification_status: "uncorroborated".to_string(),
+        limitations: vec!["Synthetic fixture only".to_string()],
+    }
+}
+
 pub fn synthetic_static_analysis_result() -> StaticAnalysisResult {
     StaticAnalysisResult {
         facts: vec![synthetic_source_fact()],
         rule_results: vec![synthetic_rule_analysis_result()],
         taint_results: vec![synthetic_taint_analysis_result()],
         agent_results: vec![synthetic_agent_analysis_result()],
+        codeql_results: vec![synthetic_codeql_analysis_result()],
         fused_findings: vec![FusedFinding {
             finding_id: "finding:demo:fused:1".to_string(),
             title: "Command execution reachable from MCP tool".to_string(),
@@ -187,6 +213,7 @@ pub fn synthetic_static_analysis_result() -> StaticAnalysisResult {
             rule_result_count: 1,
             taint_result_count: 1,
             agent_result_count: 1,
+            codeql_result_count: 1,
             fused_finding_count: 1,
             highest_severity: Some(Severity::High),
             risk_level: "high".to_string(),

@@ -39,6 +39,8 @@ pub struct StaticConfig {
     pub taint: StaticTaintConfig,
     #[serde(default)]
     pub agent: StaticAgentConfig,
+    #[serde(default)]
+    pub codeql: StaticCodeqlConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,6 +81,22 @@ pub struct StaticAgentConfig {
     pub timeout_seconds: u64,
     #[serde(default)]
     pub extra_args: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StaticCodeqlConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub query_pack_path: Option<String>,
+    #[serde(default = "default_codeql_timeout")]
+    pub timeout_seconds: u64,
+    #[serde(default)]
+    pub extra_args: Vec<String>,
+}
+
+fn default_codeql_timeout() -> u64 {
+    1200
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,6 +169,7 @@ impl Default for StaticConfig {
             rule: StaticRuleConfig::default(),
             taint: StaticTaintConfig::default(),
             agent: StaticAgentConfig::default(),
+            codeql: StaticCodeqlConfig::default(),
         }
     }
 }
@@ -185,6 +204,17 @@ impl Default for StaticAgentConfig {
             prompt_template_path: None,
             max_turns: default_agent_max_turns(),
             timeout_seconds: default_agent_timeout(),
+            extra_args: Vec::new(),
+        }
+    }
+}
+
+impl Default for StaticCodeqlConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            query_pack_path: None,
+            timeout_seconds: default_codeql_timeout(),
             extra_args: Vec::new(),
         }
     }
@@ -346,6 +376,14 @@ mod tests {
         );
         assert_eq!(config.static_.agent.prompt_template_path, None);
         assert!(config.static_.agent.extra_args.is_empty());
+        // CodeQL config defaults
+        assert!(!config.static_.codeql.enabled);
+        assert_eq!(
+            config.static_.codeql.timeout_seconds,
+            default_codeql_timeout()
+        );
+        assert_eq!(config.static_.codeql.query_pack_path, None);
+        assert!(config.static_.codeql.extra_args.is_empty());
         assert!(config.dynamic.enabled);
         assert_eq!(config.dynamic.timeout_seconds, 30);
     }

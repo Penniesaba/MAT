@@ -83,6 +83,7 @@ pub fn run_static_scan(
         rule_result_count: rule_results.len(),
         taint_result_count: taint_results.len(),
         agent_result_count: agent_results.len(),
+        codeql_result_count: 0,
         fused_finding_count: 0,
         highest_severity: None,
         risk_level: "none".to_string(),
@@ -93,6 +94,7 @@ pub fn run_static_scan(
         rule_results,
         taint_results,
         agent_results,
+        codeql_results: Vec::new(),
         fused_findings: Vec::new(),
         summary,
         config_snapshot: ConfigSnapshot {
@@ -172,6 +174,7 @@ fn empty_result(
         rule_results: Vec::new(),
         taint_results: Vec::new(),
         agent_results: Vec::new(),
+        codeql_results: Vec::new(),
         fused_findings: Vec::new(),
         summary: StaticAnalysisSummary {
             target,
@@ -179,6 +182,7 @@ fn empty_result(
             rule_result_count: 0,
             taint_result_count: 0,
             agent_result_count: 0,
+            codeql_result_count: 0,
             fused_finding_count: 0,
             highest_severity: None,
             risk_level: "none".to_string(),

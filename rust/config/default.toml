@@ -27,6 +27,12 @@ max_turns = 30
 timeout_seconds = 600
 extra_args = []
 
+[static.codeql]
+enabled = false
+# query_pack_path = "/path/to/custom/queries"  # optional
+timeout_seconds = 1200
+extra_args = []
+
 [dynamic]
 enabled = false
 sandbox = "existing_python_runtime"
