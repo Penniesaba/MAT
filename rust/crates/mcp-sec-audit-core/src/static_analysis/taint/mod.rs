@@ -261,4 +261,104 @@ mod tests {
         let (results, _) = run_taint_analysis(&facts, &config).expect("taint analysis");
         assert!(!results.is_empty(), "Expected taint results for assignment alias");
     }
+
+    #[test]
+    fn js_direct_source_to_sink() {
+        // server.tool("run", async (params) => { exec(params.command); });
+        let file = "server.js".to_string();
+        let func_id = "javascript:server.js:run_handler".to_string();
+        let call_id = "call:server.js:3:0".to_string();
+        let sink_id = "sink:command_execution:server.js:3".to_string();
+
+        let facts = vec![
+            Fact::Function(FunctionFact {
+                base: FactBase { id: func_id.clone(), file: file.clone(), line: 1, extractor: "test".into() },
+                language: "javascript".into(), name: "run_handler".into(),
+                qualified_name: "run_handler".into(), end_line: 5,
+                params: vec![ParamInfo { name: "params".into(), annotation: None, default: None }],
+                decorators: vec![], docstring: None, return_type: None, enclosing_class: None,
+            }),
+            Fact::Entrypoint(EntryPointFact {
+                base: FactBase { id: "entry:server.js:run".into(), file: file.clone(), line: 1, extractor: "test".into() },
+                kind: EntryPointKind::McpTool, name: "run".into(),
+                function_id: func_id.clone(),
+                evidence: Some(EntryPointEvidence { kind: "sdk_call".into(), text: "server.tool".into() }),
+                params: vec!["params".into()], confidence: Confidence::High,
+            }),
+            Fact::Source(SourceFact {
+                base: FactBase { id: "source:server.js:run_handler:params".into(), file: file.clone(), line: 1, extractor: "test".into() },
+                kind: "mcp_tool_parameter".into(), function_id: func_id.clone(),
+                name: "params".into(), confidence: Confidence::High,
+            }),
+            Fact::Call(CallFact {
+                base: FactBase { id: call_id.clone(), file: file.clone(), line: 3, extractor: "test".into() },
+                caller: func_id.clone(), callee: "exec".into(),
+                normalized_callee: Some("exec".into()),
+                column: Some(0), end_line: Some(3), snippet: "exec(params.command)".into(),
+                args: vec![CallArg { index: 0, expr: "params.command".into(), kind: "positional".into() }],
+                kwargs: std::collections::BTreeMap::new(), resolution: None,
+            }),
+            Fact::Sink(SinkFact {
+                base: FactBase { id: sink_id.clone(), file: file.clone(), line: 3, extractor: "test".into() },
+                call_id, category: "command_execution".into(),
+                rule_id: "javascript.command_execution".into(), sink_name: "exec".into(),
+                severity_base: Severity::Critical, reason: "dangerous".into(),
+                conditions: std::collections::BTreeMap::new(), confidence: Confidence::High,
+            }),
+        ];
+
+        let config = default_config();
+        let (results, _) = run_taint_analysis(&facts, &config).expect("taint analysis");
+        assert!(!results.is_empty(), "Expected taint results for JS source→sink");
+    }
+
+    #[test]
+    fn rust_direct_source_to_sink() {
+        // #[tool] async fn my_tool(params: Value) { Command::new("sh").arg(params).output(); }
+        let file = "src/main.rs".to_string();
+        let func_id = "rust:src/main.rs:my_tool".to_string();
+        let call_id = "call:src/main.rs:3:0".to_string();
+        let sink_id = "sink:command_execution:src/main.rs:3".to_string();
+
+        let facts = vec![
+            Fact::Function(FunctionFact {
+                base: FactBase { id: func_id.clone(), file: file.clone(), line: 1, extractor: "test".into() },
+                language: "rust".into(), name: "my_tool".into(),
+                qualified_name: "my_tool".into(), end_line: 5,
+                params: vec![ParamInfo { name: "params".into(), annotation: Some("Value".into()), default: None }],
+                decorators: vec!["#[tool]".into()], docstring: None, return_type: None, enclosing_class: None,
+            }),
+            Fact::Entrypoint(EntryPointFact {
+                base: FactBase { id: "entry:src/main.rs:my_tool".into(), file: file.clone(), line: 1, extractor: "test".into() },
+                kind: EntryPointKind::McpTool, name: "my_tool".into(),
+                function_id: func_id.clone(),
+                evidence: Some(EntryPointEvidence { kind: "attribute_macro".into(), text: "#[tool]".into() }),
+                params: vec!["params".into()], confidence: Confidence::High,
+            }),
+            Fact::Source(SourceFact {
+                base: FactBase { id: "source:src/main.rs:my_tool:params".into(), file: file.clone(), line: 1, extractor: "test".into() },
+                kind: "mcp_tool_parameter".into(), function_id: func_id.clone(),
+                name: "params".into(), confidence: Confidence::High,
+            }),
+            Fact::Call(CallFact {
+                base: FactBase { id: call_id.clone(), file: file.clone(), line: 3, extractor: "test".into() },
+                caller: func_id.clone(), callee: "Command::new".into(),
+                normalized_callee: Some("std::process::Command::new".into()),
+                column: Some(0), end_line: Some(3), snippet: "Command::new(\"sh\")".into(),
+                args: vec![CallArg { index: 0, expr: "\"sh\"".into(), kind: "positional".into() }],
+                kwargs: std::collections::BTreeMap::new(), resolution: None,
+            }),
+            Fact::Sink(SinkFact {
+                base: FactBase { id: sink_id.clone(), file: file.clone(), line: 3, extractor: "test".into() },
+                call_id, category: "command_execution".into(),
+                rule_id: "rust.command_execution".into(), sink_name: "std::process::Command::new".into(),
+                severity_base: Severity::Critical, reason: "dangerous".into(),
+                conditions: std::collections::BTreeMap::new(), confidence: Confidence::High,
+            }),
+        ];
+
+        let config = default_config();
+        let (results, _) = run_taint_analysis(&facts, &config).expect("taint analysis");
+        assert!(!results.is_empty(), "Expected taint results for Rust source→sink");
+    }
 }
