@@ -11,7 +11,7 @@ use crate::{
     load_rulebook,
 };
 
-use super::{DiscoveredFile, discover_files, extract_static_facts, lines};
+use super::{agent, rule, taint, DiscoveredFile, discover_files};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaticScanContext {
@@ -73,13 +73,9 @@ pub fn run_static_scan(
         discovered_files: discovery.discovered_files,
     };
 
-    let facts = extract_static_facts(&ctx)?;
-    let rule_results = lines::run_rule_line(&ctx, loaded_rulebook.as_ref())?;
-    let (taint_results, dataflow_facts) = lines::run_taint_line(&ctx, &facts)?;
-    let agent_results = lines::run_agent_line(&ctx)?;
-
-    let mut all_facts = facts;
-    all_facts.extend(dataflow_facts);
+    let rule_results = rule::run(&ctx, loaded_rulebook.as_ref())?;
+    let (taint_results, all_facts) = taint::run(&ctx)?;
+    let agent_results = agent::run(&ctx)?;
 
     let summary = StaticAnalysisSummary {
         target: target_label(&targets),
@@ -243,12 +239,10 @@ mod tests {
         let rules = write_rulebook(&root, "rules.toml", "command_exec");
         fs::write(root.join("server.py"), "subprocess.run('id')").expect("write file");
 
-        let result = run_static_scan(
-            &RuntimeConfig::default(),
-            &[rules.clone()],
-            Some(&[root.clone()]),
-        )
-        .expect("run scan");
+        let mut config = RuntimeConfig::default();
+        config.static_.taint.enabled = true;
+        let result = run_static_scan(&config, &[rules.clone()], Some(&[root.clone()]))
+            .expect("run scan");
         assert_eq!(result.summary.rule_result_count, 1);
         assert_eq!(result.rule_results[0].rule_id, "command_exec");
         assert_eq!(result.summary.taint_result_count, 0);
@@ -293,7 +287,9 @@ def run_command(command: str):
         )
         .expect("write file");
 
-        let result = run_static_scan(&RuntimeConfig::default(), &[rules], Some(&[root.clone()]))
+        let mut config = RuntimeConfig::default();
+        config.static_.taint.enabled = true;
+        let result = run_static_scan(&config, &[rules], Some(&[root.clone()]))
             .expect("run scan");
 
         assert!(!result.facts.is_empty());
@@ -340,7 +336,7 @@ def run_command(command: str):
                 .iter()
                 .any(|fact| matches!(fact, Fact::Sink(_)))
         );
-        assert_eq!(result.summary.taint_result_count, 0);
+        assert!(result.summary.taint_result_count > 0);
 
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -396,8 +392,10 @@ server.tool("run_command", async (params) => {
         )
         .expect("write JS file");
 
+        let mut config = RuntimeConfig::default();
+        config.static_.taint.enabled = true;
         let result =
-            run_static_scan(&RuntimeConfig::default(), &[rules], Some(&[root.clone()]))
+            run_static_scan(&config, &[rules], Some(&[root.clone()]))
                 .expect("run scan");
 
         assert!(!result.facts.is_empty());
@@ -435,7 +433,7 @@ server.tool("run_command", async (params) => {
                 .iter()
                 .any(|fact| matches!(fact, Fact::Sink(_)))
         );
-        assert_eq!(result.summary.taint_result_count, 0);
+        assert!(result.summary.taint_result_count > 0);
 
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -467,8 +465,10 @@ server.tool("run_command", async (params: ToolParams) => {
         )
         .expect("write TS file");
 
+        let mut config = RuntimeConfig::default();
+        config.static_.taint.enabled = true;
         let result =
-            run_static_scan(&RuntimeConfig::default(), &[rules], Some(&[root.clone()]))
+            run_static_scan(&config, &[rules], Some(&[root.clone()]))
                 .expect("run scan");
 
         assert!(!result.facts.is_empty());
