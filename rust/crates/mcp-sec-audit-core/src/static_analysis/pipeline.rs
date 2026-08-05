@@ -7,11 +7,11 @@ use std::{
 use anyhow::{Context, Result, bail};
 
 use crate::{
-    ConfigSnapshot, RuleBook, RuntimeConfig, StaticAnalysisResult, StaticAnalysisSummary,
-    load_rulebook,
+    ConfigSnapshot, FusedFinding, RuleBook, RuntimeConfig, Severity, StaticAnalysisResult,
+    StaticAnalysisSummary, load_rulebook,
 };
 
-use super::{agent, codeql, rule, taint, DiscoveredFile, discover_files};
+use super::{agent, codeql, fusion, rule, taint, DiscoveredFile, discover_files};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaticScanContext {
@@ -78,6 +78,19 @@ pub fn run_static_scan(
     let agent_results = agent::run(&ctx)?;
     let codeql_output = codeql::run(&ctx)?;
 
+    // Phase 13: Fusion
+    let fused_findings = fusion::run(
+        &ctx.config.fusion,
+        rule_results.clone(),
+        taint_results.clone(),
+        agent_results.clone(),
+        codeql_output.results.clone(),
+    );
+
+    let codeql_fused_count = fused_findings.iter()
+        .filter(|f| f.supported_by.contains(&"codeql".to_string()))
+        .count();
+
     let summary = StaticAnalysisSummary {
         target: target_label(&targets),
         fact_count: all_facts.len(),
@@ -85,10 +98,12 @@ pub fn run_static_scan(
         taint_result_count: taint_results.len(),
         agent_result_count: agent_results.len(),
         codeql_result_count: codeql_output.results.len(),
-        codeql_fused_count: 0,
-        fused_finding_count: 0,
-        highest_severity: None,
-        risk_level: "none".to_string(),
+        codeql_fused_count,
+        fused_finding_count: fused_findings.len(),
+        highest_severity: fused_findings.iter()
+            .map(|f| f.severity.clone())
+            .max_by(|a, b| scorer_ord(a).cmp(&scorer_ord(b))),
+        risk_level: compute_risk_level(&fused_findings),
     };
 
     Ok(StaticAnalysisResult {
@@ -97,7 +112,7 @@ pub fn run_static_scan(
         taint_results,
         agent_results,
         codeql_results: codeql_output.results,
-        fused_findings: Vec::new(),
+        fused_findings,
         summary,
         config_snapshot: ConfigSnapshot {
             runtime: effective_config,
@@ -215,6 +230,25 @@ fn rulebook_paths_to_strings(paths: &[PathBuf]) -> Vec<String> {
         .collect()
 }
 
+fn compute_risk_level(findings: &[FusedFinding]) -> String {
+    let has_critical = findings.iter().any(|f| f.severity == Severity::Critical);
+    let has_high = findings.iter().any(|f| f.severity == Severity::High);
+    let has_medium = findings.iter().any(|f| f.severity == Severity::Medium);
+    if has_critical { return "critical".into(); }
+    if has_high { return "high".into(); }
+    if has_medium { return "medium".into(); }
+    if findings.is_empty() { "none".into() } else { "low".into() }
+}
+
+fn scorer_ord(s: &Severity) -> u8 {
+    match s {
+        Severity::Critical => 4,
+        Severity::High => 3,
+        Severity::Medium => 2,
+        Severity::Low => 1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -272,6 +306,9 @@ mod tests {
             result.config_snapshot.rulebook_paths,
             vec![rules.display().to_string()]
         );
+        // Fusion enabled by default — rule result is fused into at least one finding
+        assert!(result.summary.fused_finding_count > 0);
+        assert!(!result.fused_findings.is_empty());
 
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -344,6 +381,9 @@ def run_command(command: str):
                 .any(|fact| matches!(fact, Fact::Sink(_)))
         );
         assert!(result.summary.taint_result_count > 0);
+        // Fusion produces findings from rule + taint results
+        assert!(result.summary.fused_finding_count > 0);
+        assert!(!result.fused_findings.is_empty());
 
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -519,6 +559,55 @@ def run_command(command: str):
         assert_eq!(result.summary.codeql_result_count, 0);
         assert!(result.codeql_results.is_empty());
         assert!(result.summary.taint_result_count > 0);
+        // Fusion still runs even though codeql is disabled — rule+taint findings exist
+        assert!(result.summary.fused_finding_count > 0);
+        assert!(!result.fused_findings.is_empty());
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn fusion_produces_findings_when_enabled() {
+        let root = temp_dir("fusion-test");
+        let rules = write_rulebook(&root, "rules.toml", "command_exec");
+        fs::write(
+            root.join("server.py"),
+            "import subprocess\nsubprocess.run('id')\n",
+        ).expect("write file");
+
+        let mut config = RuntimeConfig::default();
+        config.static_.taint.enabled = true;
+        config.fusion.enabled = true;
+        let result = run_static_scan(&config, &[rules], Some(&[root.clone()]))
+            .expect("run scan");
+
+        assert!(result.summary.fused_finding_count > 0);
+        assert!(!result.fused_findings.is_empty());
+        // Rule line found subprocess.run — at least one fused finding
+        let has_rule_support = result.fused_findings.iter()
+            .any(|f| f.supported_by.contains(&"rule".to_string()));
+        assert!(has_rule_support);
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn fusion_disabled_returns_empty_findings() {
+        let root = temp_dir("fusion-off");
+        let rules = write_rulebook(&root, "rules.toml", "command_exec");
+        fs::write(
+            root.join("server.py"),
+            "import subprocess\nsubprocess.run('id')\n",
+        ).expect("write file");
+
+        let mut config = RuntimeConfig::default();
+        config.static_.taint.enabled = true;
+        config.fusion.enabled = false;
+        let result = run_static_scan(&config, &[rules], Some(&[root.clone()]))
+            .expect("run scan");
+
+        assert_eq!(result.summary.fused_finding_count, 0);
+        assert!(result.fused_findings.is_empty());
 
         fs::remove_dir_all(root).expect("cleanup");
     }

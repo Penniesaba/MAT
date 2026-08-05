@@ -38,8 +38,12 @@ fn raw_to_confidence(raw: f64) -> Confidence {
     }
 }
 
-/// Convert Confidence to numeric for ordering (same mapping, used in matcher).
-#[allow(dead_code)] // wired in by Task 5 (pipeline) — not yet called in this crate
+/// Convert Confidence to numeric for ordering.
+///
+/// Available for external consumers that need to sort or compare Confidence values.
+/// Currently unused within this crate (pipeline.rs uses its own `scorer_ord` for
+/// Severity ordering), but kept as a public(crate) utility.
+#[allow(dead_code)]
 pub(crate) fn confidence_ord(c: &Confidence) -> u8 {
     match c {
         Confidence::High => 3,

@@ -231,23 +231,33 @@ pub(crate) fn match_results(
         .collect()
 }
 
-/// Extract the file segment from an id like `"sink:file.py:name"` or
-/// `"source:file.py:name"`. The middle segment (index 1) is the file.
+/// Extract the file segment from an id like `"sink:command_exec:server.py:42"` or
+/// `"source:server.py:handler:cmd"`. For the standard 4-segment sink_id format
+/// (`"prefix:kind:file:name_or_line"`), the file is the 3rd segment (index 2).
 fn parse_file_from_id(id: &str) -> String {
-    let parts: Vec<&str> = id.splitn(3, ':').collect();
-    if parts.len() >= 2 {
-        parts[1].to_string()
+    let parts: Vec<&str> = id.splitn(4, ':').collect();
+    if parts.len() >= 3 {
+        parts[2].to_string()
+    } else if parts.len() >= 2 {
+        parts[1].to_string() // fallback for 2-segment ids
     } else {
         String::new()
     }
 }
 
-/// Taint results do not carry precise line numbers, so the line defaults to 0.
+/// Parse the line number from the last segment of a 4-segment
+/// sink_id (`"prefix:kind:file:line"`). Returns 0 when the line
+/// segment is missing or non-numeric.
 ///
 /// Kept as a distinct function so a future facts-aware implementation can
 /// supply real line numbers without changing callers.
-fn parse_line_from_id(_id: &str) -> u32 {
-    0
+fn parse_line_from_id(id: &str) -> u32 {
+    let parts: Vec<&str> = id.splitn(4, ':').collect();
+    if parts.len() >= 4 {
+        parts[3].parse::<u32>().unwrap_or(0)
+    } else {
+        0
+    }
 }
 
 /// Parse `"file.py:line"` from the first affected location.
@@ -366,7 +376,7 @@ mod tests {
     fn stage1_proximity_matches_same_file_nearby_lines() {
         // Taint line defaults to 0; a rule on line 3 is within proximity 5.
         let rules = vec![make_rule("r1", "a.py", 3, "cmd_inj", Confidence::High)];
-        let taints = vec![make_taint("t1", "sink:a.py:x", "command_exec", Confidence::Medium)];
+        let taints = vec![make_taint("t1", "sink:command_exec:a.py:0", "command_exec", Confidence::Medium)];
         let agents = vec![];
         let groups = match_results(rules, taints, agents, 5);
         assert_eq!(groups.len(), 1);
@@ -377,10 +387,10 @@ mod tests {
     #[test]
     fn stage1_proximity_excludes_far_lines() {
         let rules = vec![make_rule("r1", "a.py", 10, "cmd_inj", Confidence::High)];
-        let taints = vec![make_taint("t1", "sink:a.py:x", "command_exec", Confidence::Medium)];
+        let taints = vec![make_taint("t1", "sink:command_exec:a.py:0", "command_exec", Confidence::Medium)];
         let agents = vec![];
         let groups = match_results(rules, taints, agents, 5);
-        // taint line is 0 by default (can't parse), proximity |10-0|=10 > 5
+        // taint line is 0, proximity |10-0|=10 > 5
         assert_eq!(groups.len(), 2);
         for g in &groups {
             assert_eq!(g.line_count(), 1);
@@ -390,7 +400,7 @@ mod tests {
     #[test]
     fn stage2_category_matches_same_file_same_category() {
         let rules = vec![make_rule("r1", "a.py", 10, "cmd_inj", Confidence::High)];
-        let taints = vec![make_taint("t1", "sink:a.py:x", "cmd_inj", Confidence::Medium)];
+        let taints = vec![make_taint("t1", "sink:cmd_inj:a.py:0", "cmd_inj", Confidence::Medium)];
         let agents = vec![];
         // line proximity fails but category should match in stage 2
         let groups = match_results(rules, taints, agents, 1);
@@ -401,7 +411,7 @@ mod tests {
     #[test]
     fn unmatched_results_become_solo_groups() {
         let rules = vec![make_rule("r1", "a.py", 10, "cmd_inj", Confidence::High)];
-        let taints = vec![make_taint("t1", "sink:b.py:x", "file_read", Confidence::Medium)];
+        let taints = vec![make_taint("t1", "sink:file_read:b.py:0", "file_read", Confidence::Medium)];
         let agents = vec![];
         let groups = match_results(rules, taints, agents, 5);
         // Different files, different categories — both solo
@@ -426,7 +436,7 @@ mod tests {
             make_rule("r1", "a.py", 10, "cmd_inj", Confidence::Low),
             make_rule("r2", "a.py", 100, "cmd_inj", Confidence::High),
         ];
-        let taints = vec![make_taint("t1", "sink:a.py:x", "cmd_inj", Confidence::Medium)];
+        let taints = vec![make_taint("t1", "sink:cmd_inj:a.py:0", "cmd_inj", Confidence::Medium)];
         let agents = vec![];
         let groups = match_results(rules, taints, agents, 5);
         assert_eq!(groups.len(), 1);
