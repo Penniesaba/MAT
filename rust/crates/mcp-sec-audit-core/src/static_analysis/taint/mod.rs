@@ -7,6 +7,26 @@ use anyhow::Result;
 use crate::config::StaticTaintConfig;
 use crate::model::{Fact, TaintAnalysisResult};
 
+use super::facts::extract_static_facts;
+use super::pipeline::StaticScanContext;
+
+/// Taint line entry point. Extracts facts from source files,
+/// builds program graph, runs BFS propagation, returns results + all facts.
+pub fn run(ctx: &StaticScanContext) -> Result<(Vec<TaintAnalysisResult>, Vec<Fact>)> {
+    if !ctx.config.static_.taint.enabled {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    let facts = extract_static_facts(ctx)?;
+    let (results, dataflow_facts) =
+        run_taint_analysis(&facts, &ctx.config.static_.taint)?;
+
+    let mut all_facts = facts;
+    all_facts.extend(dataflow_facts);
+
+    Ok((results, all_facts))
+}
+
 /// Run the full taint analysis pipeline:
 /// 1. Build unified graph from all facts
 /// 2. Run forward and/or backward propagation per config
@@ -360,5 +380,21 @@ mod tests {
         let config = default_config();
         let (results, _) = run_taint_analysis(&facts, &config).expect("taint analysis");
         assert!(!results.is_empty(), "Expected taint results for Rust source→sink");
+    }
+
+    #[test]
+    fn run_disabled_taint_returns_empty() {
+        use crate::RuntimeConfig;
+        use crate::static_analysis::DiscoveredFile;
+
+        let ctx = StaticScanContext {
+            config: RuntimeConfig::default(),  // taint disabled by default
+            rulebook_paths: Vec::new(),
+            discovered_files: Vec::<DiscoveredFile>::new(),
+        };
+
+        let (results, facts) = run(&ctx).expect("run disabled taint");
+        assert!(results.is_empty());
+        assert!(facts.is_empty());
     }
 }
