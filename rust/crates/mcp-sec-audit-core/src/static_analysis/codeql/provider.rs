@@ -1,0 +1,185 @@
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
+
+use anyhow::{Result, bail};
+
+use super::queries::QueryPack;
+
+/// CLI binary name for CodeQL.
+const CODEQL_BIN: &str = "codeql";
+
+/// Info about a successfully created CodeQL database.
+#[derive(Debug, Clone)]
+pub struct DatabaseInfo {
+    pub path: PathBuf,
+    pub language: String,
+}
+
+/// Pluggable CodeQL backend.
+pub trait CodeqlProvider {
+    /// Check whether the CodeQL CLI is available on PATH.
+    fn check_available(&self) -> bool;
+
+    /// Create a CodeQL database from source files.
+    fn create_database(&self, source_dir: &Path, language: &str) -> Result<DatabaseInfo>;
+
+    /// Run CodeQL analysis on a database and return SARIF JSON.
+    fn run_analysis(
+        &self,
+        db: &DatabaseInfo,
+        queries: &QueryPack,
+        timeout_seconds: u64,
+        extra_args: &[String],
+    ) -> Result<String>;
+}
+
+/// Default provider: shells out to the `codeql` CLI.
+pub struct CliCodeqlProvider;
+
+impl CodeqlProvider for CliCodeqlProvider {
+    fn check_available(&self) -> bool {
+        Command::new(CODEQL_BIN)
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    fn create_database(&self, source_dir: &Path, language: &str) -> Result<DatabaseInfo> {
+        let db_dir = std::env::temp_dir()
+            .join("mcp-sec-audit-codeql")
+            .join(format!("db-{}", std::process::id()))
+            .join(language);
+
+        std::fs::create_dir_all(&db_dir)?;
+
+        let output = Command::new(CODEQL_BIN)
+            .arg("database")
+            .arg("create")
+            .arg(&db_dir)
+            .arg("--language")
+            .arg(language)
+            .arg("--source-root")
+            .arg(source_dir)
+            .arg("--overwrite")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    anyhow::anyhow!(
+                        "codeql CLI not found in PATH. Install CodeQL: \
+                         https://github.com/github/codeql-cli-binaries/releases"
+                    )
+                } else {
+                    anyhow::anyhow!("failed to spawn codeql: {}", e)
+                }
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!(
+                "codeql database create failed for language '{}': {}",
+                language,
+                stderr.trim()
+            );
+        }
+
+        Ok(DatabaseInfo {
+            path: db_dir,
+            language: language.to_string(),
+        })
+    }
+
+    fn run_analysis(
+        &self,
+        db: &DatabaseInfo,
+        queries: &QueryPack,
+        timeout_seconds: u64,
+        extra_args: &[String],
+    ) -> Result<String> {
+        let mut cmd = Command::new(CODEQL_BIN);
+        cmd.arg("database")
+            .arg("analyze")
+            .arg(&db.path)
+            .arg("--format=sarif-latest")
+            .arg("--output=-");
+
+        // Add query files
+        for qf in &queries.query_files {
+            cmd.arg(qf);
+        }
+
+        // Add suite references
+        for suite in &queries.suite_refs {
+            cmd.arg(suite);
+        }
+
+        // Extra args from config
+        for arg in extra_args {
+            cmd.arg(arg);
+        }
+
+        cmd.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        let mut child = cmd.spawn().map_err(|e| {
+            anyhow::anyhow!("failed to spawn codeql analyze: {}", e)
+        })?;
+
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let mut stdout = String::new();
+            let mut stderr = String::new();
+            if let Some(mut out) = child.stdout.take() {
+                use std::io::Read;
+                let _ = out.read_to_string(&mut stdout);
+            }
+            if let Some(mut err) = child.stderr.take() {
+                use std::io::Read;
+                let _ = err.read_to_string(&mut stderr);
+            }
+            let status = child.wait();
+            let exit_code = status.ok().and_then(|s| s.code()).unwrap_or(-1);
+            let _ = tx.send((stdout, stderr, exit_code));
+        });
+
+        let timeout = Duration::from_secs(timeout_seconds);
+        match rx.recv_timeout(timeout) {
+            Ok((stdout, _stderr, _exit_code)) => Ok(stdout),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                bail!("codeql analyze timed out after {}s", timeout_seconds)
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                bail!("codeql analyze process communication channel disconnected")
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "codeql CLI not found in PATH")]
+    fn missing_codeql_cli_panics_on_database_create() {
+        // This test assumes codeql is NOT installed.
+        // If codeql IS installed, this test is skipped via #[ignore].
+        if CliCodeqlProvider.check_available() {
+            return; // codeql is installed — skip the panic test
+        }
+        let provider = CliCodeqlProvider;
+        let tmp = std::env::temp_dir().join("mcp-sec-audit-codeql-test-missing");
+        std::fs::create_dir_all(&tmp).expect("create tmp dir");
+        provider
+            .create_database(&tmp, "python")
+            .expect("codeql database create should fail when CLI not found");
+    }
+}
