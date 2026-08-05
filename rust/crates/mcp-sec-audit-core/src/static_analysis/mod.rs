@@ -1,6 +1,7 @@
 pub mod facts;
 
 mod agent;
+mod codeql;
 mod discovery;
 mod pipeline;
 mod rule;

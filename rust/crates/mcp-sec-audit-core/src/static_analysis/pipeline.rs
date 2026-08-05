@@ -11,7 +11,7 @@ use crate::{
     load_rulebook,
 };
 
-use super::{agent, rule, taint, DiscoveredFile, discover_files};
+use super::{agent, codeql, rule, taint, DiscoveredFile, discover_files};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaticScanContext {
@@ -76,6 +76,7 @@ pub fn run_static_scan(
     let rule_results = rule::run(&ctx, loaded_rulebook.as_ref())?;
     let (taint_results, all_facts) = taint::run(&ctx)?;
     let agent_results = agent::run(&ctx)?;
+    let codeql_output = codeql::run(&ctx)?;
 
     let summary = StaticAnalysisSummary {
         target: target_label(&targets),
@@ -83,7 +84,7 @@ pub fn run_static_scan(
         rule_result_count: rule_results.len(),
         taint_result_count: taint_results.len(),
         agent_result_count: agent_results.len(),
-        codeql_result_count: 0,
+        codeql_result_count: codeql_output.results.len(),
         fused_finding_count: 0,
         highest_severity: None,
         risk_level: "none".to_string(),
@@ -94,7 +95,7 @@ pub fn run_static_scan(
         rule_results,
         taint_results,
         agent_results,
-        codeql_results: Vec::new(),
+        codeql_results: codeql_output.results,
         fused_findings: Vec::new(),
         summary,
         config_snapshot: ConfigSnapshot {
@@ -488,6 +489,34 @@ server.tool("run_command", async (params: ToolParams) => {
                 .iter()
                 .any(|fact| matches!(fact, Fact::Sink(_)))
         );
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn enabled_static_scan_includes_codeql_result_count() {
+        let root = temp_dir("codeql-count");
+        let rules = write_rulebook(&root, "rules.toml", "command_exec");
+        fs::write(
+            root.join("server.py"),
+            r#"
+import subprocess as sp
+
+@mcp.tool()
+def run_command(command: str):
+    return sp.run(command, shell=True)
+"#,
+        )
+        .expect("write file");
+
+        let mut config = RuntimeConfig::default();
+        config.static_.taint.enabled = true;
+        // codeql is disabled by default — count should be 0
+        let result = run_static_scan(&config, &[rules.clone()], Some(&[root.clone()]))
+            .expect("run scan");
+        assert_eq!(result.summary.codeql_result_count, 0);
+        assert!(result.codeql_results.is_empty());
+        assert!(result.summary.taint_result_count > 0);
 
         fs::remove_dir_all(root).expect("cleanup");
     }
