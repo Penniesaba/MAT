@@ -140,6 +140,8 @@ pub struct FusedFinding {
     pub related_rule_result_ids: Vec<String>,
     pub related_taint_result_ids: Vec<String>,
     pub related_agent_result_ids: Vec<String>,
+    #[serde(default)]
+    pub related_codeql_result_ids: Vec<String>,
     pub evidence: Vec<String>,
     pub call_chain: Vec<String>,
     pub dataflow_path: Vec<String>,
@@ -155,6 +157,7 @@ pub struct StaticAnalysisSummary {
     pub taint_result_count: usize,
     pub agent_result_count: usize,
     pub codeql_result_count: usize,
+    pub codeql_fused_count: usize,
     pub fused_finding_count: usize,
     pub highest_severity: Option<Severity>,
     pub risk_level: String,

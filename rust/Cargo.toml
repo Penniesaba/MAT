@@ -31,3 +31,4 @@ swc_core = { version = "0.101", features = [
     "common",
 ] }
 toml = "0.8"
+uuid = { version = "1", features = ["v4"] }

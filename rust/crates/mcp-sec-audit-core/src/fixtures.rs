@@ -196,6 +196,7 @@ pub fn synthetic_static_analysis_result() -> StaticAnalysisResult {
             related_rule_result_ids: vec!["rule-result:demo:1".to_string()],
             related_taint_result_ids: vec!["taint-result:demo:1".to_string()],
             related_agent_result_ids: vec!["agent-result:demo:1".to_string()],
+            related_codeql_result_ids: Vec::new(),
             evidence: vec![
                 "subprocess.run(command)".to_string(),
                 "command parameter reaches subprocess.run".to_string(),
@@ -214,6 +215,7 @@ pub fn synthetic_static_analysis_result() -> StaticAnalysisResult {
             taint_result_count: 1,
             agent_result_count: 1,
             codeql_result_count: 1,
+            codeql_fused_count: 0,
             fused_finding_count: 1,
             highest_severity: Some(Severity::High),
             risk_level: "high".to_string(),

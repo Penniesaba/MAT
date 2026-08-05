@@ -40,10 +40,14 @@ timeout_seconds = 120
 
 [fusion]
 enabled = true
-strategy = "weighted_evidence"
 require_confirmed_by = 1
 boost_when_multiple_lines_agree = true
 agent_only_as_advisory = true
+line_proximity = 5
+rule_weight = 3
+taint_weight = 2
+agent_weight = 1
+codeql_weight = 4
 
 [report]
 formats = ["json", "markdown"]

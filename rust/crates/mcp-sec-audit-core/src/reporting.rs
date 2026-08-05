@@ -18,6 +18,7 @@ pub struct MarkdownRenderOptions {
     pub include_raw_rule_results: bool,
     pub include_raw_taint_results: bool,
     pub include_raw_agent_results: bool,
+    pub include_raw_codeql_results: bool,
     pub include_facts: bool,
 }
 
@@ -27,6 +28,7 @@ pub struct JsonlRenderOptions {
     pub include_raw_rule_results: bool,
     pub include_raw_taint_results: bool,
     pub include_raw_agent_results: bool,
+    pub include_raw_codeql_results: bool,
     pub include_facts: bool,
 }
 
@@ -43,6 +45,7 @@ impl From<&ReportConfig> for MarkdownRenderOptions {
             include_raw_rule_results: config.include_raw_rule_results,
             include_raw_taint_results: config.include_raw_taint_results,
             include_raw_agent_results: config.include_raw_agent_results,
+            include_raw_codeql_results: config.include_raw_codeql_results,
             include_facts: config.include_facts,
         }
     }
@@ -55,6 +58,7 @@ impl From<&ReportConfig> for JsonlRenderOptions {
             include_raw_rule_results: config.include_raw_rule_results,
             include_raw_taint_results: config.include_raw_taint_results,
             include_raw_agent_results: config.include_raw_agent_results,
+            include_raw_codeql_results: config.include_raw_codeql_results,
             include_facts: config.include_facts,
         }
     }
@@ -67,6 +71,7 @@ impl Default for MarkdownRenderOptions {
             include_raw_rule_results: false,
             include_raw_taint_results: false,
             include_raw_agent_results: false,
+            include_raw_codeql_results: false,
             include_facts: false,
         }
     }
@@ -79,6 +84,7 @@ impl Default for JsonlRenderOptions {
             include_raw_rule_results: true,
             include_raw_taint_results: true,
             include_raw_agent_results: true,
+            include_raw_codeql_results: true,
             include_facts: true,
         }
     }
@@ -140,6 +146,15 @@ pub fn render_jsonl(result: &StaticAnalysisResult, options: &JsonlRenderOptions)
         }
     }
 
+    if options.include_raw_codeql_results {
+        for codeql_result in &result.codeql_results {
+            lines.push(serde_json::to_string(&JsonlRecord {
+                event: "codeql_result",
+                data: codeql_result,
+            })?);
+        }
+    }
+
     Ok(lines.join("\n"))
 }
 
@@ -153,6 +168,7 @@ pub fn render_markdown(result: &StaticAnalysisResult, options: &MarkdownRenderOp
         format!("- Rule Results: {}", result.summary.rule_result_count),
         format!("- Taint Results: {}", result.summary.taint_result_count),
         format!("- Agent Results: {}", result.summary.agent_result_count),
+        format!("- CodeQL Results: {}", result.summary.codeql_result_count),
     ];
 
     if let Some(severity) = &result.summary.highest_severity {
@@ -227,6 +243,20 @@ pub fn render_markdown(result: &StaticAnalysisResult, options: &MarkdownRenderOp
         }
     }
 
+    if options.include_raw_codeql_results {
+        lines.push(String::new());
+        lines.push("## Raw CodeQL Results".to_string());
+        for item in &result.codeql_results {
+            lines.push(format!(
+                "- `{}` at {}:{} — {}",
+                item.rule_id,
+                item.locations.first().map(|l| l.file.as_str()).unwrap_or("?"),
+                item.locations.first().map(|l| l.line).unwrap_or(0),
+                item.message
+            ));
+        }
+    }
+
     lines.join("\n")
 }
 
@@ -278,13 +308,14 @@ mod tests {
         let jsonl = render_jsonl(&result, &JsonlRenderOptions::default()).expect("render jsonl");
         let lines = jsonl.lines().collect::<Vec<_>>();
 
-        assert_eq!(lines.len(), 6);
+        assert_eq!(lines.len(), 7);
         assert!(lines[0].contains(r#""event":"summary""#));
         assert!(lines[1].contains(r#""event":"fact""#));
         assert!(lines[2].contains(r#""event":"fused_finding""#));
         assert!(lines[3].contains(r#""event":"rule_result""#));
         assert!(lines[4].contains(r#""event":"taint_result""#));
         assert!(lines[5].contains(r#""event":"agent_result""#));
+        assert!(lines[6].contains(r#""event":"codeql_result""#));
     }
 
     #[test]
@@ -308,6 +339,7 @@ mod tests {
                 include_raw_rule_results: false,
                 include_raw_taint_results: false,
                 include_raw_agent_results: false,
+                include_raw_codeql_results: false,
                 include_facts: true,
             },
         );
@@ -327,6 +359,7 @@ mod tests {
                 include_raw_rule_results: true,
                 include_raw_taint_results: true,
                 include_raw_agent_results: true,
+                include_raw_codeql_results: true,
                 include_facts: false,
             },
         );
@@ -334,5 +367,6 @@ mod tests {
         assert!(markdown.contains("## Raw Rule Results"));
         assert!(markdown.contains("## Raw Taint Results"));
         assert!(markdown.contains("## Raw Agent Results"));
+        assert!(markdown.contains("## Raw CodeQL Results"));
     }
 }

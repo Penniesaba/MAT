@@ -113,14 +113,22 @@ pub struct DynamicConfig {
 pub struct FusionConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
-    #[serde(default = "default_fusion_strategy")]
-    pub strategy: String,
     #[serde(default = "default_require_confirmed_by")]
     pub require_confirmed_by: u32,
     #[serde(default = "default_true")]
     pub boost_when_multiple_lines_agree: bool,
     #[serde(default = "default_true")]
     pub agent_only_as_advisory: bool,
+    #[serde(default = "default_line_proximity")]
+    pub line_proximity: u32,
+    #[serde(default = "default_rule_weight")]
+    pub rule_weight: u32,
+    #[serde(default = "default_taint_weight")]
+    pub taint_weight: u32,
+    #[serde(default = "default_agent_weight")]
+    pub agent_weight: u32,
+    #[serde(default = "default_codeql_weight")]
+    pub codeql_weight: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,6 +143,8 @@ pub struct ReportConfig {
     pub include_raw_taint_results: bool,
     #[serde(default)]
     pub include_raw_agent_results: bool,
+    #[serde(default)]
+    pub include_raw_codeql_results: bool,
     #[serde(default)]
     pub include_facts: bool,
 }
@@ -234,10 +244,14 @@ impl Default for FusionConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            strategy: default_fusion_strategy(),
-            require_confirmed_by: default_require_confirmed_by(),
+            require_confirmed_by: 1,
             boost_when_multiple_lines_agree: true,
             agent_only_as_advisory: true,
+            line_proximity: 5,
+            rule_weight: 3,
+            taint_weight: 2,
+            agent_weight: 1,
+            codeql_weight: 4,
         }
     }
 }
@@ -250,6 +264,7 @@ impl Default for ReportConfig {
             include_raw_rule_results: false,
             include_raw_taint_results: false,
             include_raw_agent_results: false,
+            include_raw_codeql_results: false,
             include_facts: false,
         }
     }
@@ -326,12 +341,28 @@ fn default_dynamic_timeout() -> u64 {
     120
 }
 
-fn default_fusion_strategy() -> String {
-    "weighted_evidence".to_string()
-}
-
 fn default_require_confirmed_by() -> u32 {
     1
+}
+
+fn default_line_proximity() -> u32 {
+    5
+}
+
+fn default_rule_weight() -> u32 {
+    3
+}
+
+fn default_taint_weight() -> u32 {
+    2
+}
+
+fn default_agent_weight() -> u32 {
+    1
+}
+
+fn default_codeql_weight() -> u32 {
+    4
 }
 
 fn default_report_formats() -> Vec<String> {
@@ -399,7 +430,11 @@ mod tests {
         assert!(config.static_.taint.forward);
         assert!(!config.static_.agent.enabled);
         assert!(!config.dynamic.enabled);
-        assert_eq!(config.fusion.strategy, "weighted_evidence");
+        assert_eq!(config.fusion.line_proximity, 5);
+        assert_eq!(config.fusion.rule_weight, 3);
+        assert_eq!(config.fusion.taint_weight, 2);
+        assert_eq!(config.fusion.agent_weight, 1);
+        assert_eq!(config.fusion.codeql_weight, 4);
         assert_eq!(config.report.formats, vec!["json", "markdown"]);
     }
 
@@ -421,5 +456,36 @@ mod tests {
 
         assert!(!config.static_.taint.enabled);
         assert_eq!(config.static_.taint.max_depth, 4);
+    }
+
+    #[test]
+    fn fusion_config_defaults_are_correct() {
+        let config = FusionConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.require_confirmed_by, 1);
+        assert!(config.boost_when_multiple_lines_agree);
+        assert!(config.agent_only_as_advisory);
+        assert_eq!(config.line_proximity, 5);
+        assert_eq!(config.rule_weight, 3);
+        assert_eq!(config.taint_weight, 2);
+        assert_eq!(config.agent_weight, 1);
+        assert_eq!(config.codeql_weight, 4);
+    }
+
+    #[test]
+    fn fusion_config_parses_new_fields_from_toml() {
+        let config: RuntimeConfig = toml::from_str(
+            r#"
+        [fusion]
+        line_proximity = 10
+        rule_weight = 5
+        "#,
+        )
+        .expect("parse");
+        assert_eq!(config.fusion.line_proximity, 10);
+        assert_eq!(config.fusion.rule_weight, 5);
+        // defaults preserved
+        assert_eq!(config.fusion.taint_weight, 2);
+        assert!(config.fusion.enabled);
     }
 }
