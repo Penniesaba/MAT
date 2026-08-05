@@ -1,4 +1,4 @@
-use swc_core::ecma::ast::{Function, Param, Pat};
+use swc_core::ecma::ast::{Function, Pat};
 
 use crate::model::{FactBase, FunctionFact, ParamInfo};
 
@@ -9,7 +9,7 @@ pub(crate) fn params_from_fn(f: &Function, source: &str) -> Vec<ParamInfo> {
         .map(|param| match &param.pat {
             Pat::Ident(id) => ParamInfo {
                 name: id.sym.to_string(),
-                annotation: ts_type_ann_to_string(param, source),
+                annotation: id.type_ann.as_ref().and_then(|ta| ts_type_ann_to_string(ta, source)),
                 default: None,
             },
             Pat::Rest(rest) => match rest.arg.as_ref() {
@@ -33,13 +33,12 @@ pub(crate) fn params_from_fn(f: &Function, source: &str) -> Vec<ParamInfo> {
         .collect()
 }
 
-fn ts_type_ann_to_string(param: &Param, source: &str) -> Option<String> {
-    // Extract TS type annotation by converting the TsTypeAnn node to string representation.
-    let _ = (param, source);
-    None // Note: SWC type annotation extraction requires TsTypeAnn → string conversion.
-    // Full implementation will use SWC's type annotation span + source text extraction.
-    // For Phase 8, the field exists but may be None for complex TS types.
-    // FIXME: implement TsTypeAnn → string conversion using SWC type printer or span extraction.
+fn ts_type_ann_to_string(type_ann: &swc_core::ecma::ast::TsTypeAnn, source: &str) -> Option<String> {
+    // Extract TS type annotation from SWC's TsTypeAnn node by slicing source text at span.
+    let span = type_ann.span;
+    let lo = span.lo.0 as usize;
+    let hi = span.hi.0 as usize;
+    source.get(lo..hi).map(|s| s.trim().to_string())
 }
 
 /// Build qualified function name from scope + class context.

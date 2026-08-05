@@ -88,9 +88,11 @@ mod types {
 const EXTRACTOR_NAME: &str = "rust_swc_phase8";
 
 /// Main extractor struct implementing SWC's Visit trait.
-pub(crate) struct JsTsFactExtractor {
+pub(crate) struct JsTsFactExtractor<'a> {
     root: PathBuf,
     file: PathBuf,
+    source: &'a str,
+    cm: SourceMap,
     facts: Vec<Fact>,
     diagnostics: Vec<JsTsDiagnostic>,
 
@@ -109,11 +111,13 @@ pub(crate) struct JsTsFactExtractor {
     named_handlers: BTreeMap<String, String>, // handler_name -> entrypoint_id
 }
 
-impl JsTsFactExtractor {
-    fn new(root: &Path, file: &Path) -> Self {
+impl<'a> JsTsFactExtractor<'a> {
+    fn new(root: &Path, file: &Path, source: &'a str, cm: SourceMap) -> Self {
         Self {
             root: root.to_path_buf(),
             file: file.to_path_buf(),
+            source,
+            cm,
             facts: Vec::new(),
             diagnostics: Vec::new(),
             import_aliases: BTreeMap::new(),
@@ -146,11 +150,10 @@ impl JsTsFactExtractor {
         }
     }
 
-    fn line_of(&self, _span: Span) -> u32 {
-        // SWC Span.lo is a byte offset; accurate line computation requires a
-        // SourceMap lookup.  For initial implementation return 1 and add
-        // precise position tracking in a follow-up task.
-        1
+    fn line_of(&self, span: Span) -> u32 {
+        // Use SWC SourceMap to convert byte offset to line number.
+        // Span.lo is a BytePos (wrapping u32).
+        self.cm.lookup_char_pos(span.lo).line as u32
     }
 
     /// Convert expression to string for AssignFact value extraction.
@@ -334,7 +337,7 @@ pub fn extract_js_ts_facts(
         }
     };
 
-    let mut extractor = JsTsFactExtractor::new(root, file);
+    let mut extractor = JsTsFactExtractor::new(root, file, source, cm);
     module.visit_with(&mut extractor);
 
     // Post-processing
@@ -360,7 +363,7 @@ pub fn extract_js_ts_facts(
 
 // --- SWC Visit trait implementation ---
 
-impl Visit for JsTsFactExtractor {
+impl Visit for JsTsFactExtractor<'_> {
     fn visit_import_decl(&mut self, n: &ImportDecl) {
         let file = self.rel_path();
         let line = self.line_of(n.span);
@@ -381,7 +384,7 @@ impl Visit for JsTsFactExtractor {
         let file = self.rel_path();
         let line = self.line_of(n.function.span);
         let func_id = ids::make_js_ts_function_id(&self.root, &self.file, &qual_name);
-        let params = functions::params_from_fn(&n.function, "");
+        let params = functions::params_from_fn(&n.function, self.source);
 
         self.facts.push(Fact::Function(functions::create_function_fact(
             func_id, file.clone(), line, EXTRACTOR_NAME.to_string(),
@@ -461,7 +464,7 @@ impl Visit for JsTsFactExtractor {
                         let line = self.line_of(declarator.span);
                         let func_id = ids::make_js_ts_function_id(&self.root, &self.file, &qual_name);
                         let synthetic_fn = Self::function_from_arrow(arrow);
-                        let params = functions::params_from_fn(&synthetic_fn, "");
+                        let params = functions::params_from_fn(&synthetic_fn, self.source);
 
                         self.facts.push(Fact::Function(functions::create_function_fact(
                             func_id, file.clone(), line, EXTRACTOR_NAME.to_string(),
@@ -481,7 +484,7 @@ impl Visit for JsTsFactExtractor {
                         );
                         let line = self.line_of(declarator.span);
                         let func_id = ids::make_js_ts_function_id(&self.root, &self.file, &qual_name);
-                        let params = functions::params_from_fn(&fn_expr.function, "");
+                        let params = functions::params_from_fn(&fn_expr.function, self.source);
 
                         self.facts.push(Fact::Function(functions::create_function_fact(
                             func_id, file.clone(), line, EXTRACTOR_NAME.to_string(),
@@ -549,7 +552,7 @@ impl Visit for JsTsFactExtractor {
                         let handler_func_id =
                             ids::make_js_ts_function_id(&self.root, &self.file, &qual_name);
                         let synthetic_fn = Self::function_from_arrow(arrow);
-                        let params = functions::params_from_fn(&synthetic_fn, "");
+                        let params = functions::params_from_fn(&synthetic_fn, self.source);
 
                         // Create FunctionFact for handler
                         self.facts.push(Fact::Function(functions::create_function_fact(
@@ -656,7 +659,7 @@ impl Visit for JsTsFactExtractor {
         let file = self.rel_path();
         let line = self.line_of(n.function.span);
         let func_id = ids::make_js_ts_function_id(&self.root, &self.file, &qual_name);
-        let params = functions::params_from_fn(&n.function, "");
+        let params = functions::params_from_fn(&n.function, self.source);
 
         self.facts.push(Fact::Function(functions::create_function_fact(
             func_id, file, line, EXTRACTOR_NAME.to_string(),

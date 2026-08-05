@@ -1,3 +1,8 @@
+pub(crate) mod calls;
+pub(crate) mod functions;
+pub(crate) mod mcp;
+pub(crate) mod sinks;
+
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -7,27 +12,18 @@ use rustpython_parser::{Parse, ast};
 
 use crate::model::{
     AssignFact, CallArg, CallFact, CallKwarg, CallResolution, Confidence, EntryPointEvidence,
-    EntryPointFact, EntryPointKind, Fact, FactBase, FunctionFact, ImportFact, ImportKind,
-    ParamInfo, Severity, SinkFact, SourceFact,
+    EntryPointFact, Fact, FactBase, FunctionFact, ImportFact, ImportKind,
+    SinkFact, SourceFact,
 };
 
 use super::{
-    ExtractionDiagnostic, PythonExtractionResult, display_path, make_assign_id, make_call_id,
+    ExtractionDiagnostic, PythonExtractionResult, display_path,
+    fact_sort_key, line_col_for_offset, make_assign_id, make_call_id,
     make_entrypoint_id, make_function_id, make_import_id, make_sink_id, make_source_id,
+    snippet_for_range,
 };
 
 const EXTRACTOR_NAME: &str = "rust_python_ast_phase7";
-const MCP_DECORATOR_PATTERNS: &[&str] = &[
-    "mcp.tool",
-    "mcp.resource",
-    "mcp.prompt",
-    "server.tool",
-    "server.resource",
-    "server.prompt",
-    "mcp_tools",
-    "mcp_tool",
-    "server_tools",
-];
 
 pub fn extract_python_facts(root: &Path, file: &Path, source: &str) -> PythonExtractionResult {
     let mut extractor = PythonFactExtractor::new(root, file, source);
@@ -409,7 +405,7 @@ impl<'a> PythonFactExtractor<'a> {
     fn visit_call_expr(&mut self, call: &ast::ExprCall) {
         let (line, column) = line_col_for_offset(self.source, call.range.start().to_u32());
         let (end_line, _) = line_col_for_offset(self.source, call.range.end().to_u32());
-        let callee = expr_to_string(&call.func);
+        let callee = calls::expr_to_string(&call.func);
         let (normalized_callee, import_alias) = self.normalize_callee(&callee);
         let args = call
             .args
@@ -417,7 +413,7 @@ impl<'a> PythonFactExtractor<'a> {
             .enumerate()
             .map(|(index, arg)| CallArg {
                 index: index as u32,
-                expr: expr_to_string(arg),
+                expr: calls::expr_to_string(arg),
                 kind: "positional".to_string(),
             })
             .collect::<Vec<_>>();
@@ -433,7 +429,7 @@ impl<'a> PythonFactExtractor<'a> {
                 (
                     key,
                     CallKwarg {
-                        expr: expr_to_string(&keyword.value),
+                        expr: calls::expr_to_string(&keyword.value),
                         value: serde_json::Value::Null,
                     },
                 )
@@ -470,13 +466,13 @@ impl<'a> PythonFactExtractor<'a> {
     }
 
     fn emit_sink_for_call(&mut self, call: &CallFact) {
-        let sink_name = canonical_sink_name(
+        let sink_name = sinks::canonical_sink_name(
             call.normalized_callee
                 .as_deref()
                 .unwrap_or(call.callee.as_str()),
         );
 
-        let Some(classification) = classify_sink(&sink_name, call) else {
+        let Some(classification) = sinks::classify_sink(&sink_name, call) else {
             return;
         };
 
@@ -552,7 +548,7 @@ impl<'a> PythonFactExtractor<'a> {
             return;
         }
 
-        let target_text = expr_to_string(target);
+        let target_text = calls::expr_to_string(target);
         if target_text.is_empty() {
             return;
         }
@@ -567,7 +563,7 @@ impl<'a> PythonFactExtractor<'a> {
             },
             function_id: self.caller_function_id().unwrap_or_default(),
             target: target_text,
-            value: expr_to_string(value),
+            value: calls::expr_to_string(value),
             snippet: snippet_for_range(self.source, start, end),
         }));
     }
@@ -579,9 +575,9 @@ impl<'a> PythonFactExtractor<'a> {
         let ast::Expr::Name(target) = &targets[0] else {
             return;
         };
-        let value_text = expr_to_string(value);
+        let value_text = calls::expr_to_string(value);
         let (normalized, _) = self.normalize_callee(&value_text);
-        if normalized != value_text || looks_like_callable_reference(&value_text) {
+        if normalized != value_text || calls::looks_like_callable_reference(&value_text) {
             self.assignment_aliases
                 .insert(target.id.to_string(), normalized);
         }
@@ -633,8 +629,8 @@ impl<'a> PythonFactExtractor<'a> {
         let (line, _) = line_col_for_offset(self.source, start);
         let (end_line, _) = line_col_for_offset(self.source, end);
         let function_id = make_function_id("python", &self.root, &self.file, &qualified_name);
-        let params = params_from_arguments(args);
-        let decorator_texts = decorators.iter().map(expr_to_string).collect::<Vec<_>>();
+        let params = functions::params_from_arguments(args);
+        let decorator_texts = decorators.iter().map(calls::expr_to_string).collect::<Vec<_>>();
         let enclosing_class = self.class_stack.last().cloned();
 
         self.facts.push(Fact::Function(FunctionFact {
@@ -650,13 +646,13 @@ impl<'a> PythonFactExtractor<'a> {
             end_line,
             params: params.clone(),
             decorators: decorator_texts.clone(),
-            docstring: docstring_from_body(body),
+            docstring: functions::docstring_from_body(body),
             return_type: None,
             enclosing_class,
         }));
 
         if let Some((kind, evidence_text)) = decorator_texts.iter().find_map(|decorator| {
-            classify_mcp_decorator(decorator).map(|kind| (kind, decorator.clone()))
+            mcp::classify_mcp_decorator(decorator).map(|kind| (kind, decorator.clone()))
         }) {
             let entry_id = make_entrypoint_id(&self.root, &self.file, &qualified_name);
             let param_names = params
@@ -705,263 +701,9 @@ impl<'a> PythonFactExtractor<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
-struct SinkClassification {
-    category: &'static str,
-    severity: Severity,
-    reason: &'static str,
-    confidence: Confidence,
-}
-
-fn canonical_sink_name(callee: &str) -> String {
-    if let Some(prefix) = callee.strip_suffix(".write_text") {
-        if prefix == "Path" || prefix.ends_with(".Path") || prefix.ends_with("(...)") {
-            return "Path.write_text".to_string();
-        }
-    }
-    if let Some(prefix) = callee.strip_suffix(".write_bytes") {
-        if prefix == "Path" || prefix.ends_with(".Path") || prefix.ends_with("(...)") {
-            return "Path.write_bytes".to_string();
-        }
-    }
-    callee.to_string()
-}
-
-fn classify_sink(callee: &str, call: &CallFact) -> Option<SinkClassification> {
-    match callee {
-        "subprocess.run" | "subprocess.Popen" | "os.system" | "os.popen" => {
-            Some(SinkClassification {
-                category: "command_execution",
-                severity: Severity::High,
-                reason: "Python command execution call can execute attacker-controlled commands",
-                confidence: Confidence::High,
-            })
-        }
-        "Path.write_text" | "Path.write_bytes" => Some(SinkClassification {
-            category: "file_write",
-            severity: Severity::Medium,
-            reason: "Python file write call can modify filesystem contents",
-            confidence: Confidence::High,
-        }),
-        "open" if open_call_writes(call) => Some(SinkClassification {
-            category: "file_write",
-            severity: Severity::Medium,
-            reason: "Python open call uses a write-capable file mode",
-            confidence: Confidence::High,
-        }),
-        "eval" | "exec" => Some(SinkClassification {
-            category: "dynamic_execution",
-            severity: Severity::Critical,
-            reason: "Python dynamic execution call can execute attacker-controlled code",
-            confidence: Confidence::High,
-        }),
-        "requests.get"
-        | "requests.post"
-        | "requests.request"
-        | "httpx.get"
-        | "httpx.post"
-        | "httpx.request"
-        | "urllib.request.urlopen" => Some(SinkClassification {
-            category: "network_request",
-            severity: Severity::Medium,
-            reason: "Python network request call can reach attacker-controlled URLs",
-            confidence: Confidence::Medium,
-        }),
-        "importlib.import_module" | "__import__" => Some(SinkClassification {
-            category: "dynamic_import",
-            severity: Severity::Medium,
-            reason: "Python dynamic import call can load attacker-controlled modules",
-            confidence: Confidence::Medium,
-        }),
-        _ => None,
-    }
-}
-
-fn open_call_writes(call: &CallFact) -> bool {
-    if let Some(mode) = call.kwargs.get("mode") {
-        return file_mode_writes(&mode.expr);
-    }
-    call.args
-        .get(1)
-        .map(|arg| file_mode_writes(&arg.expr))
-        .unwrap_or(false)
-}
-
-fn file_mode_writes(mode: &str) -> bool {
-    let trimmed = mode.trim_matches(|ch| ch == '\'' || ch == '"');
-    trimmed.contains('w') || trimmed.contains('a') || trimmed.contains('x') || trimmed.contains('+')
-}
-
-fn classify_mcp_decorator(decorator: &str) -> Option<EntryPointKind> {
-    let normalized = decorator.trim_end_matches("()");
-    if !MCP_DECORATOR_PATTERNS.iter().any(|pattern| {
-        normalized == *pattern
-            || normalized.starts_with(&format!("{pattern}."))
-            || normalized.starts_with(&format!("{pattern}("))
-    }) {
-        return None;
-    }
-    if normalized.contains("resource") {
-        Some(EntryPointKind::McpResource)
-    } else if normalized.contains("prompt") {
-        Some(EntryPointKind::McpPrompt)
-    } else {
-        Some(EntryPointKind::McpTool)
-    }
-}
-
-fn fact_sort_key(fact: &Fact) -> String {
-    match fact {
-        Fact::Function(item) => format!("{:010}:{}", item.base.line, item.base.id),
-        Fact::Import(item) => format!("{:010}:{}", item.base.line, item.base.id),
-        Fact::Entrypoint(item) => format!("{:010}:{}", item.base.line, item.base.id),
-        Fact::Call(item) => format!("{:010}:{}", item.base.line, item.base.id),
-        Fact::Sink(item) => format!("{:010}:{}", item.base.line, item.base.id),
-        Fact::Source(item) => format!("{:010}:{}", item.base.line, item.base.id),
-        Fact::Assign(item) => format!("{:010}:{}", item.base.line, item.base.id),
-        Fact::Dataflow(item) => format!("{:010}:{}", item.base.line, item.base.id),
-        Fact::RuntimeEvent(item) => format!("{:010}:{}", item.base.line, item.base.id),
-        Fact::Finding(item) => format!("{:010}:{}", item.base.line, item.base.id),
-    }
-}
-
-fn line_col_for_offset(source: &str, offset: u32) -> (u32, u32) {
-    let offset = offset as usize;
-    let prefix = &source[..offset.min(source.len())];
-    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() as u32 + 1;
-    let column = prefix
-        .rsplit('\n')
-        .next()
-        .map(|item| item.chars().count() as u32)
-        .unwrap_or(0);
-    (line, column)
-}
-
-fn snippet_for_range(source: &str, start: u32, end: u32) -> String {
-    let start = start as usize;
-    let end = end as usize;
-    source
-        .get(start.min(source.len())..end.min(source.len()))
-        .unwrap_or_default()
-        .trim()
-        .to_string()
-}
-
-fn looks_like_callable_reference(value: &str) -> bool {
-    value.contains('.')
-        || value
-            .chars()
-            .all(|item| item == '_' || item.is_ascii_alphanumeric())
-}
-
-fn params_from_arguments(args: &ast::Arguments) -> Vec<ParamInfo> {
-    let mut params = Vec::new();
-    for arg in &args.posonlyargs {
-        params.push(param_from_arg(&arg.def, arg.default.as_deref()));
-    }
-    for arg in &args.args {
-        params.push(param_from_arg(&arg.def, arg.default.as_deref()));
-    }
-    if let Some(vararg) = &args.vararg {
-        let mut param = param_from_arg(vararg, None);
-        param.name = format!("*{}", param.name);
-        params.push(param);
-    }
-    for arg in &args.kwonlyargs {
-        params.push(param_from_arg(&arg.def, arg.default.as_deref()));
-    }
-    if let Some(kwarg) = &args.kwarg {
-        let mut param = param_from_arg(kwarg, None);
-        param.name = format!("**{}", param.name);
-        params.push(param);
-    }
-    params
-}
-
-fn param_from_arg(arg: &ast::Arg, default: Option<&ast::Expr>) -> ParamInfo {
-    ParamInfo {
-        name: arg.arg.to_string(),
-        annotation: arg.annotation.as_deref().map(expr_to_string),
-        default: default.map(expr_to_string),
-    }
-}
-
-fn docstring_from_body(body: &[ast::Stmt]) -> Option<String> {
-    let first = body.first()?;
-    match first {
-        ast::Stmt::Expr(expr_stmt) => match expr_stmt.value.as_ref() {
-            ast::Expr::Constant(constant) => match &constant.value {
-                ast::Constant::Str(item) => Some(item.clone()),
-                _ => None,
-            },
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn expr_to_string(expr: &ast::Expr) -> String {
-    match expr {
-        ast::Expr::Name(name) => name.id.to_string(),
-        ast::Expr::Attribute(attr) => format!("{}.{}", expr_to_string(&attr.value), attr.attr),
-        ast::Expr::Call(call) => {
-            let func = expr_to_string(&call.func);
-            if call.args.is_empty() && call.keywords.is_empty() {
-                format!("{func}()")
-            } else {
-                format!("{func}(...)")
-            }
-        }
-        ast::Expr::Constant(constant) => format_constant(&constant.value),
-        ast::Expr::Subscript(subscript) => {
-            format!(
-                "{}[{}]",
-                expr_to_string(&subscript.value),
-                expr_to_string(&subscript.slice)
-            )
-        }
-        ast::Expr::Tuple(tuple) => tuple
-            .elts
-            .iter()
-            .map(expr_to_string)
-            .collect::<Vec<_>>()
-            .join(", "),
-        ast::Expr::List(list) => format!(
-            "[{}]",
-            list.elts
-                .iter()
-                .map(expr_to_string)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        ast::Expr::UnaryOp(unary) => format!("{:?}{}", unary.op, expr_to_string(&unary.operand)),
-        _ => format!("{expr:?}"),
-    }
-}
-
-fn format_constant(value: &ast::Constant) -> String {
-    match value {
-        ast::Constant::Str(item) => item.clone(),
-        ast::Constant::Int(item) => item.to_string(),
-        ast::Constant::Bool(item) => {
-            if *item {
-                "True".to_string()
-            } else {
-                "False".to_string()
-            }
-        }
-        ast::Constant::None => "None".to_string(),
-        ast::Constant::Bytes(item) => format!("{item:?}"),
-        ast::Constant::Tuple(items) => items
-            .iter()
-            .map(format_constant)
-            .collect::<Vec<_>>()
-            .join(", "),
-        ast::Constant::Float(item) => item.to_string(),
-        ast::Constant::Complex { real, imag } => format!("{real}+{imag}j"),
-        ast::Constant::Ellipsis => "...".to_string(),
-    }
-}
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
