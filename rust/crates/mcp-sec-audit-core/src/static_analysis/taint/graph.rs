@@ -114,6 +114,11 @@ pub enum Edge {
         call_id: String,
         arg_index: u32,
     },
+    /// Reverse of CallInFunction: function → call (for forward traversal).
+    FunctionCall {
+        function_id: String,
+        call_id: String,
+    },
 }
 
 impl Edge {
@@ -128,6 +133,7 @@ impl Edge {
             Edge::CallToSink { .. } => "call_to_sink",
             Edge::ReturnToVar { .. } => "return_to_var",
             Edge::SourceToArg { .. } => "source_to_arg",
+            Edge::FunctionCall { .. } => "function_call",
         }
     }
 
@@ -142,6 +148,7 @@ impl Edge {
             Edge::CallToSink { call_id, .. } => call_id,
             Edge::ReturnToVar { call_id, .. } => call_id,
             Edge::SourceToArg { source_id, .. } => source_id,
+            Edge::FunctionCall { function_id, .. } => function_id,
         }
     }
 
@@ -156,6 +163,7 @@ impl Edge {
             Edge::CallToSink { sink_id, .. } => sink_id,
             Edge::ReturnToVar { var_id, .. } => var_id,
             Edge::SourceToArg { call_id, .. } => call_id,
+            Edge::FunctionCall { call_id, .. } => call_id,
         }
     }
 }

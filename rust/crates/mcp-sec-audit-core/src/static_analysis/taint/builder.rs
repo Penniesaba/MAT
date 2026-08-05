@@ -108,11 +108,16 @@ pub fn build_graph(facts: &[Fact]) -> Graph {
                 file: c.base.file.clone(),
             });
 
-            // CallInFunction edge
+            // CallInFunction edge (call → function)
             if !c.caller.is_empty() {
                 g.add_edge(Edge::CallInFunction {
                     call_id: call_id.clone(),
                     function_id: c.caller.clone(),
+                });
+                // FunctionCall reverse edge (function → call) for forward traversal
+                g.add_edge(Edge::FunctionCall {
+                    function_id: c.caller.clone(),
+                    call_id: call_id.clone(),
                 });
             }
 
