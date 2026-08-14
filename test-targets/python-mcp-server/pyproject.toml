@@ -1,0 +1,12 @@
+[project]
+name = "test-mcp-server"
+version = "0.1.0"
+description = "Deliberately vulnerable MCP server for security audit testing"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.28.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.backends._legacy:_Backend"

@@ -1,0 +1,245 @@
+# Multi-language capability definitions for static detection.
+
+[[capabilities]]
+name = "command_execution"
+weight = 25.0
+base_confidence = 0.4
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "keyword"
+  patterns = [
+    "subprocess.",
+    "os.system(",
+    "os.popen(",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "regex"
+  pattern = "subprocess\\.(run|Popen|call)"
+
+  [[capabilities.indicators]]
+  languages = ["javascript", "typescript"]
+  type = "keyword"
+  patterns = [
+    "child_process",
+    "exec(",
+    "execSync(",
+    "spawn(",
+    "execFile(",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["rust"]
+  type = "keyword"
+  patterns = [
+    "std::process::Command",
+    "Command::new",
+    ".output()",
+    ".status()",
+  ]
+
+[[capabilities]]
+name = "file_read"
+weight = 15.0
+base_confidence = 0.35
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "keyword"
+  patterns = [
+    "open(",
+    "pathlib.Path(",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "regex"
+  pattern = "open\\([^,]+,\\s*['\"]r"
+
+  [[capabilities.indicators]]
+  languages = ["javascript", "typescript"]
+  type = "keyword"
+  patterns = [
+    "fs.readFile",
+    "readFileSync",
+    "fs.readdir",
+    "fs.createReadStream",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["rust"]
+  type = "keyword"
+  patterns = [
+    "std::fs::read",
+    "File::open",
+    "read_to_string",
+  ]
+
+[[capabilities]]
+name = "file_write"
+weight = 15.0
+base_confidence = 0.35
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "regex"
+  pattern = "open\\([^,]+,\\s*['\"](a|w|wb|ab)"
+
+  [[capabilities.indicators]]
+  languages = ["javascript", "typescript"]
+  type = "keyword"
+  patterns = [
+    "fs.writeFile",
+    "writeFileSync",
+    "fs.appendFile",
+    "fs.createWriteStream",
+    "fs.mkdir",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["rust"]
+  type = "keyword"
+  patterns = [
+    "std::fs::write",
+    "File::create",
+  ]
+
+[[capabilities]]
+name = "network_request"
+weight = 20.0
+base_confidence = 0.4
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "keyword"
+  patterns = [
+    "requests.",
+    "httpx.",
+    "urllib.request",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "regex"
+  pattern = "requests\\.(get|post|put|delete|head)"
+
+  [[capabilities.indicators]]
+  languages = ["javascript", "typescript"]
+  type = "keyword"
+  patterns = [
+    "fetch(",
+    "axios.",
+    "http.request",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["rust"]
+  type = "keyword"
+  patterns = [
+    "reqwest::",
+    "ureq::",
+    "TcpStream::connect",
+  ]
+
+[[capabilities]]
+name = "dynamic_execution"
+weight = 25.0
+base_confidence = 0.45
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "keyword"
+  patterns = [
+    "eval(",
+    "exec(",
+    "compile(",
+    "importlib.import_module(",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["javascript", "typescript"]
+  type = "keyword"
+  patterns = [
+    "eval(",
+    "new Function",
+    "vm.runInNewContext",
+  ]
+
+[[capabilities]]
+name = "deserialization"
+weight = 25.0
+base_confidence = 0.4
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "keyword"
+  patterns = [
+    "pickle.load",
+    "pickle.loads",
+    "yaml.load(",
+    "marshal.loads(",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["rust"]
+  type = "keyword"
+  patterns = [
+    "serde_json::from_str",
+    "serde_json::from_slice",
+    "serde_yaml::from_str",
+  ]
+
+[[capabilities]]
+name = "database_injection"
+weight = 20.0
+base_confidence = 0.35
+
+  [[capabilities.indicators]]
+  languages = ["javascript", "typescript"]
+  type = "keyword"
+  patterns = [
+    ".query(",
+    ".execute(",
+    "createQueryBuilder",
+  ]
+
+[[capabilities]]
+name = "unsafe_block"
+weight = 20.0
+base_confidence = 0.35
+
+  [[capabilities.indicators]]
+  languages = ["rust"]
+  type = "regex"
+  pattern = "unsafe\\s*\\{"
+
+[[capabilities]]
+name = "env_access"
+weight = 10.0
+base_confidence = 0.3
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "keyword"
+  patterns = [
+    "os.environ",
+    "dotenv",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["javascript", "typescript"]
+  type = "keyword"
+  patterns = [
+    "process.env",
+    "dotenv",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["rust"]
+  type = "keyword"
+  patterns = [
+    "std::env::var",
+    "env::var(",
+  ]

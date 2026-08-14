@@ -18,3 +18,12 @@ detection/logs
 /opencode.schema.json
 /feat-ast-plan.md
 /AGETNS.md
+
+# Claude Code local state (settings + nested worktrees)
+.claude/
+
+# Obsidian editor config
+.obsidian/
+
+# Vendored test target (separate git clone)
+targets/serena/
