@@ -30,7 +30,7 @@ pub use static_analysis::{
 };
 
 /// Current Rust rewrite phase implemented by this crate.
-pub const CURRENT_PHASE: &str = "phase9-rust-fact-extraction";
+pub const CURRENT_PHASE: &str = "phase13-static-result-fusion";
 
 /// Returns a short human-readable product name used by the CLI.
 pub fn product_name() -> &'static str {
@@ -48,7 +48,7 @@ mod tests {
 
     #[test]
     fn exposes_current_phase() {
-        assert_eq!(CURRENT_PHASE, "phase9-rust-fact-extraction");
+        assert_eq!(CURRENT_PHASE, "phase13-static-result-fusion");
     }
 
     #[test]

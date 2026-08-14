@@ -2,7 +2,7 @@
 
 > **版本**：1.0.0  
 > **Schema 版本**：1.0.0  
-> **当前阶段**：phase9-rust-fact-extraction  
+> **当前阶段**：phase13-static-result-fusion  
 > **语言**：Rust（从 Python 原型 100% 重写）  
 > **Crate 结构**：`mcp-sec-audit-core`（核心库） + `mcp-sec-audit-cli`（CLI 二进制）
 
@@ -1259,4 +1259,4 @@ struct ReportConfig {
 
 ---
 
-*本文档基于 `mcp-sec-audit-core` v1.0.0（phase9-rust-fact-extraction）源码分析生成。*
+*本文档基于 `mcp-sec-audit-core` v1.0.0（phase13-static-result-fusion）源码分析生成。*
