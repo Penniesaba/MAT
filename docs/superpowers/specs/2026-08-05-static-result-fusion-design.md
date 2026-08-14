@@ -2,7 +2,7 @@
 
 ## Overview
 
-Merge four parallel static analysis lines (rule, taint, agent, codeql) into a unified `Vec<FusedFinding>`. Three lines (rule/taint/agent) undergo weighted-evidence fusion with configurable weights, corroboration boosts, and two-stage matching. CodeQL results are internally standardized and transparently passed through without cross-line dedup or corroboration.
+Merge four parallel static analysis lines (rule, taint, agent, codeql) into a unified `Vec<FusedFinding>`. All four lines undergo weighted-evidence fusion with configurable weights, corroboration boosts, and two-stage matching. CodeQL participates as a peer line: it joins groups via file/line proximity (and best-effort category), contributes its `codeql_weight` to scoring, and unmatched CodeQL results emit solo findings through the same matcher → scorer → merger path.
 
 ## Configuration
 
@@ -60,7 +60,7 @@ Add `codeql_fused_count`:
 ```rust
 pub struct StaticAnalysisSummary {
     // ... existing fields unchanged ...
-    pub codeql_fused_count: usize,  // new — count of codeql-passthrough findings
+    pub codeql_fused_count: usize,  // new — count of fused findings whose supported_by includes codeql
 }
 ```
 
@@ -68,11 +68,10 @@ pub struct StaticAnalysisSummary {
 
 ```
 static_analysis/fusion/
-├── mod.rs              # pub fn run(...) -> Result<Vec<FusedFinding>>
-├── matcher.rs          # Two-stage matching
-├── scorer.rs           # Weighted confidence scoring
-├── merger.rs           # Merge matched groups into FusedFinding
-└── codeql_passthrough.rs  # CodeQL standardization + conversion
+├── mod.rs              # pub fn run(...) -> Vec<FusedFinding>
+├── matcher.rs          # Two-stage matching (four lines)
+├── scorer.rs           # Weighted confidence scoring (four lines)
+└── merger.rs           # Merge matched groups into FusedFinding
 ```
 
 ## Data Flow
@@ -80,13 +79,11 @@ static_analysis/fusion/
 ```
 rule ──────────────────┐
 taint ─────────────────┤ matcher ── scorer ── merger ──► Vec<FusedFinding>
-agent ─────────────────┘                               (three-line fused)
-
-codeql ── codeql_passthrough ───────────────────────► Vec<FusedFinding>
-                                                      (codeql standalone)
+agent ─────────────────┤                               (four-line fused)
+codeql ────────────────┘
 ```
 
-Both vecs are concatenated in the final output. CodeQL findings are appended, not interleaved.
+Unmatched CodeQL results become solo groups and still flow through scorer → merger, so every finding is produced by the same pipeline.
 
 ## Matching Algorithm (Two-Stage)
 
@@ -128,7 +125,7 @@ Results still unmatched after both stages each produce a single-line FusedFindin
 raw = Σ(line_weight × confidence_value) / Σ(line_weights_of_present_lines)
 ```
 
-Only lines actually present in the match group contribute to the denominator.
+Only lines actually present in the match group contribute to the denominator. CodeQL has no confidence field and contributes a fixed `Medium` (0.6) weighted by `codeql_weight`.
 
 ### Corroboration boost
 
@@ -161,7 +158,7 @@ When `agent_only_as_advisory = true` AND only the agent line is present:
 | Field | Source |
 |---|---|
 | `finding_id` | New UUID v4 |
-| `title` | Highest-severity result's title: `rule.matched_text` > `agent.candidate_title` > `"taint: {source} → {sink}"` |
+| `title` | `rule.matched_text` > `codeql.rule_name` (fallback `message`) > `agent.candidate_title` > `"taint: {source} → {sink}"` |
 | `category` | Plurality vote within group; ties broken by highest-severity result's category |
 | `severity` | max of group (from scorer) |
 | `confidence` | From scorer |
@@ -170,34 +167,21 @@ When `agent_only_as_advisory = true` AND only the agent line is present:
 | `related_rule_result_ids` | `result_id` of each rule result in the group |
 | `related_taint_result_ids` | `result_id` of each taint result in the group |
 | `related_agent_result_ids` | `result_id` of each agent result in the group |
-| `related_codeql_result_ids` | Empty for three-line fusion |
+| `related_codeql_result_ids` | `result_id` of each codeql result in the group |
 | `evidence` | Union of all lines' `evidence` fields, deduplicated |
 | `call_chain` | From taint result if present, else `[]` |
-| `dataflow_path` | From taint result if present, else `[]` |
+| `dataflow_path` | From taint result if present, else CodeQL `dataflow_path.steps` flattened to `"file:line"`, else `[]` |
 | `recommendation` | From rule result if present, else `agent.reasoning_summary` truncated |
 | `conflict_notes` | When severity or category differ within group, e.g. `"severity mismatch: rule=High, agent=Low"` |
 
-## CodeQL Passthrough
+## CodeQL Fusion
 
-Each `CodeqlAnalysisResult` is independently converted to a `FusedFinding`:
+CodeQL is a peer line in the four-line fusion pipeline:
 
-| Field | Source |
-|---|---|
-| `finding_id` | New UUID v4 |
-| `title` | `codeql.rule_name` or `codeql.message` |
-| `category` | `codeql.rule_id` |
-| `severity` | `codeql.severity` (already normalized) |
-| `confidence` | Fixed `Medium` (CodeQL is static analysis, not runtime) |
-| `status` | `"open"` |
-| `supported_by` | `["codeql"]` |
-| `related_codeql_result_ids` | `[codeql.result_id]` |
-| `evidence` | `[codeql.message.clone()]` |
-| `call_chain` | `[]` |
-| `dataflow_path` | Flattened `dataflow_path.steps` if `codeql.dataflow_path` is `Some`, else `[]` |
-| `recommendation` | `None` |
-| `conflict_notes` | `[]` |
-
-No cross-line dedup. No corroboration adjustment. CodeQL findings are appended after three-line fused findings in the final output.
+- **Matching**: file/line from `locations.first()`; category from `rule_id` (best-effort — CodeQL's `rule_id` vocabulary differs from rule/taint categories, so cross-line joins primarily use stage-1 proximity).
+- **Scoring**: CodeQL has no confidence field; it contributes a fixed `Medium` (0.6) weighted by `codeql_weight` in the weighted average. Its real `severity` is used directly for the group max severity.
+- **Merging**: an unmatched CodeQL result becomes a solo finding (`supported_by = ["codeql"]`, `related_codeql_result_ids = [result_id]`), matching the former passthrough output but produced through the shared matcher → scorer → merger path. Title is `rule_name` (fallback `message`); category is `rule_id`; evidence is `message`; dataflow path is flattened `dataflow_path.steps`.
+- **Behavior change**: with `require_confirmed_by ≥ 2`, solo CodeQL findings are now filtered (the former passthrough always kept them).
 
 ## Integration Point
 
@@ -218,15 +202,15 @@ The existing hardcoded `fused_findings: Vec::new()` is replaced.
 ## Reporting
 
 - `reporting.rs` gains a `include_raw_codeql_results` option
-- Fused findings section includes both three-line-fused and codeql-passthrough findings
+- Fused findings section includes four-line-fused findings (rule/taint/agent/codeql)
 - `codeql_fused_count` in summary tracks the count of CodeQL-originated fused findings
 
 ## Summary count mapping
 
 | Summary field | Value |
 |---|---|
-| `fused_finding_count` | Three-line fused + CodeQL passthrough combined |
-| `codeql_fused_count` | CodeQL passthrough count only |
+| `fused_finding_count` | Four-line fused findings (all groups) |
+| `codeql_fused_count` | Findings whose `supported_by` includes codeql (solo or corroborated) |
 | `codeql_result_count` | Raw CodeQL result count (unchanged) |
 
 ## Testing Strategy
@@ -234,6 +218,6 @@ The existing hardcoded `fused_findings: Vec::new()` is replaced.
 - **matcher**: Unit tests for stage 1 proximity (boundary at `line_proximity`), stage 2 category matching, conflict resolution ordering, unmatched results
 - **scorer**: Unit tests for weighted average, corroboration boost, agent-only downgrade, threshold boundaries, `require_confirmed_by` filtering
 - **merger**: Unit tests for field composition, conflict_notes generation, evidence dedup
-- **codeql_passthrough**: Unit tests for conversion fidelity, empty input
+- **codeql fusion**: Unit tests for proximity matching, solo grouping, weighted confidence, severity max, and merger field composition
 - **integration**: Round-trip test with synthetic four-line results feeding through full fusion pipeline
 - Config round-trip: New fusion fields serialize/deserialize correctly

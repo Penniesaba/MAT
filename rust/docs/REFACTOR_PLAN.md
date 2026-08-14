@@ -54,7 +54,7 @@ rust/docs/DECISIONS.md
 
 MCP 漏洞分类、漏洞原理和静态挖掘方法见 [`MCP_VULNERABILITY_TAXONOMY.md`](MCP_VULNERABILITY_TAXONOMY.md)。
 
-静态分析 Rust 重构采用“三线并行、独立产出、统一融合、配置驱动”的总体设计，见 [`STATIC_ANALYSIS_REFACTOR_DESIGN.md`](STATIC_ANALYSIS_REFACTOR_DESIGN.md)。
+静态分析 Rust 重构采用“四线并行、独立产出、统一融合、配置驱动”的总体设计，见 [`STATIC_ANALYSIS_REFACTOR_DESIGN.md`](STATIC_ANALYSIS_REFACTOR_DESIGN.md)。
 
 总控重构计划应保持简洁。阶段级实现细节应放入阶段文档，而不是写入本路线图。
 
@@ -110,13 +110,13 @@ Phase 12 已完成 Agent 辅助分析线实现。Agent 线通过 CLI 子进程�
 
 Phase 12.5 已完成 CodeQL 分析线集成。codeql::run() 作为第四条并行静态分析线接入 run_static_scan()，通过 codeql CLI 子进程调用进行专业级多语言污点分析。CodeQL 线在默认配置禁用，启用后自动过滤 Python/JS/TS 文件、创建 CodeQL 数据库、运行查询包（内置或自定义）、解析 SARIF 输出为 CodeqlAnalysisResult，产出结构化结果和原始 SARIF 审计数据。含 queries.rs（查询包管理）、provider.rs（CLI 子进程调用）、parser.rs（SARIF 解析）三个子模块。
 
-Phase 13 已完成静态结果融合与 finding 生成：加权置信度评分、两阶段匹配（文件+行号近邻、文件+category）、CodeQL 透传、可配置权重。融合模块位于 static_analysis/fusion/，管线已集成，报告输出支持融合 findings 和 CodeQL 原始结果。
+Phase 13 已完成静态结果融合与 finding 生成：四线（rule/taint/agent/codeql）加权置信度评分、两阶段匹配（文件+行号近邻、文件+category）、可配置权重（含 codeql_weight）。融合模块位于 static_analysis/fusion/，管线已集成，报告默认同时展示四路原始结果与融合 findings。
 
 如果某个阶段需要超过本路线图粒度的技术细节，应创建单独文档，并在阶段行或表格下方的简短备注中链接该文档。
 
 ## 风险摘要
 
-静态分析的主要风险是 parser 行为对齐、规则线覆盖不足、污点分析精度、Agent 结果可复现性、三线结果融合、输出兼容、benchmark 差异解释，以及避免检测能力退化。
+静态分析的主要风险是 parser 行为对齐、规则线覆盖不足、污点分析精度、Agent 结果可复现性、四线结果融合、输出兼容、benchmark 差异解释，以及避免检测能力退化。
 
 动态分析的主要风险是沙箱环境差异、Docker 和内核权限、eBPF 行为、事件兼容，以及在引入 Rust CLI 时保持现有动态工作流稳定。
 
@@ -125,13 +125,13 @@ Phase 13 已完成静态结果融合与 finding 生成：加权置信度评分�
 ## 决策记录
 
 - Rust 重构工作从 `rust/` 目录开始。
-- 静态分析目标是 Rust 原生实现，并采用三线并行结构：传统规则线、污点分析线和 Agent 分析线。
-- 三条静态分析线必须独立产出结果，再由融合层生成最终 findings。
-- JSON 输出应保留完整三线原始结果和融合结果；Markdown 和 Web 展示由用户配置控制。
+- 静态分析目标是 Rust 原生实现，并采用四线并行结构：传统规则线、污点分析线、Agent 分析线和 CodeQL 分析线。
+- 四条静态分析线必须独立产出结果，再由融合层生成最终 findings。
+- JSON 输出应保留完整四线原始结果和融合结果；Markdown 和 Web 展示由用户配置控制。
 - 动态分析在重构期间必须保持完整可用。
 - 在 Rust 原生动态分析迁移前，可以复用现有动态运行时组件。
 - Rust MCP server 已经有开源 SDK 和 server 项目生态，因此 Rust 源码静态分析应作为一等目标进入重构范围。
-- Python、JavaScript、TypeScript、Rust 四类源码都应进入同一套三线并行静态分析结构，最终输出统一 facts、独立三线结果和融合 findings。
+- Python、JavaScript、TypeScript、Rust 四类源码都应进入同一套四线并行静态分析结构，最终输出统一 facts、独立四线结果和融合 findings。
 - 后续实现阶段不接受空实现作为完成状态；阶段验收必须对应可运行、可测试、可审查的真实能力。
 - 路线图保持简洁；实现细节写入单独阶段文档。
 - 每个阶段都需要可运行或可审查的验收标准，满足后才视为完成。

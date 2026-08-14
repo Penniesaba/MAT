@@ -68,10 +68,10 @@ impl Default for MarkdownRenderOptions {
     fn default() -> Self {
         Self {
             include_fused_results: true,
-            include_raw_rule_results: false,
-            include_raw_taint_results: false,
-            include_raw_agent_results: false,
-            include_raw_codeql_results: false,
+            include_raw_rule_results: true,
+            include_raw_taint_results: true,
+            include_raw_agent_results: true,
+            include_raw_codeql_results: true,
             include_facts: false,
         }
     }
@@ -326,7 +326,11 @@ mod tests {
         assert!(markdown.contains("# Static Analysis Summary"));
         assert!(markdown.contains("## Fused Findings"));
         assert!(markdown.contains("Command execution reachable from MCP tool"));
-        assert!(!markdown.contains("## Raw Rule Results"));
+        // Raw per-line sections now render by default.
+        assert!(markdown.contains("## Raw Rule Results"));
+        assert!(markdown.contains("## Raw Taint Results"));
+        assert!(markdown.contains("## Raw Agent Results"));
+        assert!(markdown.contains("## Raw CodeQL Results"));
     }
 
     #[test]

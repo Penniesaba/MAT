@@ -13,7 +13,7 @@
 //! stage 1 proximity. Items that never match become single-item groups, so no
 //! result is silently dropped.
 
-use crate::model::{AgentAnalysisResult, RuleAnalysisResult, TaintAnalysisResult};
+use crate::model::{AgentAnalysisResult, CodeqlAnalysisResult, RuleAnalysisResult, TaintAnalysisResult};
 
 /// A group of related results from different analysis lines.
 #[derive(Debug, Clone)]
@@ -21,10 +21,11 @@ pub(crate) struct MatchGroup {
     pub rule_results: Vec<RuleAnalysisResult>,
     pub taint_results: Vec<TaintAnalysisResult>,
     pub agent_results: Vec<AgentAnalysisResult>,
+    pub codeql_results: Vec<CodeqlAnalysisResult>,
 }
 
 impl MatchGroup {
-    /// Number of distinct lines present (0–3).
+    /// Number of distinct lines present (0–4).
     pub fn line_count(&self) -> u32 {
         let mut count = 0u32;
         if !self.rule_results.is_empty() {
@@ -36,10 +37,13 @@ impl MatchGroup {
         if !self.agent_results.is_empty() {
             count += 1;
         }
+        if !self.codeql_results.is_empty() {
+            count += 1;
+        }
         count
     }
 
-    /// Line names present, ordered rule/taint/agent.
+    /// Line names present, ordered rule/taint/agent/codeql.
     pub fn supported_by(&self) -> Vec<&'static str> {
         let mut lines = Vec::new();
         if !self.rule_results.is_empty() {
@@ -51,6 +55,9 @@ impl MatchGroup {
         if !self.agent_results.is_empty() {
             lines.push("agent");
         }
+        if !self.codeql_results.is_empty() {
+            lines.push("codeql");
+        }
         lines
     }
 }
@@ -61,6 +68,7 @@ enum MatchKind {
     Rule,
     Taint,
     Agent,
+    Codeql,
 }
 
 /// A normalized view of a single result, carrying just what the matcher needs
@@ -77,6 +85,8 @@ struct Matchable {
     taint_idx: Option<usize>,
     /// Index into the original `agent_results` vec (for Agent items).
     agent_idx: Option<usize>,
+    /// Index into the original `codeql_results` vec (for Codeql items).
+    codeql_idx: Option<usize>,
 }
 
 /// Group all results into [`MatchGroup`]s using the two-stage greedy algorithm.
@@ -91,14 +101,16 @@ pub(crate) fn match_results(
     rule_results: Vec<RuleAnalysisResult>,
     taint_results: Vec<TaintAnalysisResult>,
     agent_results: Vec<AgentAnalysisResult>,
+    codeql_results: Vec<CodeqlAnalysisResult>,
     line_proximity: u32,
 ) -> Vec<MatchGroup> {
     let rule_orig = rule_results;
     let taint_orig = taint_results;
     let agent_orig = agent_results;
+    let codeql_orig = codeql_results;
 
     let mut items: Vec<Matchable> = Vec::with_capacity(
-        rule_orig.len() + taint_orig.len() + agent_orig.len(),
+        rule_orig.len() + taint_orig.len() + agent_orig.len() + codeql_orig.len(),
     );
 
     // Rules carry an explicit file/line/category.
@@ -111,6 +123,7 @@ pub(crate) fn match_results(
             rule_idx: Some(i),
             taint_idx: None,
             agent_idx: None,
+            codeql_idx: None,
         });
     }
 
@@ -125,6 +138,7 @@ pub(crate) fn match_results(
             rule_idx: None,
             taint_idx: Some(i),
             agent_idx: None,
+            codeql_idx: None,
         });
     }
 
@@ -140,6 +154,28 @@ pub(crate) fn match_results(
             rule_idx: None,
             taint_idx: None,
             agent_idx: Some(i),
+            codeql_idx: None,
+        });
+    }
+
+    // CodeQL results carry a clean first Location; use its file/line for
+    // proximity matching and rule_id as the category (best-effort against the
+    // rule/taint category vocabularies, which use different naming).
+    for (i, c) in codeql_orig.iter().enumerate() {
+        let (file, line) = c
+            .locations
+            .first()
+            .map(|l| (l.file.clone(), l.line))
+            .unwrap_or_else(|| (String::new(), 0));
+        items.push(Matchable {
+            file,
+            line,
+            category: Some(c.rule_id.clone()),
+            kind: MatchKind::Codeql,
+            rule_idx: None,
+            taint_idx: None,
+            agent_idx: None,
+            codeql_idx: Some(i),
         });
     }
 
@@ -203,6 +239,7 @@ pub(crate) fn match_results(
             let mut rule_results = Vec::new();
             let mut taint_results = Vec::new();
             let mut agent_results = Vec::new();
+            let mut codeql_results = Vec::new();
             for idx in indices {
                 match items[idx].kind {
                     MatchKind::Rule => {
@@ -220,12 +257,18 @@ pub(crate) fn match_results(
                             agent_results.push(agent_orig[ai].clone());
                         }
                     }
+                    MatchKind::Codeql => {
+                        if let Some(ci) = items[idx].codeql_idx {
+                            codeql_results.push(codeql_orig[ci].clone());
+                        }
+                    }
                 }
             }
             MatchGroup {
                 rule_results,
                 taint_results,
                 agent_results,
+                codeql_results,
             }
         })
         .collect()
@@ -301,7 +344,7 @@ fn can_join_group_category(candidate_idx: usize, group: &[usize], items: &[Match
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Confidence, Severity};
+    use crate::model::{CodeqlAnalysisResult, Confidence, Location, Severity};
 
     fn make_rule(
         id: &str,
@@ -372,13 +415,42 @@ mod tests {
         }
     }
 
+    fn make_codeql(
+        id: &str,
+        file: &str,
+        line: u32,
+        rule_id: &str,
+        severity: Severity,
+    ) -> CodeqlAnalysisResult {
+        CodeqlAnalysisResult {
+            result_id: id.to_string(),
+            rule_id: rule_id.to_string(),
+            rule_name: format!("{rule_id} rule"),
+            message: "CodeQL finding".to_string(),
+            severity,
+            locations: vec![Location {
+                file: file.to_string(),
+                line,
+                column: None,
+                message: None,
+            }],
+            dataflow_path: None,
+            sarif_snippet: None,
+            related_rule_ids: vec![],
+            related_taint_ids: vec![],
+            related_agent_ids: vec![],
+            verification_status: "uncorroborated".to_string(),
+            limitations: vec![],
+        }
+    }
+
     #[test]
     fn stage1_proximity_matches_same_file_nearby_lines() {
         // Taint line defaults to 0; a rule on line 3 is within proximity 5.
         let rules = vec![make_rule("r1", "a.py", 3, "cmd_inj", Confidence::High)];
         let taints = vec![make_taint("t1", "sink:command_exec:a.py:0", "command_exec", Confidence::Medium)];
         let agents = vec![];
-        let groups = match_results(rules, taints, agents, 5);
+        let groups = match_results(rules, taints, agents, vec![], 5);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].line_count(), 2);
         assert_eq!(groups[0].supported_by(), vec!["rule", "taint"]);
@@ -389,7 +461,7 @@ mod tests {
         let rules = vec![make_rule("r1", "a.py", 10, "cmd_inj", Confidence::High)];
         let taints = vec![make_taint("t1", "sink:command_exec:a.py:0", "command_exec", Confidence::Medium)];
         let agents = vec![];
-        let groups = match_results(rules, taints, agents, 5);
+        let groups = match_results(rules, taints, agents, vec![], 5);
         // taint line is 0, proximity |10-0|=10 > 5
         assert_eq!(groups.len(), 2);
         for g in &groups {
@@ -403,7 +475,7 @@ mod tests {
         let taints = vec![make_taint("t1", "sink:cmd_inj:a.py:0", "cmd_inj", Confidence::Medium)];
         let agents = vec![];
         // line proximity fails but category should match in stage 2
-        let groups = match_results(rules, taints, agents, 1);
+        let groups = match_results(rules, taints, agents, vec![], 1);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].line_count(), 2);
     }
@@ -413,7 +485,7 @@ mod tests {
         let rules = vec![make_rule("r1", "a.py", 10, "cmd_inj", Confidence::High)];
         let taints = vec![make_taint("t1", "sink:file_read:b.py:0", "file_read", Confidence::Medium)];
         let agents = vec![];
-        let groups = match_results(rules, taints, agents, 5);
+        let groups = match_results(rules, taints, agents, vec![], 5);
         // Different files, different categories — both solo
         assert_eq!(groups.len(), 2);
         for g in &groups {
@@ -423,7 +495,7 @@ mod tests {
 
     #[test]
     fn empty_inputs_produce_empty_groups() {
-        let groups = match_results(vec![], vec![], vec![], 5);
+        let groups = match_results(vec![], vec![], vec![], vec![], 5);
         assert!(groups.is_empty());
     }
 
@@ -438,7 +510,7 @@ mod tests {
         ];
         let taints = vec![make_taint("t1", "sink:cmd_inj:a.py:0", "cmd_inj", Confidence::Medium)];
         let agents = vec![];
-        let groups = match_results(rules, taints, agents, 5);
+        let groups = match_results(rules, taints, agents, vec![], 5);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].rule_results.len(), 2);
         assert_eq!(groups[0].taint_results.len(), 1);
@@ -455,7 +527,7 @@ mod tests {
             make_rule("r2", "a.py", 20, "file_read", Confidence::High),
         ];
         let agents = vec![make_agent("a1", "a.py", 15, Confidence::Medium)];
-        let groups = match_results(rules, vec![], agents, 5);
+        let groups = match_results(rules, vec![], agents, vec![], 5);
         assert_eq!(groups.len(), 2);
         let joined = groups
             .iter()
@@ -470,7 +542,7 @@ mod tests {
         // Agent within proximity joins the rule group in stage 1.
         let rules = vec![make_rule("r1", "a.py", 42, "cmd_inj", Confidence::High)];
         let agents = vec![make_agent("a1", "a.py", 41, Confidence::Medium)];
-        let groups = match_results(rules, vec![], agents, 5);
+        let groups = match_results(rules, vec![], agents, vec![], 5);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].line_count(), 2);
         assert_eq!(groups[0].agent_results.len(), 1);
@@ -479,10 +551,30 @@ mod tests {
         // (category is None) — it stays solo.
         let rules2 = vec![make_rule("r2", "a.py", 42, "cmd_inj", Confidence::High)];
         let agents2 = vec![make_agent("a2", "b.py", 42, Confidence::Medium)];
-        let groups2 = match_results(rules2, vec![], agents2, 5);
+        let groups2 = match_results(rules2, vec![], agents2, vec![], 5);
         assert_eq!(groups2.len(), 2);
         for g in &groups2 {
             assert_eq!(g.line_count(), 1);
         }
+    }
+
+    #[test]
+    fn codeql_matches_rule_by_proximity() {
+        let rules = vec![make_rule("r1", "a.py", 42, "cmd_inj", Confidence::High)];
+        let codeql = vec![make_codeql("c1", "a.py", 41, "py/cmd-injection", Severity::High)];
+        let groups = match_results(rules, vec![], vec![], codeql, 5);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].line_count(), 2);
+        assert_eq!(groups[0].codeql_results.len(), 1);
+        assert_eq!(groups[0].supported_by(), vec!["rule", "codeql"]);
+    }
+
+    #[test]
+    fn codeql_solo_group() {
+        let codeql = vec![make_codeql("c1", "a.py", 42, "py/cmd-injection", Severity::High)];
+        let groups = match_results(vec![], vec![], vec![], codeql, 5);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].line_count(), 1);
+        assert_eq!(groups[0].supported_by(), vec!["codeql"]);
     }
 }

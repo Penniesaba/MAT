@@ -261,10 +261,10 @@ impl Default for ReportConfig {
         Self {
             formats: default_report_formats(),
             include_fused_results: true,
-            include_raw_rule_results: false,
-            include_raw_taint_results: false,
-            include_raw_agent_results: false,
-            include_raw_codeql_results: false,
+            include_raw_rule_results: true,
+            include_raw_taint_results: true,
+            include_raw_agent_results: true,
+            include_raw_codeql_results: true,
             include_facts: false,
         }
     }

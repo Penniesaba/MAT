@@ -87,6 +87,7 @@ pub fn run_static_scan(
         codeql_output.results.clone(),
     );
 
+    // Count fused findings that involve the codeql line (solo or corroborated).
     let codeql_fused_count = fused_findings.iter()
         .filter(|f| f.supported_by.contains(&"codeql".to_string()))
         .count();

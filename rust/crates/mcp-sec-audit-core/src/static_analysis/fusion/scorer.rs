@@ -27,6 +27,10 @@ fn confidence_value(c: &Confidence) -> f64 {
     }
 }
 
+/// CodeQL results carry no confidence field; treat them as a fixed `Medium`
+/// (CodeQL is static analysis, not runtime).
+const CODEQL_CONFIDENCE: f64 = 0.6;
+
 /// Convert numeric raw score back to Confidence.
 fn raw_to_confidence(raw: f64) -> Confidence {
     if raw >= 0.7 {
@@ -87,6 +91,10 @@ pub(crate) fn score_groups(
             weighted_sum += config.agent_weight as f64 * confidence_value(&a.confidence);
             weight_sum += config.agent_weight;
         }
+        for _ in &group.codeql_results {
+            weighted_sum += config.codeql_weight as f64 * CODEQL_CONFIDENCE;
+            weight_sum += config.codeql_weight;
+        }
 
         let mut raw = if weight_sum > 0 {
             weighted_sum / weight_sum as f64
@@ -141,6 +149,12 @@ fn group_max_severity(group: &MatchGroup) -> Severity {
             max_sev = agent_sev;
         }
     }
+    for c in &group.codeql_results {
+        // CodeQL has a real severity field; use it directly.
+        if severity_ord(&c.severity) > severity_ord(&max_sev) {
+            max_sev = c.severity.clone();
+        }
+    }
     max_sev
 }
 
@@ -166,7 +180,8 @@ mod tests {
     use super::*;
     use crate::config::FusionConfig;
     use crate::model::{
-        AgentAnalysisResult, Confidence, RuleAnalysisResult, Severity, TaintAnalysisResult,
+        AgentAnalysisResult, CodeqlAnalysisResult, Confidence, Location, RuleAnalysisResult,
+        Severity, TaintAnalysisResult,
     };
 
     fn make_rule(confidence: Confidence) -> RuleAnalysisResult {
@@ -198,12 +213,36 @@ mod tests {
         }
     }
 
+    fn make_codeql(rule_id: &str, severity: Severity) -> CodeqlAnalysisResult {
+        CodeqlAnalysisResult {
+            result_id: format!("c:{rule_id}"),
+            rule_id: rule_id.to_string(),
+            rule_name: format!("{rule_id} rule"),
+            message: "CodeQL finding".to_string(),
+            severity,
+            locations: vec![Location {
+                file: "a.py".into(),
+                line: 1,
+                column: None,
+                message: None,
+            }],
+            dataflow_path: None,
+            sarif_snippet: None,
+            related_rule_ids: vec![],
+            related_taint_ids: vec![],
+            related_agent_ids: vec![],
+            verification_status: "uncorroborated".into(),
+            limitations: vec![],
+        }
+    }
+
     #[test]
     fn weighted_average_rule_plus_taint() {
         let group = MatchGroup {
             rule_results: vec![make_rule(Confidence::High)],
             taint_results: vec![make_taint(Confidence::Medium)],
             agent_results: vec![],
+            codeql_results: vec![],
         };
         let config = FusionConfig::default();
         let scored = score_groups(vec![group], &config);
@@ -220,6 +259,7 @@ mod tests {
             rule_results: vec![],
             taint_results: vec![],
             agent_results: vec![make_agent(Confidence::High)],
+            codeql_results: vec![],
         };
         let config = FusionConfig::default();
         let scored = score_groups(vec![group], &config);
@@ -234,6 +274,7 @@ mod tests {
             rule_results: vec![make_rule(Confidence::High)],
             taint_results: vec![],
             agent_results: vec![],
+            codeql_results: vec![],
         };
         let mut config = FusionConfig::default();
         config.require_confirmed_by = 2;
@@ -257,6 +298,38 @@ mod tests {
             }],
             taint_results: vec![make_taint(Confidence::Low)],
             agent_results: vec![],
+            codeql_results: vec![],
+        };
+        let scored = score_groups(vec![group], &FusionConfig::default());
+        assert_eq!(scored[0].severity, Severity::Critical);
+    }
+
+    #[test]
+    fn codeql_weight_contributes_to_confidence() {
+        // Solo codeql: raw = (codeql_weight * 0.6) / codeql_weight = 0.6 → Medium
+        let group = MatchGroup {
+            rule_results: vec![],
+            taint_results: vec![],
+            agent_results: vec![],
+            codeql_results: vec![make_codeql("py/cmd-injection", Severity::High)],
+        };
+        let scored = score_groups(vec![group], &FusionConfig::default());
+        assert_eq!(scored.len(), 1);
+        assert_eq!(scored[0].confidence, Confidence::Medium);
+        assert_eq!(scored[0].severity, Severity::High);
+    }
+
+    #[test]
+    fn codeql_severity_is_max_of_group() {
+        let group = MatchGroup {
+            rule_results: vec![{
+                let mut r = make_rule(Confidence::High);
+                r.severity = Severity::High;
+                r
+            }],
+            taint_results: vec![],
+            agent_results: vec![],
+            codeql_results: vec![make_codeql("py/cmd-injection", Severity::Critical)],
         };
         let scored = score_groups(vec![group], &FusionConfig::default());
         assert_eq!(scored[0].severity, Severity::Critical);

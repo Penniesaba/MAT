@@ -136,7 +136,14 @@ fn main() -> Result<()> {
         Some(Command::Report { command }) => match command {
             ReportCommand::Demo(args) => {
                 let result = mcp_sec_audit_core::fixtures::synthetic_static_analysis_result();
-                println!("{}", render_static_result(&result, args.format)?);
+                println!(
+                    "{}",
+                    render_static_result(
+                        &result,
+                        args.format,
+                        &mcp_sec_audit_core::ReportConfig::default(),
+                    )?
+                );
             }
         },
         Some(Command::Scan { command }) => match command {
@@ -145,7 +152,7 @@ fn main() -> Result<()> {
                 let target_overrides = (!args.target.is_empty()).then_some(args.target.as_slice());
                 let result =
                     mcp_sec_audit_core::run_static_scan(&config, &args.rules, target_overrides)?;
-                println!("{}", render_static_result(&result, args.format)?);
+                println!("{}", render_static_result(&result, args.format, &config.report)?);
             }
         },
         None => {
@@ -163,16 +170,17 @@ fn main() -> Result<()> {
 fn render_static_result(
     result: &mcp_sec_audit_core::StaticAnalysisResult,
     format: OutputFormat,
+    report: &mcp_sec_audit_core::ReportConfig,
 ) -> Result<String> {
     match format {
         OutputFormat::Json => mcp_sec_audit_core::render_json(result),
         OutputFormat::Jsonl => mcp_sec_audit_core::render_jsonl(
             result,
-            &mcp_sec_audit_core::JsonlRenderOptions::default(),
+            &mcp_sec_audit_core::JsonlRenderOptions::from(report),
         ),
         OutputFormat::Markdown => Ok(mcp_sec_audit_core::render_markdown(
             result,
-            &mcp_sec_audit_core::MarkdownRenderOptions::default(),
+            &mcp_sec_audit_core::MarkdownRenderOptions::from(report),
         )),
     }
 }

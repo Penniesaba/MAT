@@ -29,8 +29,8 @@ pub(crate) fn merge_groups(scored_groups: Vec<ScoredGroup>) -> Vec<FusedFinding>
         // Conflict notes
         let conflict_notes = build_conflict_notes(&group);
 
-        // Call chain and dataflow path from taint
-        let (call_chain, dataflow_path) = extract_taint_paths(&group);
+        // Call chain and dataflow path from taint (or codeql dataflow)
+        let (call_chain, dataflow_path) = extract_paths(&group);
 
         // Recommendation
         let recommendation = extract_recommendation(&group);
@@ -47,7 +47,7 @@ pub(crate) fn merge_groups(scored_groups: Vec<ScoredGroup>) -> Vec<FusedFinding>
             related_rule_result_ids: group.rule_results.iter().map(|r| r.result_id.clone()).collect(),
             related_taint_result_ids: group.taint_results.iter().map(|t| t.result_id.clone()).collect(),
             related_agent_result_ids: group.agent_results.iter().map(|a| a.result_id.clone()).collect(),
-            related_codeql_result_ids: Vec::new(),
+            related_codeql_result_ids: group.codeql_results.iter().map(|c| c.result_id.clone()).collect(),
             evidence,
             call_chain,
             dataflow_path,
@@ -58,11 +58,18 @@ pub(crate) fn merge_groups(scored_groups: Vec<ScoredGroup>) -> Vec<FusedFinding>
 }
 
 fn build_title(group: &super::matcher::MatchGroup) -> String {
-    // Prefer rule's matched_text, then agent's candidate_title, then taint description
+    // Prefer rule's matched_text, then codeql rule_name/message, then agent's
+    // candidate_title, then taint description.
     if let Some(rule) = group.rule_results.first() {
         if let Some(ref text) = rule.matched_text {
             return text.clone();
         }
+    }
+    if let Some(codeql) = group.codeql_results.first() {
+        if !codeql.rule_name.is_empty() {
+            return codeql.rule_name.clone();
+        }
+        return codeql.message.clone();
     }
     if let Some(agent) = group.agent_results.first() {
         return agent.candidate_title.clone();
@@ -83,6 +90,9 @@ fn build_category(group: &super::matcher::MatchGroup) -> String {
     }
     for t in &group.taint_results {
         *counts.entry(&t.sink_kind).or_insert(0) += 1;
+    }
+    for c in &group.codeql_results {
+        *counts.entry(&c.rule_id).or_insert(0) += 1;
     }
     counts.into_iter()
         .max_by_key(|(cat, count)| (*count, cat.len())) // tie-break arbitrarily stable
@@ -114,15 +124,32 @@ fn build_evidence(group: &super::matcher::MatchGroup) -> Vec<String> {
             }
         }
     }
+    for c in &group.codeql_results {
+        if seen.insert(c.message.clone()) {
+            evidence.push(c.message.clone());
+        }
+    }
     evidence
 }
 
-fn extract_taint_paths(group: &super::matcher::MatchGroup) -> (Vec<String>, Vec<String>) {
+fn extract_paths(group: &super::matcher::MatchGroup) -> (Vec<String>, Vec<String>) {
     if let Some(taint) = group.taint_results.first() {
-        (taint.call_chain.clone(), taint.dataflow_path.clone())
-    } else {
-        (Vec::new(), Vec::new())
+        return (taint.call_chain.clone(), taint.dataflow_path.clone());
     }
+    if let Some(codeql) = group.codeql_results.first() {
+        let dataflow_path = codeql
+            .dataflow_path
+            .as_ref()
+            .map(|dfp| {
+                dfp.steps
+                    .iter()
+                    .map(|step| format!("{}:{}", step.location.file, step.location.line))
+                    .collect()
+            })
+            .unwrap_or_default();
+        return (Vec::new(), dataflow_path);
+    }
+    (Vec::new(), Vec::new())
 }
 
 fn extract_recommendation(group: &super::matcher::MatchGroup) -> Option<String> {
@@ -145,6 +172,9 @@ fn build_conflict_notes(group: &super::matcher::MatchGroup) -> Vec<String> {
     let mut severities: Vec<(&str, &Severity)> = Vec::new();
     for r in &group.rule_results {
         severities.push(("rule", &r.severity));
+    }
+    for c in &group.codeql_results {
+        severities.push(("codeql", &c.severity));
     }
     // Taint has no severity field; skip for conflict detection
     // Agent has no severity field; skip
@@ -183,7 +213,10 @@ mod tests {
     use super::*;
     use super::super::matcher::MatchGroup;
     use super::super::scorer::ScoredGroup;
-    use crate::model::{Confidence, Severity, RuleAnalysisResult, AgentAnalysisResult};
+    use crate::model::{
+        AgentAnalysisResult, CodeqlAnalysisResult, Confidence, Location, RuleAnalysisResult,
+        Severity,
+    };
 
     #[test]
     fn merge_single_rule_produces_fused_finding() {
@@ -198,6 +231,7 @@ mod tests {
             }],
             taint_results: vec![],
             agent_results: vec![],
+            codeql_results: vec![],
         };
         let scored = ScoredGroup { group, severity: Severity::High, confidence: Confidence::High, raw_score: 0.8 };
         let findings = merge_groups(vec![scored]);
@@ -232,6 +266,7 @@ mod tests {
                 related_rule_result_ids: vec![], related_taint_result_ids: vec![],
                 confidence: Confidence::Medium, verification_status: "u".into(), limitations: vec![],
             }],
+            codeql_results: vec![],
         };
         let scored = ScoredGroup { group, severity: Severity::Medium, confidence: Confidence::Medium, raw_score: 0.6 };
         let findings = merge_groups(vec![scored]);
@@ -242,5 +277,49 @@ mod tests {
     fn empty_input() {
         let findings = merge_groups(vec![]);
         assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn merge_codeql_only_produces_fused_finding() {
+        let group = MatchGroup {
+            rule_results: vec![],
+            taint_results: vec![],
+            agent_results: vec![],
+            codeql_results: vec![CodeqlAnalysisResult {
+                result_id: "ql:1".into(),
+                rule_id: "py/cmd-injection".into(),
+                rule_name: "Command Injection".into(),
+                message: "User input reaches shell".into(),
+                severity: Severity::High,
+                locations: vec![Location {
+                    file: "a.py".into(),
+                    line: 42,
+                    column: None,
+                    message: None,
+                }],
+                dataflow_path: None,
+                sarif_snippet: None,
+                related_rule_ids: vec![],
+                related_taint_ids: vec![],
+                related_agent_ids: vec![],
+                verification_status: "uncorroborated".into(),
+                limitations: vec![],
+            }],
+        };
+        let scored = ScoredGroup {
+            group,
+            severity: Severity::High,
+            confidence: Confidence::Medium,
+            raw_score: 0.6,
+        };
+        let findings = merge_groups(vec![scored]);
+        assert_eq!(findings.len(), 1);
+        let f = &findings[0];
+        assert_eq!(f.title, "Command Injection");
+        assert_eq!(f.category, "py/cmd-injection");
+        assert_eq!(f.severity, Severity::High);
+        assert_eq!(f.supported_by, vec!["codeql".to_string()]);
+        assert_eq!(f.related_codeql_result_ids, vec!["ql:1".to_string()]);
+        assert_eq!(f.evidence, vec!["User input reaches shell".to_string()]);
     }
 }
