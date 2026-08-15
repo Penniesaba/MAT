@@ -43,7 +43,7 @@ agent_weight = 1
 codeql_weight = 4
 
 [report]
-output = "/home/xiao/Project/mcp-sec-audit/rust/docs/8151617"
+output = "/home/xiao/Project/mcp-sec-audit/rust/docs/<timestamp>"
 formats = ["markdown"]
 include_fused_results = true
 include_raw_rule_results = true
