@@ -58,6 +58,18 @@ fn confidence_meets_threshold(confidence: &str) -> bool {
     rank(raw.as_str()) <= rank(MIN_CONFIDENCE)
 }
 
+/// True when a location string is `file:LINE` with a single positive integer
+/// line number. Uses `rsplit_once(':')` to match fusion's `parse_first_location`
+/// exactly, so a location accepted here resolves to the same line downstream.
+fn location_has_line_number(location: &str) -> bool {
+    match location.rsplit_once(':') {
+        Some((file, line)) => {
+            !file.is_empty() && line.parse::<u32>().map(|n| n > 0).unwrap_or(false)
+        }
+        None => false,
+    }
+}
+
 /// Truncate a string at a UTF-8 character boundary for error messages.
 fn truncate_for_display(s: &str, max: usize) -> &str {
     if s.len() <= max {
@@ -118,15 +130,25 @@ pub fn parse_agent_output(
         if finding.candidate_title.trim().is_empty() {
             continue; // skip empty titles, don't fail the whole batch
         }
-        if finding.affected_locations.is_empty() {
-            continue; // skip findings without locations
-        }
         if finding.reasoning_summary.trim().is_empty() {
             continue;
         }
 
         if !confidence_meets_threshold(&finding.confidence) {
             continue; // confidence too low
+        }
+
+        // Require precise line numbers: keep only locations that are a single
+        // `file:LINE` with a positive integer line, and discard the finding if
+        // none survive. Mirrors fusion's `parse_first_location` so a kept
+        // location resolves to the same line number downstream.
+        let affected_locations: Vec<String> = finding
+            .affected_locations
+            .into_iter()
+            .filter(|loc| location_has_line_number(loc))
+            .collect();
+        if affected_locations.is_empty() {
+            continue; // no precise location — discard the finding
         }
 
         results.push(AgentAnalysisResult {
@@ -136,7 +158,7 @@ pub fn parse_agent_output(
             model_provider: Some(metadata.agent_id.clone()),
             input_scope: metadata.input_scope.clone(),
             candidate_title: finding.candidate_title,
-            affected_locations: finding.affected_locations,
+            affected_locations,
             reasoning_summary: finding.reasoning_summary,
             evidence_snippets: finding.evidence_snippets,
             related_rule_result_ids: Vec::new(),    // Phase 13
@@ -251,6 +273,63 @@ Some trailing text.
         let results = parse_agent_output(stdout, &metadata()).expect("parse");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].candidate_title, "Valid finding");
+    }
+
+    #[test]
+    fn drops_findings_without_precise_line_numbers() {
+        let stdout = r#"```json
+{
+  "findings": [
+    {
+      "candidate_title": "No location",
+      "affected_locations": [],
+      "reasoning_summary": "x",
+      "confidence": "high"
+    },
+    {
+      "candidate_title": "Bare filename",
+      "affected_locations": ["server.py"],
+      "reasoning_summary": "x",
+      "confidence": "high"
+    },
+    {
+      "candidate_title": "Range location",
+      "affected_locations": ["server.py:10-20"],
+      "reasoning_summary": "x",
+      "confidence": "high"
+    },
+    {
+      "candidate_title": "Precise location",
+      "affected_locations": ["server.py:86"],
+      "reasoning_summary": "x",
+      "confidence": "high"
+    }
+  ]
+}
+```"#;
+        let results = parse_agent_output(stdout, &metadata()).expect("parse");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].candidate_title, "Precise location");
+        assert_eq!(results[0].affected_locations, vec!["server.py:86"]);
+    }
+
+    #[test]
+    fn filters_imprecise_locations_keeps_precise_ones() {
+        let stdout = r#"```json
+{
+  "findings": [
+    {
+      "candidate_title": "Mixed",
+      "affected_locations": ["server.py", "server.py:10-20", "server.py:86"],
+      "reasoning_summary": "x",
+      "confidence": "high"
+    }
+  ]
+}
+```"#;
+        let results = parse_agent_output(stdout, &metadata()).expect("parse");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].affected_locations, vec!["server.py:86"]);
     }
 
     #[test]

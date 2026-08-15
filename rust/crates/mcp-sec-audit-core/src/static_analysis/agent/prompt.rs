@@ -83,7 +83,12 @@ following vulnerability categories are specific to MCP server contexts:
 
 4. For each finding, provide:
    - A clear title describing the vulnerability
-   - The exact file:line locations affected
+   - The exact file:line locations affected. Every location MUST be
+     `relative/path:LINE` with a single positive integer line number
+     (e.g. `server.py:86`). Never use ranges (e.g. `10-20`), bare
+     filenames without a line, or "around line N". The line MUST point
+     at the actual vulnerable statement (the dangerous call), not at a
+     comment, docstring, or function signature.
    - A reasoning summary explaining the risk
    - Code snippets as evidence
    - Your confidence level (high/medium/low)
@@ -94,6 +99,10 @@ following vulnerability categories are specific to MCP server contexts:
 After completing your analysis, output EXACTLY ONE JSON block (wrapped
 in a ```json code fence) containing all findings. Do not include any
 other JSON blocks in your response.
+
+Before emitting each finding, re-read the cited file to confirm each
+line number is correct; a finding with an imprecise location will be
+discarded.
 
 ```json
 {
@@ -248,5 +257,12 @@ mod tests {
         }];
         let text = file_list_text(&files);
         assert_eq!(text, "- server.py (python, 42 lines)");
+    }
+
+    #[test]
+    fn render_builtin_template_requires_precise_line_numbers() {
+        let prompt = render(None, &[], "/tmp/test").expect("render");
+        assert!(prompt.contains("single positive integer line number"));
+        assert!(prompt.contains("imprecise location will be"));
     }
 }
