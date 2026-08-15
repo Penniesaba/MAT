@@ -35,6 +35,52 @@ pub(crate) fn expr_to_string(expr: &ast::Expr) -> String {
                 .join(", ")
         ),
         ast::Expr::UnaryOp(unary) => format!("{:?}{}", unary.op, expr_to_string(&unary.operand)),
+        ast::Expr::BinOp(bin_op) => format!(
+            "({} {:?} {})",
+            expr_to_string(&bin_op.left),
+            bin_op.op,
+            expr_to_string(&bin_op.right)
+        ),
+        ast::Expr::BoolOp(bool_op) => bool_op
+            .values
+            .iter()
+            .map(expr_to_string)
+            .collect::<Vec<_>>()
+            .join(" or "),
+        ast::Expr::Compare(compare) => {
+            let mut out = expr_to_string(&compare.left);
+            for (op, comp) in compare.ops.iter().zip(&compare.comparators) {
+                out.push_str(&format!(" {:?} {}", op, expr_to_string(comp)));
+            }
+            out
+        }
+        ast::Expr::IfExp(if_exp) => format!(
+            "({} if {} else {})",
+            expr_to_string(&if_exp.body),
+            expr_to_string(&if_exp.test),
+            expr_to_string(&if_exp.orelse)
+        ),
+        ast::Expr::Dict(dict) => {
+            let items = dict
+                .keys
+                .iter()
+                .zip(&dict.values)
+                .map(|(key, value)| match key {
+                    Some(key) => format!("{}: {}", expr_to_string(key), expr_to_string(value)),
+                    None => format!("**{}", expr_to_string(value)),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{{{items}}}")
+        }
+        ast::Expr::Set(set) => format!(
+            "{{{}}}",
+            set.elts
+                .iter()
+                .map(expr_to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         _ => format!("{expr:?}"),
     }
 }

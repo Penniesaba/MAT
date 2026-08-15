@@ -13,7 +13,8 @@ struct SinkRule {
 static SINK_RULES: &[SinkRule] = &[
     SinkRule {
         patterns: &["child_process.exec", "child_process.execSync", "child_process.spawn",
-                     "child_process.spawnSync", "child_process.execFile", "child_process.fork"],
+                     "child_process.spawnSync", "child_process.execFile", "child_process.fork",
+                     "shelljs.exec", "shell.exec"],
         category: "command_execution",
         rule_id: "js.command_execution",
         severity: Severity::High,
@@ -28,7 +29,7 @@ static SINK_RULES: &[SinkRule] = &[
     },
     SinkRule {
         patterns: &["fs.readFile", "fs.readFileSync", "fs.createReadStream",
-                     "fs.promises.readFile"],
+                     "fs.promises.readFile", "fs.readdir", "fs.readdirSync"],
         category: "file_read",
         rule_id: "js.file_read",
         severity: Severity::Medium,
@@ -36,14 +37,24 @@ static SINK_RULES: &[SinkRule] = &[
     },
     SinkRule {
         patterns: &["fs.writeFile", "fs.writeFileSync", "fs.createWriteStream",
-                     "fs.promises.writeFile"],
+                     "fs.promises.writeFile", "fs.appendFile", "fs.appendFileSync",
+                     "fs.mkdir"],
         category: "file_write",
         rule_id: "js.file_write",
         severity: Severity::Medium,
         reason: "File write can modify filesystem contents",
     },
     SinkRule {
-        patterns: &["http.request", "https.request", "fetch", "net.connect", "axios"],
+        patterns: &["fs.unlink", "fs.unlinkSync", "fs.rm", "fs.rmSync",
+                     "fs.rmdir", "fs.rmdirSync", "fs.promises.rm"],
+        category: "file_delete",
+        rule_id: "js.file_delete",
+        severity: Severity::Medium,
+        reason: "File deletion can remove attacker-controlled paths",
+    },
+    SinkRule {
+        patterns: &["http.request", "https.request", "http.get", "https.get",
+                     "fetch", "net.connect", "axios"],
         category: "network_request",
         rule_id: "js.network_request",
         severity: Severity::Medium,
@@ -51,15 +62,18 @@ static SINK_RULES: &[SinkRule] = &[
     },
     SinkRule {
         patterns: &["process.env"],
-        category: "credential_leak",
-        rule_id: "js.credential_leak",
+        category: "env_access",
+        rule_id: "js.env_access",
         severity: Severity::High,
         reason: "Access to environment variables can leak credentials",
     },
     SinkRule {
         patterns: &["connection.query", "connection.execute", "db.run", "Model.find",
                      "mysql.createConnection", "mysql.createPool", "mysql.query",
-                     "mongoose.Model", "mongoose.Query.prototype.exec"],
+                     "mongoose.Model", "mongoose.Query.prototype.exec",
+                     "pg.query", "sqlite3", "sequelize.query",
+                     "collection.find", "collection.findOne", "collection.aggregate",
+                     "collection.update", "knex"],
         category: "database_injection",
         rule_id: "js.database_injection",
         severity: Severity::Critical,
@@ -71,6 +85,17 @@ static SINK_RULES: &[SinkRule] = &[
         rule_id: "js.deserialization_rce",
         severity: Severity::Critical,
         reason: "Deserialization/vm execution can run attacker-controlled code",
+    },
+    SinkRule {
+        patterns: &["ejs.render", "ejs.renderFile", "ejs.compile",
+                     "pug.render", "pug.renderFile", "pug.compile",
+                     "handlebars.compile", "mustache.render",
+                     "nunjucks.render", "nunjucks.renderString",
+                     "_.template", "lodash.template"],
+        category: "template_injection",
+        rule_id: "js.template_injection",
+        severity: Severity::Critical,
+        reason: "Template rendering can execute attacker-controlled code (SSTI)",
     },
 ];
 
@@ -111,4 +136,29 @@ fn matches_sink(callee: &str, patterns: &[&str]) -> bool {
             || callee.ends_with(&format!(".{pattern}"))
             || callee.starts_with(&format!("{pattern}."))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn category_for(callee: &str) -> Option<&'static str> {
+        SINK_RULES
+            .iter()
+            .find(|rule| matches_sink(callee, rule.patterns))
+            .map(|rule| rule.category)
+    }
+
+    #[test]
+    fn classifies_extended_js_sinks() {
+        assert_eq!(category_for("child_process.execSync"), Some("command_execution"));
+        assert_eq!(category_for("fs.readFileSync"), Some("file_read"));
+        assert_eq!(category_for("fs.unlinkSync"), Some("file_delete"));
+        assert_eq!(category_for("https.get"), Some("network_request"));
+        assert_eq!(category_for("process.env"), Some("env_access"));
+        assert_eq!(category_for("pg.query"), Some("database_injection"));
+        assert_eq!(category_for("ejs.render"), Some("template_injection"));
+        assert_eq!(category_for("eval"), Some("dynamic_execution"));
+        assert_eq!(category_for("vm.runInNewContext"), Some("deserialization_rce"));
+    }
 }

@@ -65,6 +65,11 @@ pub(crate) static SINK_RULES: &[SinkRule] = &[
             "reqwest::Client::new",
             "hyper::client",
             "ureq::get",
+            "isahc::get",
+            "minreq::get",
+            "surf::get",
+            "curl",
+            "attohttpc",
         ],
         category: "network_request",
         rule_id: "rust.network_request",
@@ -79,8 +84,8 @@ pub(crate) static SINK_RULES: &[SinkRule] = &[
             "std::env::vars",
             "std::env::vars_os",
         ],
-        category: "credential_leak",
-        rule_id: "rust.credential_leak",
+        category: "env_access",
+        rule_id: "rust.env_access",
         severity: Severity::High,
         reason: "Access to environment variables can leak credentials",
         confidence: Confidence::High,
@@ -91,6 +96,9 @@ pub(crate) static SINK_RULES: &[SinkRule] = &[
             "serde_json::from_slice",
             "serde_json::from_reader",
             "serde_yaml::from_str",
+            "toml",
+            "ron",
+            "bincode::deserialize",
         ],
         category: "deserialization",
         rule_id: "rust.deserialization",
@@ -106,6 +114,43 @@ pub(crate) static SINK_RULES: &[SinkRule] = &[
         reason: "Dynamic library loading can execute attacker-controlled code",
         confidence: Confidence::High,
     },
+    SinkRule {
+        patterns: &[
+            "rusqlite",
+            "sqlx",
+            "diesel",
+            "mysql",
+            "postgres",
+            "tokio_postgres",
+            "sea_orm",
+        ],
+        category: "database_injection",
+        rule_id: "rust.database_injection",
+        severity: Severity::Critical,
+        reason: "Database query may be vulnerable to SQL injection",
+        confidence: Confidence::Medium,
+    },
+    SinkRule {
+        patterns: &[
+            "std::fs::remove_file",
+            "std::fs::remove_dir",
+            "std::fs::remove_dir_all",
+            "std::fs::rename",
+        ],
+        category: "file_delete",
+        rule_id: "rust.file_delete",
+        severity: Severity::Medium,
+        reason: "File deletion can remove attacker-controlled paths",
+        confidence: Confidence::High,
+    },
+    SinkRule {
+        patterns: &["tera", "handlebars", "minijinja", "askama"],
+        category: "template_injection",
+        rule_id: "rust.template_injection",
+        severity: Severity::Critical,
+        reason: "Template rendering can execute attacker-controlled code (SSTI)",
+        confidence: Confidence::High,
+    },
 ];
 
 pub(crate) fn matches_sink(callee: &str, patterns: &[&str]) -> bool {
@@ -115,4 +160,30 @@ pub(crate) fn matches_sink(callee: &str, patterns: &[&str]) -> bool {
             || callee.starts_with(&format!("{pattern}::"))
             || callee.starts_with(&format!("{pattern}<"))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn category_for(callee: &str) -> Option<&'static str> {
+        SINK_RULES
+            .iter()
+            .find(|rule| matches_sink(callee, rule.patterns))
+            .map(|rule| rule.category)
+    }
+
+    #[test]
+    fn classifies_extended_rust_sinks() {
+        assert_eq!(category_for("std::process::Command::new"), Some("command_execution"));
+        assert_eq!(category_for("std::fs::File::open"), Some("file_read"));
+        assert_eq!(category_for("std::fs::remove_file"), Some("file_delete"));
+        assert_eq!(category_for("std::env::var"), Some("env_access"));
+        assert_eq!(category_for("reqwest::get"), Some("network_request"));
+        assert_eq!(category_for("rusqlite::Connection::execute"), Some("database_injection"));
+        assert_eq!(category_for("sqlx::query"), Some("database_injection"));
+        assert_eq!(category_for("tera::Tera::render"), Some("template_injection"));
+        assert_eq!(category_for("serde_json::from_str"), Some("deserialization"));
+        assert_eq!(category_for("libloading::Library::new"), Some("dynamic_loading"));
+    }
 }

@@ -206,26 +206,47 @@ pub fn build_graph(facts: &[Fact]) -> Graph {
     }
 
     // -----------------------------------------------------------------------
-    // Step 6: Register Variables and assignment propagation
+    // Step 6: Register Variables (pass 1) and assignment propagation (pass 2)
     // -----------------------------------------------------------------------
+    // Pass 1 — register every assigned variable as a node up front so edges can
+    // link to variables defined later in the file (removes line-order dependence).
     for fact in facts {
         if let Fact::Assign(a) = fact {
             let target_id = make_var_id(&a.function_id, &a.target);
-            let target_node = Node::Variable {
-                id: target_id.clone(),
-                name: a.target.clone(),
-                function_id: a.function_id.clone(),
-            };
-            g.add_node(target_id.clone(), target_node);
+            g.add_node(
+                target_id.clone(),
+                Node::Variable {
+                    id: target_id,
+                    name: a.target.clone(),
+                    function_id: a.function_id.clone(),
+                },
+            );
+        }
+    }
 
-            // ValToVar: if value is a simple variable name, link it
+    // Pass 2 — link each assignment's right-hand side back to the variables and
+    // sources it references.
+    for fact in facts {
+        if let Fact::Assign(a) = fact {
+            let target_id = make_var_id(&a.function_id, &a.target);
             let trimmed = a.value.trim();
-            if is_simple_var(trimmed) {
-                let from_id = make_var_id(&a.function_id, trimmed);
-                g.add_edge(Edge::ValToVar {
-                    from_var_id: from_id,
-                    to_var_id: target_id.clone(),
-                });
+
+            // Link every identifier referenced on the right-hand side to the
+            // target, so compound expressions (`x / y`, `x.strip()`, `x[y]`)
+            // carry taint instead of leaving the variable orphaned.
+            for ident in extract_identifiers(trimmed) {
+                let var_id = make_var_id(&a.function_id, &ident);
+                if g.nodes.contains_key(&var_id) {
+                    g.add_edge(Edge::ValToVar {
+                        from_var_id: var_id,
+                        to_var_id: target_id.clone(),
+                    });
+                } else if let Some(source_id) = source_id_for_name(&g, &a.function_id, &ident) {
+                    g.add_edge(Edge::SourceToVar {
+                        source_id,
+                        var_id: target_id.clone(),
+                    });
+                }
             }
 
             // ReturnToVar: if value looks like a function call result
@@ -271,11 +292,90 @@ fn make_var_id(function_id: &str, var_name: &str) -> String {
     format!("{function_id}{VAR_SEP}{var_name}")
 }
 
-/// A simple variable name is an identifier with no operators, parens, dots.
-fn is_simple_var(s: &str) -> bool {
-    !s.is_empty()
-        && s.chars().all(|c| c.is_alphanumeric() || c == '_')
-        && !s.starts_with(|c: char| c.is_ascii_digit())
+/// Extract identifier tokens from an assignment's right-hand side expression.
+/// String-literal contents are skipped so `x = "name"` does not falsely taint a
+/// variable named `name`; operators and method names (`.strip`, `(...)`) are
+/// naturally ignored because they do not name in-scope variables or sources.
+fn extract_identifiers(expr: &str) -> Vec<String> {
+    let bytes = expr.as_bytes();
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0;
+    let n = bytes.len();
+
+    while i < n {
+        let b = bytes[i];
+
+        // Skip quoted string literals (single, double, and triple-quoted).
+        if b == b'"' || b == b'\'' {
+            i += 1;
+            if i + 1 < n && bytes[i] == b && bytes[i + 1] == b {
+                i += 2; // triple-quote opening
+                while i < n {
+                    if bytes[i] == b && i + 2 < n && bytes[i + 1] == b && bytes[i + 2] == b {
+                        i += 3;
+                        break;
+                    }
+                    i += 1;
+                }
+            } else {
+                while i < n {
+                    if bytes[i] == b'\\' {
+                        i += 2;
+                    } else if bytes[i] == b {
+                        i += 1;
+                        break;
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            continue;
+        }
+
+        // Start of an identifier token.
+        if b == b'_' || b.is_ascii_alphabetic() {
+            let start = i;
+            i += 1;
+            while i < n && (bytes[i] == b'_' || bytes[i].is_ascii_alphanumeric()) {
+                i += 1;
+            }
+            let token = &expr[start..i];
+            if !is_python_keyword(token) {
+                out.push(token.to_string());
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    // De-duplicate while preserving first-seen order.
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|t| seen.insert(t.clone()));
+    out
+}
+
+fn is_python_keyword(token: &str) -> bool {
+    matches!(
+        token,
+        "True" | "False" | "None" | "and" | "or" | "not" | "if" | "else" | "elif" | "for"
+            | "while" | "in" | "is" | "lambda" | "def" | "return" | "import" | "from" | "as"
+            | "with" | "try" | "except" | "finally" | "raise" | "class" | "global" | "nonlocal"
+            | "pass" | "break" | "continue" | "yield" | "del" | "assert" | "async" | "await"
+    )
+}
+
+/// Find the id of a Source node in `function_id` whose name is `name`.
+fn source_id_for_name(g: &Graph, function_id: &str, name: &str) -> Option<String> {
+    g.source_to_function
+        .iter()
+        .filter(|(_, fid)| *fid == function_id)
+        .filter_map(|(source_id, _)| match g.nodes.get(source_id) {
+            Some(Node::Source { name: source_name, .. }) if source_name == name => {
+                Some(source_id.clone())
+            }
+            _ => None,
+        })
+        .next()
 }
 
 /// Resolve a callee name to a function_id using the lookup table.
@@ -535,25 +635,86 @@ mod tests {
 
     #[test]
     fn val_to_var_edge_for_simple_assignment() {
+        let func_id = "python:s.py:main";
         let facts = vec![
-            make_function("python:s.py:main", "main", "main", "s.py", vec!["cmd"]),
-            Fact::Assign(crate::model::AssignFact {
-                base: FactBase {
-                    id: "assign:s.py:4:command".into(),
-                    file: "s.py".into(),
-                    line: 4,
-                    extractor: "test".into(),
-                },
-                function_id: "python:s.py:main".into(),
-                target: "command".into(),
-                value: "cmd".into(),
-                snippet: "command = cmd".into(),
-            }),
+            make_function(func_id, "main", "main", "s.py", vec![]),
+            make_assign("assign:s.py:3:cmd", func_id, "cmd", "\"x\"", 3),
+            make_assign("assign:s.py:4:command", func_id, "command", "cmd", 4),
         ];
         let g = build_graph(&facts);
-        let to_id = make_var_id("python:s.py:main", "command");
-        let from_id = make_var_id("python:s.py:main", "cmd");
+        let to_id = make_var_id(func_id, "command");
+        let from_id = make_var_id(func_id, "cmd");
         let edges = g.incoming_edges(&to_id);
         assert!(edges.iter().any(|e| matches!(e, Edge::ValToVar { from_var_id, .. } if from_var_id == &from_id)));
+    }
+
+    fn make_assign(id: &str, func_id: &str, target: &str, value: &str, line: u32) -> Fact {
+        Fact::Assign(crate::model::AssignFact {
+            base: FactBase {
+                id: id.into(),
+                file: "s.py".into(),
+                line,
+                extractor: "test".into(),
+            },
+            function_id: func_id.into(),
+            target: target.into(),
+            value: value.into(),
+            snippet: format!("{target} = {value}"),
+        })
+    }
+
+    #[test]
+    fn extracts_identifiers_from_compound_assignment() {
+        let func_id = "python:s.py:f".to_string();
+        let facts = vec![
+            make_function("python:s.py:f", "f", "f", "s.py", vec![]),
+            make_assign("assign:s.py:1:a", &func_id, "a", "\"x\"", 1),
+            make_assign("assign:s.py:2:b", &func_id, "b", "\"y\"", 2),
+            make_assign("assign:s.py:3:c", &func_id, "c", "(a Div b)", 3),
+        ];
+        let g = build_graph(&facts);
+
+        let mut froms: Vec<String> = g
+            .incoming_edges(&make_var_id(&func_id, "c"))
+            .iter()
+            .filter_map(|e| match e {
+                Edge::ValToVar { from_var_id, .. } => Some(from_var_id.clone()),
+                _ => None,
+            })
+            .collect();
+        froms.sort();
+
+        let mut expected = vec![make_var_id(&func_id, "a"), make_var_id(&func_id, "b")];
+        expected.sort();
+        assert_eq!(froms, expected);
+    }
+
+    #[test]
+    fn links_source_to_var_on_simple_assignment() {
+        let func_id = "python:s.py:handler".to_string();
+        let source_id = "source:s.py:handler:cmd".to_string();
+        let facts = vec![
+            make_function("python:s.py:handler", "handler", "handler", "s.py", vec!["cmd"]),
+            Fact::Source(crate::model::SourceFact {
+                base: FactBase {
+                    id: source_id.clone(),
+                    file: "s.py".into(),
+                    line: 1,
+                    extractor: "test".into(),
+                },
+                kind: "mcp_tool_parameter".into(),
+                function_id: func_id.clone(),
+                name: "cmd".into(),
+                confidence: Confidence::High,
+            }),
+            make_assign("assign:s.py:2:command", &func_id, "command", "cmd", 2),
+        ];
+        let g = build_graph(&facts);
+
+        let command_id = make_var_id(&func_id, "command");
+        let linked = g.incoming_edges(&command_id).iter().any(|e| {
+            matches!(e, Edge::SourceToVar { source_id: sid, .. } if sid.as_str() == source_id.as_str())
+        });
+        assert!(linked, "expected SourceToVar from source `cmd` to variable `command`");
     }
 }

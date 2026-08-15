@@ -397,4 +397,38 @@ mod tests {
         assert!(results.is_empty());
         assert!(facts.is_empty());
     }
+
+    #[test]
+    fn read_log_path_traversal_produces_file_read_taint() {
+        use crate::static_analysis::facts::extract_python_facts;
+        use std::path::Path;
+
+        let source = r#"
+from pathlib import Path
+
+@mcp.tool()
+def read_log(filename: str):
+    safe_path = filename.strip()
+    log_dir = Path("/var/log")
+    full_path = log_dir / safe_path
+    content = open(full_path, "r").read()
+    return content
+"#;
+
+        let extracted =
+            extract_python_facts(Path::new("/repo"), Path::new("/repo/server.py"), source);
+        assert!(extracted.diagnostics.is_empty());
+
+        let config = default_config();
+        let (results, _) = run_taint_analysis(&extracted.facts, &config).expect("taint analysis");
+
+        let sink_ids = results
+            .iter()
+            .map(|r| r.sink_id.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            sink_ids.iter().any(|id| id.contains("file_read")),
+            "expected a file_read taint result for read_log; got {sink_ids:?}"
+        );
+    }
 }

@@ -861,6 +861,56 @@ def run_command(command: str, url: str, path: str):
     }
 
     #[test]
+    fn extracts_extended_sink_categories() {
+        let result = extract(
+            r#"
+import os
+import pickle
+import sqlite3
+import yaml
+from lxml import etree
+from flask import render_template_string
+
+@mcp.tool()
+def risky(path: str, data: str, sql: str, tpl: str):
+    open(path, "r").read()
+    open(path, "w").write(data)
+    pickle.loads(data)
+    yaml.load(data)
+    sqlite3.connect(":memory:").execute(sql)
+    render_template_string(tpl)
+    etree.parse(path)
+    os.remove(path)
+    os.environ.get("SECRET")
+"#,
+        );
+
+        assert!(result.diagnostics.is_empty());
+        let sinks = sink_facts(&result);
+        let categories = sinks
+            .iter()
+            .map(|item| item.category.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(categories.contains(&"file_read"));
+        assert!(categories.contains(&"file_write"));
+        assert!(categories.contains(&"deserialization"));
+        assert!(categories.contains(&"database_injection"));
+        assert!(categories.contains(&"template_injection"));
+        assert!(categories.contains(&"xml_parsing"));
+        assert!(categories.contains(&"file_delete"));
+        assert!(categories.contains(&"env_access"));
+
+        // `open` is mode-sensitive: read mode → file_read, write mode → file_write.
+        assert!(sinks
+            .iter()
+            .any(|item| item.sink_name == "open" && item.category == "file_read"));
+        assert!(sinks
+            .iter()
+            .any(|item| item.sink_name == "open" && item.category == "file_write"));
+    }
+
+    #[test]
     fn prints_phase7_task8_intermediate_facts() {
         let result = extract(
             r#"

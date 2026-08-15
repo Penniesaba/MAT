@@ -117,6 +117,12 @@ pub enum Edge {
         call_id: String,
         arg_index: u32,
     },
+    /// A source parameter flowing directly into a variable via assignment
+    /// (e.g. `y = x` where `x` is an MCP tool parameter).
+    SourceToVar {
+        source_id: String,
+        var_id: String,
+    },
     /// Reverse of CallInFunction: function → call (for forward traversal).
     FunctionCall {
         function_id: String,
@@ -137,6 +143,7 @@ impl Edge {
             Edge::CallToSink { .. } => "call_to_sink",
             Edge::ReturnToVar { .. } => "return_to_var",
             Edge::SourceToArg { .. } => "source_to_arg",
+            Edge::SourceToVar { .. } => "source_to_var",
             Edge::FunctionCall { .. } => "function_call",
         }
     }
@@ -152,6 +159,7 @@ impl Edge {
             Edge::CallToSink { call_id, .. } => call_id,
             Edge::ReturnToVar { call_id, .. } => call_id,
             Edge::SourceToArg { source_id, .. } => source_id,
+            Edge::SourceToVar { source_id, .. } => source_id,
             Edge::FunctionCall { function_id, .. } => function_id,
         }
     }
@@ -167,6 +175,7 @@ impl Edge {
             Edge::CallToSink { sink_id, .. } => sink_id,
             Edge::ReturnToVar { var_id, .. } => var_id,
             Edge::SourceToArg { call_id, .. } => call_id,
+            Edge::SourceToVar { var_id, .. } => var_id,
             Edge::FunctionCall { call_id, .. } => call_id,
         }
     }

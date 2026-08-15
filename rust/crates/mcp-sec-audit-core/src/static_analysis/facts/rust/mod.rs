@@ -1046,7 +1046,7 @@ fn risky_ops() {
 
         assert!(categories.contains(&"command_execution"));
         assert!(categories.contains(&"network_request"));
-        assert!(categories.contains(&"credential_leak"));
+        assert!(categories.contains(&"env_access"));
         assert!(categories.contains(&"deserialization"));
         assert!(categories.contains(&"unsafe_block"));
     }

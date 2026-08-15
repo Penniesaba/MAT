@@ -330,6 +330,27 @@ fn edge_to_path_step(edge: &Edge, graph: &Graph, _direction: Direction) -> Optio
                 arg_index: None,
             })
         }
+        Edge::SourceToVar { source_id, var_id } => {
+            let source_name = graph.get_node(source_id)
+                .and_then(|n| if let Node::Source { name, .. } = n { Some(name.clone()) } else { None });
+            let to_name = graph.get_node(var_id)
+                .and_then(|n| if let Node::Variable { name, .. } = n { Some(name.clone()) } else { None });
+            let func = graph.get_node(var_id)
+                .and_then(|n| if let Node::Variable { function_id, .. } = n { Some(function_id.clone()) } else { None });
+            let snippet = source_name.as_ref().zip(to_name.as_ref())
+                .map(|(s, t)| format!("{t} = {s}"));
+            Some(PathStep {
+                kind: PathStepKind::Assign,
+                line: 0,
+                name: to_name,
+                function: func,
+                from_: Some(source_id.clone()),
+                to: Some(var_id.clone()),
+                snippet,
+                call_id: None,
+                arg_index: None,
+            })
+        }
         Edge::ReturnToVar { call_id, var_id } => {
             let var_name = graph.get_node(var_id)
                 .and_then(|n| if let Node::Variable { name, .. } = n { Some(name.clone()) } else { None });
