@@ -9,6 +9,8 @@ pub struct QueryPack {
     pub query_files: Vec<PathBuf>,
     /// Additional CodeQL query pack references (e.g. "codeql/python-queries").
     pub suite_refs: Vec<String>,
+    /// Whether this is the built-in pack (whose queries are Python-only).
+    pub is_builtin: bool,
 }
 
 impl QueryPack {
@@ -29,6 +31,7 @@ impl QueryPack {
                 "codeql/python-queries".to_string(),
                 "codeql/javascript-queries".to_string(),
             ],
+            is_builtin: true,
         })
     }
 
@@ -48,7 +51,27 @@ impl QueryPack {
         Ok(Self {
             query_files,
             suite_refs: Vec::new(),
+            is_builtin: false,
         })
+    }
+
+    /// Suites applicable to a given CodeQL language (a Python database must
+    /// not receive JavaScript security suites).
+    pub fn suite_refs_for(&self, language: &str) -> Vec<String> {
+        self.suite_refs
+            .iter()
+            .filter(|s| suite_matches_language(s, language))
+            .cloned()
+            .collect()
+    }
+}
+
+/// Whether a query suite reference applies to the given CodeQL language.
+fn suite_matches_language(suite: &str, language: &str) -> bool {
+    match language {
+        "python" => suite.contains("python"),
+        "javascript" | "typescript" => suite.contains("javascript"),
+        _ => false,
     }
 }
 

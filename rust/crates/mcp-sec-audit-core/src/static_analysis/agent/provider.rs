@@ -25,8 +25,12 @@ pub struct AgentRunConfig {
 #[derive(Debug)]
 pub struct AgentRunOutput {
     pub stdout: String,
+    /// Captured for diagnostics; not yet surfaced in reports.
+    #[allow(dead_code)]
     pub stderr: String,
+    #[allow(dead_code)]
     pub exit_code: i32,
+    #[allow(dead_code)]
     pub duration: Duration,
     /// True if the process was killed due to timeout.
     pub timed_out: bool,

@@ -14,7 +14,7 @@
 4. [测试目标 1：Python MCP 服务端](#4-测试目标-1python-mcp-服务端)
 5. [测试目标 2：JavaScript/TypeScript MCP 服务端](#5-测试目标-2javascripttypescript-mcp-服务端)
 6. [测试目标 3：Rust MCP 服务端](#6-测试目标-3rust-mcp-服务端)
-7. [配置文件](#7-配置文件)
+7. [配置文件与字段详解](#7-配置文件与字段详解)
 8. [运行步骤](#8-运行步骤)
 9. [预期结果与验证](#9-预期结果与验证)
 10. [中间结果验证](#10-中间结果验证)
@@ -226,35 +226,112 @@ TypeScript 变体实现 1 个 MCP 工具：
 
 ---
 
-## 7. 配置文件
+## 7. 配置文件与字段详解
 
-配置文件位于 `test-targets/configs/`，从 `rust/` 目录运行时使用 `--config ../test-targets/configs/<name>.toml`。
+静态扫描通过位置参数 `[CONFIG]` 触发；扫描目标、规则路径、输出格式与输出路径全部由配置文件决定。运行时进度信息走 **stderr**，报告按 `[report].formats` 列表**写文件**到 `[report].output` 指定的基础路径（自动追加扩展名 `.json`/`.jsonl`/`.md`）。
 
-### 7.1 关键配置项说明
+### 7.1 配置文件清单
 
-```toml
-[static.rule]
-enabled = true                    # Rule 线默认开启
-rule_paths = ["rules/languages"]  # 规则库路径（相对于 rust/ 工作目录）
+| 配置文件 | 目标 | `[report].output` | 输出产物 |
+|---|---|---|---|
+| `python-config.toml` | Python MCP 服务端 | `/tmp/python-report` | `/tmp/python-report.json` |
+| `js-config.toml` | JS/TS MCP 服务端 | `/tmp/js-report` | `/tmp/js-report.json`、`/tmp/js-report.md` |
+| `rust-config.toml` | Rust MCP 服务端 | `/tmp/rust-report` | `/tmp/rust-report.json`、`/tmp/rust-report.md` |
+| `all-languages-config.toml` | 三种目标一次性扫描 | `/tmp/all-report` | `/tmp/all-report.json`、`/tmp/all-report.md` |
 
-[static.taint]
-enabled = true                    # Taint 线必须手动开启（默认关闭）
-forward = true                    # 启用正向传播（source → sink）
-backward = true                   # 启用反向传播（sink → source）
-max_depth = 8                     # BFS 最大深度
-entrypoint_required = true        # 仅追踪 MCP 入口点的 source
+### 7.2 字段详解
 
-[fusion]
-enabled = true                    # 融合默认开启
-require_confirmed_by = 1          # 最少需要 1 条线确认
-boost_when_multiple_lines_agree = true  # 多线一致时 +0.1 置信度加成
-agent_only_as_advisory = true     # LLM 独报上限为 Medium
+以下默认值对应 `rust/config/default.toml`（与 Rust 代码 `Default` 实现一致）。类型 `string[]` 表示字符串数组。
 
-[report]
-formats = ["json", "markdown"]    # 输出格式
-include_fused_results = true      # 包含融合结果
-include_facts = true              # 包含 Fact 列表（调试用）
-```
+#### `[scan]` — 扫描范围
+
+| 字段 | 类型 | 默认 | 含义 |
+|---|---|---|---|
+| `targets` | string[] | `["."]` | 待扫描的目录/文件路径，相对于工作目录（从 `rust/` 运行） |
+| `exclude` | string[] | `["node_modules","target",".venv","dist"]` | 跳过这些名字的目录 |
+| `languages` | string[] | `["python","javascript","typescript","rust"]` | 参与分析的语言 |
+
+#### `[static]` — 静态分析总开关
+
+| 字段 | 类型 | 默认 | 含义 |
+|---|---|---|---|
+| `enabled` | bool | `true` | 静态分析总开关；`false` 时返回空结果 |
+| `save_facts` | bool | `true` | 是否在结果中保留提取出的 facts |
+
+#### `[static.rule]` — Rule 分析线（模式匹配）
+
+| 字段 | 类型 | 默认 | 含义 |
+|---|---|---|---|
+| `enabled` | bool | `true` | 是否启用规则线 |
+| `rule_paths` | string[] | `["rules/mcp","rules/languages"]` | TOML 规则库目录（相对于 `rust/`） |
+
+#### `[static.taint]` — Taint 分析线（数据流追踪）
+
+| 字段 | 类型 | 默认 | 含义 |
+|---|---|---|---|
+| `enabled` | bool | `false` | 污点线**默认关闭**，需手动开启 |
+| `forward` | bool | `true` | 正向传播（source → sink） |
+| `backward` | bool | `true` | 反向传播（sink → source） |
+| `max_depth` | u32 | `8` | BFS 传播最大深度 |
+| `entrypoint_required` | bool | `true` | 仅追踪 MCP 入口点产生的 source（`false` 会放宽到任意 source） |
+
+#### `[static.agent]` — Agent 分析线（调用外部 LLM）
+
+| 字段                     | 类型       | 默认         | 含义                          |
+| ---------------------- | -------- | ---------- | --------------------------- |
+| `enabled`              | bool     | `false`    | 是否启用 Agent 线（会调用外部 LLM CLI） |
+| `provider`             | string   | `"claude"` | LLM CLI 工具名                 |
+| `prompt_template_path` | string?  | 无          | 自定义 prompt 模板路径（缺省用内置模板）    |
+| `max_turns`            | u32      | `30`       | Agent 最大探索轮次                |
+| `timeout_seconds`      | u64      | `600`      | 单次调用超时（秒）                   |
+| `extra_args`           | string[] | `[]`       | 追加传给 provider 的参数           |
+
+#### `[static.codeql]` — CodeQL 分析线（语义查询）
+
+| 字段 | 类型 | 默认 | 含义 |
+|---|---|---|---|
+| `enabled` | bool | `false` | 是否启用 CodeQL 线（会调用 codeql CLI 建库+查询） |
+| `binary` | string | `"codeql"` | CodeQL CLI 可执行文件路径（缺省用 PATH 上的 `codeql`） |
+| `query_pack_path` | string? | 无 | 自定义查询包路径（缺省用内置查询包） |
+| `timeout_seconds` | u64 | `1200` | 超时（秒），建库+查询耗时较长 |
+| `extra_args` | string[] | `[]` | 追加传给 codeql 的参数 |
+
+#### `[dynamic]` — 动态分析（本阶段暂未实现）
+
+| 字段 | 类型 | 默认 | 含义 |
+|---|---|---|---|
+| `enabled` | bool | `false` | 动态分析开关 |
+| `sandbox` | string | `"existing_python_runtime"` | 沙箱类型 |
+| `timeout_seconds` | u64 | `120` | 超时（秒） |
+
+#### `[fusion]` — 结果融合
+
+| 字段 | 类型 | 默认 | 含义 |
+|---|---|---|---|
+| `enabled` | bool | `true` | 融合开关；`false` 时无融合 findings |
+| `require_confirmed_by` | u32 | `1` | 一组最少需要 N 条线确认，少于 N 会被过滤 |
+| `boost_when_multiple_lines_agree` | bool | `true` | ≥2 条线一致时置信度 +0.1 |
+| `agent_only_as_advisory` | bool | `true` | 仅 agent 独报时置信度上限为 Medium |
+| `line_proximity` | u32 | `5` | stage-1 匹配的文件+行号近邻阈值 |
+| `rule_weight` | u32 | `3` | Rule 线在加权评分中的权重 |
+| `taint_weight` | u32 | `2` | Taint 线权重 |
+| `agent_weight` | u32 | `1` | Agent 线权重 |
+| `codeql_weight` | u32 | `4` | CodeQL 线权重 |
+
+#### `[report]` — 报告输出
+
+| 字段 | 类型 | 默认 | 含义 |
+|---|---|---|---|
+| `output` | string | `"report"` | 输出基础路径（不含扩展名），按 `formats` 写 `<output>.<ext>`；支持 `<timestamp>` 占位符替换为 UTC `YYYYMMDD-HHMMSS` |
+| `formats` | string[] | `["json","markdown"]` | 输出格式，取值 `json`/`jsonl`/`markdown` |
+| `include_fused_results` | bool | `true` | 是否包含融合 findings |
+| `include_raw_rule_results` | bool | `true` | 是否包含 Rule 线原始结果 |
+| `include_raw_taint_results` | bool | `true` | 是否包含 Taint 线原始结果 |
+| `include_raw_agent_results` | bool | `true` | 是否包含 Agent 线原始结果 |
+| `include_raw_codeql_results` | bool | `true` | 是否包含 CodeQL 线原始结果 |
+| `include_facts` | bool | `false` | 是否包含 facts 列表（调试用） |
+
+> **注意**：`[report]` 里 `include_raw_*` / `include_facts` 若在手工写的配置中**省略**，TOML 反序列化会按 `false` 处理（`include_fused_results` 例外，省略时按 `true`）。建议在配置中显式写出，避免歧义。
 
 ---
 
@@ -267,17 +344,17 @@ include_facts = true              # 包含 Fact 列表（调试用）
 ```bash
 cd /home/xiao/Project/mcp-sec-audit/rust
 
-# 测试 Python 目标
-cargo run --release -- scan static --config ../test-targets/configs/python-config.toml --format json
+# 测试 Python 目标（进度走 stderr，报告写入 /tmp/python-report.json）
+cargo run --release ../test-targets/configs/python-config.toml
 
-# 测试 JS/TS 目标
-cargo run --release -- scan static --config ../test-targets/configs/js-config.toml --format json
+# 测试 JS/TS 目标（报告写入 /tmp/js-report.json、/tmp/js-report.md）
+cargo run --release ../test-targets/configs/js-config.toml
 
-# 测试 Rust 目标
-cargo run --release -- scan static --config ../test-targets/configs/rust-config.toml --format json
+# 测试 Rust 目标（报告写入 /tmp/rust-report.json、/tmp/rust-report.md）
+cargo run --release ../test-targets/configs/rust-config.toml
 
-# 测试全部目标（一次性）
-cargo run --release -- scan static --config ../test-targets/configs/all-languages-config.toml --format json
+# 测试全部目标（一次性，报告写入 /tmp/all-report.json、/tmp/all-report.md）
+cargo run --release ../test-targets/configs/all-languages-config.toml
 ```
 
 ### 8.2 完整测试（启用 Agent 和 CodeQL）
@@ -298,10 +375,8 @@ cargo test --release
 ### 8.4 查看中间结果
 
 ```bash
-# 将 JSON 输出保存到文件以便分析
-cargo run --release -- scan static \
-  --config ../test-targets/configs/python-config.toml \
-  --format json 2>/dev/null > /tmp/python-report.json
+# 报告已直接写入 /tmp/python-report.json（由 [report].output + formats 决定）
+cargo run --release ../test-targets/configs/python-config.toml
 
 # 查看摘要
 python3 -c "
@@ -431,7 +506,7 @@ for f in d['fused_findings']:
 | Python：`codeql_result_count` > 0 | CodeQL 找到至少一个漏洞 |
 | JS/TS：`codeql_result_count` > 0 | CodeQL 找到至少一个漏洞 |
 | Rust：`codeql_result_count` = 0 | CodeQL 不支持 Rust |
-| 结果中 `codeql` 出现在 `supported_by` 中 | ✓（CodeQL 通过融合直通） |
+| 结果中 `codeql` 出现在 `supported_by` 中 | ✓（CodeQL 作为对等线路参与四线融合） |
 
 ---
 
@@ -629,3 +704,5 @@ print(f'  taint_result_count: {s[\"taint_result_count\"]}')
 | Panic: `CodeQL CLI not found` | CodeQL 未安装或不在 PATH 中 | 设置 `codeql.enabled = false` 或安装 CodeQL |
 | Rust CodeQL 结果非空 | 不可能 — CodeQL 不支持 Rust | 这是预期行为 |
 | `scan target does not exist` | 配置中的路径是相对于工作目录的 | 确保从 `rust/` 目录运行，且配置中使用 `../test-targets/` 前缀 |
+| 报错 `unexpected argument '--format'` | CLI 已精简为单一 `[CONFIG]` 位置参数 | 改用 `[report].formats` / `[report].output` 控制输出 |
+| 运行后没有看到报告文件 | 未配置 `[report].output` 或 `formats` 为空 | 设置 `[report].output` 基础路径，并确认 `formats` 非空 |

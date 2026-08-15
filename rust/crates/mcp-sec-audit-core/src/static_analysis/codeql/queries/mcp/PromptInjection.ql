@@ -18,7 +18,7 @@ class McpPromptSource extends DataFlow::Node {
     exists(Function f |
       f.getADecorator().(Call).getFunc().(Attribute).getObject().(Name).getId() = "mcp" and
       f.getADecorator().(Call).getFunc().(Attribute).getName() = "prompt" and
-      this = f.getArg(0)
+      this = DataFlow::parameterNode(f.getArg(0))
     )
   }
 }
@@ -44,8 +44,10 @@ module PromptInjectionConfig implements DataFlow::ConfigSig {
 
 module PromptInjectionFlow = TaintTracking::Global<PromptInjectionConfig>;
 
+import PromptInjectionFlow::PathGraph
+
 from PromptInjectionFlow::PathNode source, PromptInjectionFlow::PathNode sink
 where PromptInjectionFlow::flowPath(source, sink)
 select sink.getNode(), source, sink,
-  "MCP prompt parameter flows to LLM API $@, enabling prompt injection.",
-  sink.getNode(), sink.getNode().toString()
+  "MCP prompt parameter flows from $@ to an LLM API call, enabling prompt injection.",
+  source.getNode(), "user input"

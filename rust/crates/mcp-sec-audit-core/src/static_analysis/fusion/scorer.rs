@@ -15,6 +15,8 @@ pub(crate) struct ScoredGroup {
     pub group: MatchGroup,
     pub severity: Severity,
     pub confidence: Confidence,
+    /// Un-quantized numeric score; read by tests for exact-value assertions.
+    #[allow(dead_code)]
     pub raw_score: f64,
 }
 

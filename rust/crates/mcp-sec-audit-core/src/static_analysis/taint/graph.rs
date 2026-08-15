@@ -46,6 +46,8 @@ pub enum Node {
 }
 
 impl Node {
+    /// Returns the node's unique id; used by tests and future graph consumers.
+    #[allow(dead_code)]
     pub fn id(&self) -> &str {
         match self {
             Node::Function { id, .. } => id,
@@ -56,6 +58,7 @@ impl Node {
         }
     }
 
+    #[allow(dead_code)]
     pub fn node_type_name(&self) -> &'static str {
         match self {
             Node::Function { .. } => "function",
@@ -122,6 +125,7 @@ pub enum Edge {
 }
 
 impl Edge {
+    #[allow(dead_code)]
     pub fn edge_type_name(&self) -> &'static str {
         match self {
             Edge::SourceInFunction { .. } => "source_in_function",
@@ -175,10 +179,15 @@ impl Edge {
 #[derive(Debug, Clone)]
 pub struct FunctionMeta {
     pub name: String,
+    /// Reserved context fields; not yet consumed by propagation.
+    #[allow(dead_code)]
     pub qualified_name: String,
+    #[allow(dead_code)]
     pub file: String,
+    #[allow(dead_code)]
     pub language: String,
     pub params: Vec<String>,
+    #[allow(dead_code)]
     pub line: u32,
 }
 

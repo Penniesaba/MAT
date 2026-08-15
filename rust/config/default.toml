@@ -10,7 +10,6 @@ save_facts = true
 [static.rule]
 enabled = true
 rule_paths = ["rules/mcp", "rules/languages"]
-mode = "strict"
 
 [static.taint]
 enabled = false
@@ -20,7 +19,7 @@ max_depth = 8
 entrypoint_required = true
 
 [static.agent]
-enabled = false
+enabled = true
 provider = "claude"
 # prompt_template_path = "/path/to/custom-prompt.md"  # optional
 max_turns = 30
@@ -28,7 +27,8 @@ timeout_seconds = 600
 extra_args = []
 
 [static.codeql]
-enabled = false
+enabled = true
+# binary = "/path/to/codeql"  # optional; defaults to "codeql" on PATH
 # query_pack_path = "/path/to/custom/queries"  # optional
 timeout_seconds = 1200
 extra_args = []
@@ -50,6 +50,7 @@ agent_weight = 1
 codeql_weight = 4
 
 [report]
+output = "report"
 formats = ["json", "markdown"]
 include_fused_results = true
 include_raw_rule_results = true

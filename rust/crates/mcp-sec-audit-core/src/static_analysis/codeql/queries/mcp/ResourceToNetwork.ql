@@ -18,7 +18,7 @@ class McpResourceSource extends DataFlow::Node {
     exists(Function f |
       f.getADecorator().(Call).getFunc().(Attribute).getObject().(Name).getId() = "mcp" and
       f.getADecorator().(Call).getFunc().(Attribute).getName() = "resource" and
-      this = f.getArg(0)
+      this = DataFlow::parameterNode(f.getArg(0))
     )
   }
 }
@@ -48,8 +48,10 @@ module ResourceToNetworkConfig implements DataFlow::ConfigSig {
 
 module ResourceToNetworkFlow = TaintTracking::Global<ResourceToNetworkConfig>;
 
+import ResourceToNetworkFlow::PathGraph
+
 from ResourceToNetworkFlow::PathNode source, ResourceToNetworkFlow::PathNode sink
 where ResourceToNetworkFlow::flowPath(source, sink)
 select sink.getNode(), source, sink,
-  "MCP resource data flows to outbound network $@ without sanitization.",
-  sink.getNode(), sink.getNode().toString()
+  "MCP resource data flows from $@ to an outbound network call without sanitization.",
+  source.getNode(), "user input"

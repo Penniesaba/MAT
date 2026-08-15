@@ -16,4 +16,4 @@ pub use facts::{
     RustExtractionResult, extract_js_ts_facts, extract_python_facts, extract_rust_facts,
     extract_static_facts,
 };
-pub use pipeline::{StaticScanContext, run_static_scan};
+pub use pipeline::{StaticScanContext, run_static_scan, run_static_scan_with_progress};

@@ -12,6 +12,27 @@ pub enum ReportFormat {
     Markdown,
 }
 
+impl ReportFormat {
+    /// Parse a report format name as used in `[report].formats`.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "json" => Some(Self::Json),
+            "jsonl" => Some(Self::Jsonl),
+            "markdown" => Some(Self::Markdown),
+            _ => None,
+        }
+    }
+
+    /// File extension (without leading dot) for this format.
+    pub fn extension(&self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::Jsonl => "jsonl",
+            Self::Markdown => "md",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarkdownRenderOptions {
     pub include_fused_results: bool,
@@ -204,6 +225,12 @@ pub fn render_markdown(result: &StaticAnalysisResult, options: &MarkdownRenderOp
                     finding.supported_by.join(", ")
                 ));
             }
+            if !finding.dataflow_path.is_empty() {
+                lines.push(format!(
+                    "  - Dataflow path: {}",
+                    finding.dataflow_path.join(" → ")
+                ));
+            }
             if let Some(recommendation) = &finding.recommendation {
                 lines.push(format!("  - Recommendation: {recommendation}"));
             }
@@ -215,8 +242,8 @@ pub fn render_markdown(result: &StaticAnalysisResult, options: &MarkdownRenderOp
         lines.push("## Raw Rule Results".to_string());
         for item in &result.rule_results {
             lines.push(format!(
-                "- `{}` at {}:{} — {}",
-                item.rule_id, item.file, item.line, item.category
+                "- `{}` at {}:{}",
+                item.rule_id, item.file, item.line
             ));
         }
     }
@@ -254,10 +281,64 @@ pub fn render_markdown(result: &StaticAnalysisResult, options: &MarkdownRenderOp
                 item.locations.first().map(|l| l.line).unwrap_or(0),
                 item.message
             ));
+            if let Some(path) = &item.dataflow_path {
+                let rendered = path
+                    .steps
+                    .iter()
+                    .map(|s| format!("{}:{}", s.location.file, s.location.line))
+                    .collect::<Vec<_>>()
+                    .join(" → ");
+                if !rendered.is_empty() {
+                    lines.push(format!("  - Dataflow path: {rendered}"));
+                }
+            }
         }
     }
 
     lines.join("\n")
+}
+
+/// Resolve a `[report].output` path template by replacing the `<timestamp>`
+/// placeholder with the current UTC timestamp (`%Y%m%d-%H%M%S`, e.g.
+/// `20260815-171234`). Paths without the placeholder are returned unchanged.
+///
+/// The timestamp is generated once per call, so a single resolved value shared
+/// across all report formats keeps `.md`/`.json`/`.jsonl` on the same second.
+pub fn resolve_output_path(output: &str) -> String {
+    if !output.contains("<timestamp>") {
+        return output.to_string();
+    }
+    output.replace("<timestamp>", &current_utc_timestamp())
+}
+
+/// Current UTC time formatted as `YYYYMMDD-HHMMSS`.
+fn current_utc_timestamp() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let days = secs.div_euclid(86_400);
+    let secs_of_day = secs.rem_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    let hour = secs_of_day / 3600;
+    let minute = (secs_of_day % 3600) / 60;
+    let second = secs_of_day % 60;
+    format!("{year:04}{month:02}{day:02}-{hour:02}{minute:02}{second:02}")
+}
+
+/// Convert days since the Unix epoch to a `(year, month, day)` tuple in the
+/// proleptic Gregorian calendar (Howard Hinnant's `civil_from_days`).
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146_096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    (if m <= 2 { y + 1 } else { y }, m as u32, d as u32)
 }
 
 fn fact_type_name(fact: &crate::Fact) -> &'static str {
@@ -372,5 +453,59 @@ mod tests {
         assert!(markdown.contains("## Raw Taint Results"));
         assert!(markdown.contains("## Raw Agent Results"));
         assert!(markdown.contains("## Raw CodeQL Results"));
+    }
+
+    #[test]
+    fn report_format_maps_name_and_extension() {
+        use super::ReportFormat;
+
+        assert_eq!(ReportFormat::parse("json"), Some(ReportFormat::Json));
+        assert_eq!(ReportFormat::parse("jsonl"), Some(ReportFormat::Jsonl));
+        assert_eq!(
+            ReportFormat::parse("markdown"),
+            Some(ReportFormat::Markdown)
+        );
+        assert_eq!(ReportFormat::parse("yaml"), None);
+
+        assert_eq!(ReportFormat::Json.extension(), "json");
+        assert_eq!(ReportFormat::Jsonl.extension(), "jsonl");
+        assert_eq!(ReportFormat::Markdown.extension(), "md");
+    }
+
+    #[test]
+    fn resolve_output_path_replaces_timestamp_placeholder() {
+        let resolved = resolve_output_path("/tmp/report-<timestamp>");
+        assert!(!resolved.contains("<timestamp>"));
+        assert!(resolved.starts_with("/tmp/report-"));
+        // Format is `YYYYMMDD-HHMMSS`.
+        let stamp = resolved.trim_start_matches("/tmp/report-");
+        assert_eq!(stamp.len(), 15);
+        assert_eq!(stamp.as_bytes()[8], b'-');
+    }
+
+    #[test]
+    fn resolve_output_path_ignores_missing_placeholder() {
+        assert_eq!(resolve_output_path("/tmp/report"), "/tmp/report");
+        assert_eq!(resolve_output_path("report"), "report");
+    }
+
+    #[test]
+    fn civil_from_days_known_dates() {
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(1), (1970, 1, 2));
+        // 2000-01-01 is 10957 days after the Unix epoch.
+        assert_eq!(civil_from_days(10_957), (2000, 1, 1));
+    }
+
+    #[test]
+    fn markdown_renders_dataflow_path() {
+        let result = crate::fixtures::synthetic_static_analysis_result();
+        let markdown = render_markdown(&result, &MarkdownRenderOptions::default());
+
+        // Fused finding renders its (taint-style) dataflow path.
+        assert!(markdown.contains("  - Dataflow path: command → subprocess.run"));
+
+        // Raw CodeQL result renders its structured `file:line` path steps.
+        assert!(markdown.contains("  - Dataflow path: server.py:40 → server.py:42"));
     }
 }

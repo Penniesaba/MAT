@@ -8,19 +8,17 @@ use anyhow::{Result, bail};
 
 use super::queries::QueryPack;
 
-/// CLI binary name for CodeQL.
-const CODEQL_BIN: &str = "codeql";
-
 /// Info about a successfully created CodeQL database.
 #[derive(Debug, Clone)]
 pub struct DatabaseInfo {
     pub path: PathBuf,
+    /// Language the database was created for.
     pub language: String,
 }
 
 /// Pluggable CodeQL backend.
 pub trait CodeqlProvider {
-    /// Check whether the CodeQL CLI is available on PATH.
+    /// Check whether the CodeQL CLI is available.
     fn check_available(&self) -> bool;
 
     /// Create a CodeQL database from source files.
@@ -37,11 +35,21 @@ pub trait CodeqlProvider {
 }
 
 /// Default provider: shells out to the `codeql` CLI.
-pub struct CliCodeqlProvider;
+pub struct CliCodeqlProvider {
+    binary: String,
+}
+
+impl CliCodeqlProvider {
+    pub fn new(binary: impl Into<String>) -> Self {
+        Self {
+            binary: binary.into(),
+        }
+    }
+}
 
 impl CodeqlProvider for CliCodeqlProvider {
     fn check_available(&self) -> bool {
-        Command::new(CODEQL_BIN)
+        Command::new(&self.binary)
             .arg("--version")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -58,7 +66,7 @@ impl CodeqlProvider for CliCodeqlProvider {
 
         std::fs::create_dir_all(&db_dir)?;
 
-        let output = Command::new(CODEQL_BIN)
+        let output = Command::new(&self.binary)
             .arg("database")
             .arg("create")
             .arg(&db_dir)
@@ -73,8 +81,10 @@ impl CodeqlProvider for CliCodeqlProvider {
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
                     anyhow::anyhow!(
-                        "codeql CLI not found in PATH. Install CodeQL: \
-                         https://github.com/github/codeql-cli-binaries/releases"
+                        "codeql CLI not found at '{}'. Set [static.codeql].binary or add it to \
+                         PATH. Install CodeQL: \
+                         https://github.com/github/codeql-cli-binaries/releases",
+                        self.binary
                     )
                 } else {
                     anyhow::anyhow!("failed to spawn codeql: {}", e)
@@ -103,20 +113,32 @@ impl CodeqlProvider for CliCodeqlProvider {
         timeout_seconds: u64,
         extra_args: &[String],
     ) -> Result<String> {
-        let mut cmd = Command::new(CODEQL_BIN);
+        // `--output=-` (SARIF to stdout) is unreliable across CodeQL versions,
+        // so write to a temp file and read it back instead.
+        let output_path = std::env::temp_dir().join(format!(
+            "mcp-sec-audit-sarif-{}-{}.sarif",
+            std::process::id(),
+            db.language
+        ));
+
+        let mut cmd = Command::new(&self.binary);
         cmd.arg("database")
             .arg("analyze")
             .arg(&db.path)
             .arg("--format=sarif-latest")
-            .arg("--output=-");
+            .arg("--output")
+            .arg(&output_path);
 
-        // Add query files
-        for qf in &queries.query_files {
-            cmd.arg(qf);
+        // Add query files. Built-in MCP queries are Python-only, so skip them
+        // for non-Python databases to avoid `import python` failures.
+        if !queries.is_builtin || db.language == "python" {
+            for qf in &queries.query_files {
+                cmd.arg(qf);
+            }
         }
 
-        // Add suite references
-        for suite in &queries.suite_refs {
+        // Add suite references filtered to this database's language.
+        for suite in queries.suite_refs_for(&db.language) {
             cmd.arg(suite);
         }
 
@@ -152,7 +174,24 @@ impl CodeqlProvider for CliCodeqlProvider {
 
         let timeout = Duration::from_secs(timeout_seconds);
         match rx.recv_timeout(timeout) {
-            Ok((stdout, _stderr, _exit_code)) => Ok(stdout),
+            Ok((_stdout, stderr, exit_code)) => {
+                if exit_code != 0 {
+                    bail!(
+                        "codeql analyze failed (exit code {}): {}",
+                        exit_code,
+                        stderr.trim()
+                    );
+                }
+                let sarif = std::fs::read_to_string(&output_path).map_err(|e| {
+                    anyhow::anyhow!(
+                        "failed to read CodeQL SARIF output '{}': {}",
+                        output_path.display(),
+                        e
+                    )
+                })?;
+                let _ = std::fs::remove_file(&output_path);
+                Ok(sarif)
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 bail!("codeql analyze timed out after {}s", timeout_seconds)
             }
@@ -168,20 +207,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn missing_codeql_cli_panics_on_database_create() {
-        // This test assumes codeql is NOT installed.
-        // If codeql IS installed, this test is skipped via the early return.
-        if CliCodeqlProvider.check_available() {
-            return; // codeql is installed — skip the test
+    fn missing_codeql_cli_errors_on_database_create() {
+        // Use a binary that cannot exist so the test is deterministic
+        // regardless of whether CodeQL is installed on the host.
+        let provider = CliCodeqlProvider::new("__codeql_definitely_missing__");
+        if provider.check_available() {
+            return; // unexpected, but skip rather than fail
         }
-        let provider = CliCodeqlProvider;
         let tmp = std::env::temp_dir().join("mcp-sec-audit-codeql-test-missing");
         std::fs::create_dir_all(&tmp).expect("create tmp dir");
         let err = provider
             .create_database(&tmp, "python")
             .expect_err("codeql database create should fail when CLI not found");
         assert!(
-            err.to_string().contains("codeql CLI not found in PATH"),
+            err.to_string().contains("codeql CLI not found"),
             "unexpected error message: {}",
             err
         );

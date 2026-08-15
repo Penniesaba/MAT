@@ -18,7 +18,7 @@ class McpToolEntrypoint extends DataFlow::Node {
     exists(Function f |
       f.getADecorator().(Call).getFunc().(Attribute).getObject().(Name).getId() = "mcp" and
       f.getADecorator().(Call).getFunc().(Attribute).getName() = "tool" and
-      this = f.getArg(0)
+      this = DataFlow::parameterNode(f.getArg(0))
     )
   }
 }
@@ -49,8 +49,10 @@ module McpToolToSinkConfig implements DataFlow::ConfigSig {
 
 module McpToolToSinkFlow = TaintTracking::Global<McpToolToSinkConfig>;
 
+import McpToolToSinkFlow::PathGraph
+
 from McpToolToSinkFlow::PathNode source, McpToolToSinkFlow::PathNode sink
 where McpToolToSinkFlow::flowPath(source, sink)
 select sink.getNode(), source, sink,
-  "MCP tool parameter flows to $@ without sanitization.",
-  sink.getNode(), sink.getNode().toString()
+  "MCP tool parameter flows from $@ to a dangerous sink without sanitization.",
+  source.getNode(), "user input"

@@ -1,16 +1,20 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 
 use crate::model::{CodeqlAnalysisResult, DataFlowPath, DataFlowPathStep, Location, Severity};
 
 /// Metadata attached to every result from this CodeQL run.
+///
+/// Reserved for annotating results with their query source and languages; the
+/// SARIF parser does not yet attach these fields to `CodeqlAnalysisResult`.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CodeqlMetadata {
     pub query_source: String, // "built-in" or custom path
     pub languages: Vec<String>,
 }
 
 /// Parse SARIF v2.1.0 JSON output from CodeQL into structured results.
-pub fn parse_sarif(sarif_json: &str, metadata: &CodeqlMetadata) -> Result<Vec<CodeqlAnalysisResult>> {
+pub fn parse_sarif(sarif_json: &str, _metadata: &CodeqlMetadata) -> Result<Vec<CodeqlAnalysisResult>> {
     let root: serde_json::Value =
         serde_json::from_str(sarif_json).map_err(|e| anyhow::anyhow!("invalid SARIF JSON: {}", e))?;
 

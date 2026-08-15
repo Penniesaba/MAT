@@ -25,6 +25,15 @@ pub fn run_static_scan(
     rulebook_paths: &[PathBuf],
     target_overrides: Option<&[PathBuf]>,
 ) -> Result<StaticAnalysisResult> {
+    run_static_scan_with_progress(config, rulebook_paths, target_overrides, |_| {})
+}
+
+pub fn run_static_scan_with_progress(
+    config: &RuntimeConfig,
+    rulebook_paths: &[PathBuf],
+    target_overrides: Option<&[PathBuf]>,
+    mut progress: impl FnMut(&str),
+) -> Result<StaticAnalysisResult> {
     let mut effective_config = config.clone();
     if let Some(targets) = target_overrides {
         effective_config.scan.targets = targets
@@ -40,7 +49,10 @@ pub fn run_static_scan(
         .map(PathBuf::from)
         .collect::<Vec<_>>();
 
+    progress(&format!("Scanning {}", target_label(&targets)));
+
     if !effective_config.static_.enabled {
+        progress("Static analysis disabled; returning empty result");
         return Ok(empty_result(
             effective_config,
             rulebook_paths_to_strings(rulebook_paths),
@@ -49,6 +61,8 @@ pub fn run_static_scan(
     }
 
     let discovery = discover_files(&targets, &effective_config.scan)?;
+    progress(&format!("Discovered {} files", discovery.discovered_files.len()));
+
     let effective_rulebook_paths = if rulebook_paths.is_empty() {
         effective_config
             .static_
@@ -73,12 +87,43 @@ pub fn run_static_scan(
         discovered_files: discovery.discovered_files,
     };
 
+    progress(if effective_config.static_.rule.enabled {
+        "Running rule analysis..."
+    } else {
+        "Rule analysis: skipped (disabled)"
+    });
     let rule_results = rule::run(&ctx, loaded_rulebook.as_ref())?;
+    progress(&format!("Rule analysis done: {} findings", rule_results.len()));
+
+    progress(if effective_config.static_.taint.enabled {
+        "Running taint analysis..."
+    } else {
+        "Taint analysis: skipped (disabled)"
+    });
     let (taint_results, all_facts) = taint::run(&ctx)?;
+    progress(&format!("Taint analysis done: {} findings", taint_results.len()));
+
+    progress(if effective_config.static_.agent.enabled {
+        "Running agent analysis..."
+    } else {
+        "Agent analysis: skipped (disabled)"
+    });
     let agent_results = agent::run(&ctx)?;
+    progress(&format!("Agent analysis done: {} findings", agent_results.len()));
+
+    progress(if effective_config.static_.codeql.enabled {
+        "Running CodeQL analysis..."
+    } else {
+        "CodeQL analysis: skipped (disabled)"
+    });
     let codeql_output = codeql::run(&ctx)?;
+    progress(&format!(
+        "CodeQL analysis done: {} findings",
+        codeql_output.results.len()
+    ));
 
     // Phase 13: Fusion
+    progress("Fusing results...");
     let fused_findings = fusion::run(
         &ctx.config.fusion,
         rule_results.clone(),
@@ -86,6 +131,7 @@ pub fn run_static_scan(
         agent_results.clone(),
         codeql_output.results.clone(),
     );
+    progress(&format!("Fused {} findings", fused_findings.len()));
 
     // Count fused findings that involve the codeql line (solo or corroborated).
     let codeql_fused_count = fused_findings.iter()

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use super::model::{CodeqlAnalysisResult, CodeqlOutput, Location};
+use super::model::{CodeqlAnalysisResult, DataFlowPath, DataFlowPathStep, Location};
 
 use crate::{
     config::RuntimeConfig,
@@ -167,7 +167,28 @@ pub fn synthetic_codeql_analysis_result() -> CodeqlAnalysisResult {
             column: Some(5),
             message: Some("sink".to_string()),
         }],
-        dataflow_path: None,
+        dataflow_path: Some(DataFlowPath {
+            steps: vec![
+                DataFlowPathStep {
+                    location: Location {
+                        file: "server.py".to_string(),
+                        line: 40,
+                        column: None,
+                        message: Some("source".to_string()),
+                    },
+                    snippet: Some("command".to_string()),
+                },
+                DataFlowPathStep {
+                    location: Location {
+                        file: "server.py".to_string(),
+                        line: 42,
+                        column: None,
+                        message: Some("sink".to_string()),
+                    },
+                    snippet: Some("subprocess.run(command)".to_string()),
+                },
+            ],
+        }),
         sarif_snippet: None,
         related_rule_ids: Vec::new(),
         related_taint_ids: Vec::new(),

@@ -254,7 +254,6 @@ save_facts = true
 [static.rule]
 enabled = true
 rule_paths = ["rules/mcp", "rules/languages"]
-mode = "strict"
 
 [static.taint]
 enabled = false                          # 默认关闭

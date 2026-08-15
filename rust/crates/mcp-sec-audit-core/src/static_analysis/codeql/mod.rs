@@ -50,11 +50,12 @@ pub fn run(ctx: &StaticScanContext) -> Result<CodeqlOutput> {
     }
 
     // Hard-error if CodeQL CLI is not installed (only checked when we have work to do).
-    let provider = CliCodeqlProvider;
+    let provider = CliCodeqlProvider::new(&codeql_config.binary);
     if !provider.check_available() {
         panic!(
-            "CodeQL CLI ('codeql') not found in PATH. \
-             Install it from: https://github.com/github/codeql-cli-binaries/releases"
+            "CodeQL CLI ('{}') not found. Set [static.codeql].binary or add it to PATH. \
+             Install it from: https://github.com/github/codeql-cli-binaries/releases",
+            codeql_config.binary
         );
     }
 

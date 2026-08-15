@@ -1,5 +1,5 @@
 # Rust MCP Server — Static Analysis Test Configuration
-# Usage: cargo run -- scan static -c test-targets/configs/rust-config.toml -o /tmp/rust-report
+# Usage: cargo run -- scan static --config test-targets/configs/rust-config.toml
 
 [scan]
 targets = ["../test-targets/rust-mcp-server"]
@@ -13,7 +13,6 @@ save_facts = true
 [static.rule]
 enabled = true
 rule_paths = ["rules/mcp", "rules/languages"]
-mode = "strict"
 
 [static.taint]
 enabled = true
@@ -40,6 +39,7 @@ agent_weight = 1
 codeql_weight = 4
 
 [report]
+output = "/tmp/rust-report"
 formats = ["json", "markdown"]
 include_fused_results = true
 include_raw_rule_results = true

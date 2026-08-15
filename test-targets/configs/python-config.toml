@@ -1,5 +1,5 @@
 # Python MCP Server — Static Analysis Test Configuration
-# Usage: cargo run -- scan static -c test-targets/configs/python-config.toml -o /tmp/python-report
+# Usage: cargo run -- scan static --config test-targets/configs/python-config.toml
 
 [scan]
 targets = ["../test-targets/python-mcp-server"]
@@ -13,7 +13,6 @@ save_facts = true
 [static.rule]
 enabled = true
 rule_paths = ["rules/mcp", "rules/languages"]
-mode = "strict"
 
 [static.taint]
 enabled = true
@@ -23,12 +22,13 @@ max_depth = 8
 entrypoint_required = true
 
 [static.agent]
-enabled = false
+enabled = true
 # provider = "claude"
 # timeout_seconds = 600
 
 [static.codeql]
-enabled = false
+enabled = true
+binary = "/home/xiao/codeql-home/codeql/codeql"
 # timeout_seconds = 1200
 
 [fusion]
@@ -43,10 +43,11 @@ agent_weight = 1
 codeql_weight = 4
 
 [report]
-formats = ["json", "markdown"]
+output = "/home/xiao/Project/mcp-sec-audit/rust/docs/8151617"
+formats = ["markdown"]
 include_fused_results = true
 include_raw_rule_results = true
 include_raw_taint_results = true
-include_raw_agent_results = false
-include_raw_codeql_results = false
-include_facts = true
+include_raw_agent_results = true
+include_raw_codeql_results = true
+include_facts = false

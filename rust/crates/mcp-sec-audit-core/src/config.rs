@@ -49,8 +49,6 @@ pub struct StaticRuleConfig {
     pub enabled: bool,
     #[serde(default = "default_rule_paths")]
     pub rule_paths: Vec<String>,
-    #[serde(default = "default_rule_mode")]
-    pub mode: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,10 +87,16 @@ pub struct StaticCodeqlConfig {
     pub enabled: bool,
     #[serde(default)]
     pub query_pack_path: Option<String>,
+    #[serde(default = "default_codeql_binary")]
+    pub binary: String,
     #[serde(default = "default_codeql_timeout")]
     pub timeout_seconds: u64,
     #[serde(default)]
     pub extra_args: Vec<String>,
+}
+
+fn default_codeql_binary() -> String {
+    "codeql".to_string()
 }
 
 fn default_codeql_timeout() -> u64 {
@@ -135,6 +139,8 @@ pub struct FusionConfig {
 pub struct ReportConfig {
     #[serde(default = "default_report_formats")]
     pub formats: Vec<String>,
+    #[serde(default = "default_report_output")]
+    pub output: String,
     #[serde(default = "default_true")]
     pub include_fused_results: bool,
     #[serde(default)]
@@ -189,7 +195,6 @@ impl Default for StaticRuleConfig {
         Self {
             enabled: true,
             rule_paths: default_rule_paths(),
-            mode: default_rule_mode(),
         }
     }
 }
@@ -224,6 +229,7 @@ impl Default for StaticCodeqlConfig {
         Self {
             enabled: false,
             query_pack_path: None,
+            binary: default_codeql_binary(),
             timeout_seconds: default_codeql_timeout(),
             extra_args: Vec::new(),
         }
@@ -260,6 +266,7 @@ impl Default for ReportConfig {
     fn default() -> Self {
         Self {
             formats: default_report_formats(),
+            output: default_report_output(),
             include_fused_results: true,
             include_raw_rule_results: true,
             include_raw_taint_results: true,
@@ -313,10 +320,6 @@ fn default_rule_paths() -> Vec<String> {
         .collect()
 }
 
-fn default_rule_mode() -> String {
-    "strict".to_string()
-}
-
 fn default_max_depth() -> u32 {
     8
 }
@@ -367,6 +370,10 @@ fn default_codeql_weight() -> u32 {
 
 fn default_report_formats() -> Vec<String> {
     vec!["json".to_string(), "markdown".to_string()]
+}
+
+fn default_report_output() -> String {
+    "report".to_string()
 }
 
 #[cfg(test)]
@@ -436,6 +443,7 @@ mod tests {
         assert_eq!(config.fusion.agent_weight, 1);
         assert_eq!(config.fusion.codeql_weight, 4);
         assert_eq!(config.report.formats, vec!["json", "markdown"]);
+        assert_eq!(config.report.output, "report");
     }
 
     #[test]

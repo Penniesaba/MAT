@@ -12,6 +12,8 @@ pub struct PropagationPath {
     pub entrypoint_id: Option<String>,
     pub steps: Vec<PathStep>,
     pub confidence: Confidence,
+    /// Whether the path traverses an external call; informational, not yet consumed.
+    #[allow(dead_code)]
     pub has_external_call: bool,
 }
 
