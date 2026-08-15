@@ -144,10 +144,11 @@ fn collect_inputs(files: &[DiscoveredFile]) -> Result<Vec<RuleInput>> {
         let Some(text) = load_text_for_rule_analysis(file)? else {
             continue;
         };
+        let language = effective_language(file);
         inputs.push(RuleInput {
             file: file.path.display().to_string(),
-            language: effective_language(file),
-            text,
+            language,
+            text: mask_non_code(&text, language),
         });
     }
     Ok(inputs)
@@ -183,6 +184,167 @@ fn load_text_for_rule_analysis(file: &DiscoveredFile) -> Result<Option<String>> 
     }
 
     Ok(Some(tool_content.to_string()))
+}
+
+/// Mask non-code regions (comments, docstrings) with spaces so that keyword and
+/// regex matching only sees executable code. Newlines are preserved so line
+/// numbers stay stable. String literals are kept intact because regex
+/// indicators legitimately match them (e.g. `open(path, "r")`).
+fn mask_non_code(text: &str, language: &str) -> String {
+    match language {
+        "python" => mask_python(text),
+        "javascript" | "typescript" => mask_js_ts(text),
+        "rust" => mask_rust(text),
+        _ => text.to_string(),
+    }
+}
+
+/// Advance `i` past a single-line quoted string starting at `bytes[i]` (the
+/// opening quote). Handles backslash escapes; content is left unmasked. `i`
+/// ends one byte past the closing quote, or at `bytes.len()` if unterminated.
+fn skip_quoted_string(bytes: &[u8], i: &mut usize) {
+    let n = bytes.len();
+    let quote = bytes[*i];
+    *i += 1;
+    while *i < n {
+        if bytes[*i] == b'\\' && *i + 1 < n {
+            *i += 2;
+        } else if bytes[*i] == quote {
+            *i += 1;
+            break;
+        } else {
+            *i += 1;
+        }
+    }
+}
+
+fn mask_python(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = bytes.to_vec();
+    let n = bytes.len();
+    let mut i = 0;
+    while i < n {
+        let b = bytes[i];
+        if b == b'#' {
+            // Line comment: mask through end of line (newline is preserved).
+            while i < n && bytes[i] != b'\n' {
+                out[i] = b' ';
+                i += 1;
+            }
+        } else if (b == b'"' || b == b'\'') && i + 2 < n && bytes[i + 1] == b && bytes[i + 2] == b
+        {
+            // Triple-quoted string (docstring or multi-line string): mask it.
+            out[i] = b' ';
+            out[i + 1] = b' ';
+            out[i + 2] = b' ';
+            i += 3;
+            while i < n {
+                if bytes[i] == b && i + 2 < n && bytes[i + 1] == b && bytes[i + 2] == b {
+                    out[i] = b' ';
+                    out[i + 1] = b' ';
+                    out[i + 2] = b' ';
+                    i += 3;
+                    break;
+                }
+                if bytes[i] != b'\n' {
+                    out[i] = b' ';
+                }
+                i += 1;
+            }
+        } else if b == b'"' || b == b'\'' {
+            // Single-line string: skip it so a '#' inside isn't taken as a comment.
+            skip_quoted_string(bytes, &mut i);
+        } else {
+            i += 1;
+        }
+    }
+    String::from_utf8(out).expect("masked source must remain valid UTF-8")
+}
+
+fn mask_js_ts(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = bytes.to_vec();
+    let n = bytes.len();
+    let mut i = 0;
+    while i < n {
+        let b = bytes[i];
+        if b == b'/' && i + 1 < n && bytes[i + 1] == b'/' {
+            // Line comment: mask through end of line.
+            out[i] = b' ';
+            out[i + 1] = b' ';
+            i += 2;
+            while i < n && bytes[i] != b'\n' {
+                out[i] = b' ';
+                i += 1;
+            }
+        } else if b == b'/' && i + 1 < n && bytes[i + 1] == b'*' {
+            // Block comment: mask until closing `*/`.
+            out[i] = b' ';
+            out[i + 1] = b' ';
+            i += 2;
+            while i < n {
+                if bytes[i] == b'*' && i + 1 < n && bytes[i + 1] == b'/' {
+                    out[i] = b' ';
+                    out[i + 1] = b' ';
+                    i += 2;
+                    break;
+                }
+                if bytes[i] != b'\n' {
+                    out[i] = b' ';
+                }
+                i += 1;
+            }
+        } else if b == b'"' || b == b'\'' || b == b'`' {
+            // String / template literal: skip so `//` inside isn't a comment.
+            skip_quoted_string(bytes, &mut i);
+        } else {
+            i += 1;
+        }
+    }
+    String::from_utf8(out).expect("masked source must remain valid UTF-8")
+}
+
+fn mask_rust(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = bytes.to_vec();
+    let n = bytes.len();
+    let mut i = 0;
+    while i < n {
+        let b = bytes[i];
+        if b == b'/' && i + 1 < n && bytes[i + 1] == b'/' {
+            // Line comment (also `///` and `//!` doc comments).
+            out[i] = b' ';
+            out[i + 1] = b' ';
+            i += 2;
+            while i < n && bytes[i] != b'\n' {
+                out[i] = b' ';
+                i += 1;
+            }
+        } else if b == b'/' && i + 1 < n && bytes[i + 1] == b'*' {
+            // Block comment: mask until closing `*/`.
+            out[i] = b' ';
+            out[i + 1] = b' ';
+            i += 2;
+            while i < n {
+                if bytes[i] == b'*' && i + 1 < n && bytes[i + 1] == b'/' {
+                    out[i] = b' ';
+                    out[i + 1] = b' ';
+                    i += 2;
+                    break;
+                }
+                if bytes[i] != b'\n' {
+                    out[i] = b' ';
+                }
+                i += 1;
+            }
+        } else if b == b'"' {
+            // String literal: skip so `//` inside isn't a comment.
+            skip_quoted_string(bytes, &mut i);
+        } else {
+            i += 1;
+        }
+    }
+    String::from_utf8(out).expect("masked source must remain valid UTF-8")
 }
 
 fn indicator_applies_to_language(indicator: &IndicatorRule, language: &str) -> bool {
@@ -319,6 +481,139 @@ mod tests {
         assert_eq!(results[0].severity, Severity::High);
         assert_eq!(results[0].line, 2);
         assert!(results[0].evidence[0].contains("subprocess.run"));
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn python_docstring_is_not_matched_as_code() {
+        let root = temp_dir("rule-docstring");
+        let file = root.join("server.py");
+        fs::write(
+            &file,
+            r#"'''Docstring
+mentioning open() and requests.get()
+across multiple lines'''
+import requests
+
+def read_log(path):
+    return open(path, "r")
+
+def fetch_url(url):
+    return requests.get(url)
+"#,
+        )
+        .expect("write source");
+        let rulebook = parse_rulebook_toml(
+            r#"
+            [[capabilities]]
+            name = "file_read"
+            weight = 15.0
+            base_confidence = 0.35
+              [[capabilities.indicators]]
+              languages = ["python"]
+              type = "keyword"
+              patterns = ["open("]
+              [[capabilities.indicators]]
+              languages = ["python"]
+              type = "regex"
+              pattern = "open\\([^,]+,\\s*['\"]r"
+
+            [[capabilities]]
+            name = "network_request"
+            weight = 20.0
+            base_confidence = 0.4
+              [[capabilities.indicators]]
+              languages = ["python"]
+              type = "keyword"
+              patterns = ["requests."]
+            "#,
+        )
+        .expect("parse rules");
+        let ctx = context_with_files(vec![DiscoveredFile {
+            path: file,
+            language: ScanLanguage::Python,
+        }]);
+
+        let results = analyze_rule_line(&ctx, &rulebook).expect("analyze rules");
+
+        let file_read = results
+            .iter()
+            .find(|r| r.rule_id == "file_read")
+            .expect("file_read result");
+        let network_request = results
+            .iter()
+            .find(|r| r.rule_id == "network_request")
+            .expect("network_request result");
+
+        // The multi-line docstring must not be reported; real code is at 7 and 10.
+        assert_eq!(file_read.line, 7);
+        assert_eq!(network_request.line, 10);
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn python_comment_is_not_matched_as_code() {
+        let root = temp_dir("rule-comment");
+        let file = root.join("server.py");
+        fs::write(&file, "# open('/etc/passwd', 'r')\nx = open('/tmp/x', 'r')\n")
+            .expect("write source");
+        let rulebook = parse_rulebook_toml(
+            r#"
+            [[capabilities]]
+            name = "file_read"
+            weight = 15.0
+            base_confidence = 0.35
+              [[capabilities.indicators]]
+              languages = ["python"]
+              type = "keyword"
+              patterns = ["open("]
+            "#,
+        )
+        .expect("parse rules");
+        let ctx = context_with_files(vec![DiscoveredFile {
+            path: file,
+            language: ScanLanguage::Python,
+        }]);
+
+        let results = analyze_rule_line(&ctx, &rulebook).expect("analyze rules");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].line, 2);
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn js_comments_are_not_matched_as_code() {
+        let root = temp_dir("rule-js-comment");
+        let file = root.join("server.js");
+        fs::write(
+            &file,
+            "// fetch('http://x')\n/* fetch('http://y') */\nfetch('http://z');\n",
+        )
+        .expect("write source");
+        let rulebook = parse_rulebook_toml(
+            r#"
+            [[capabilities]]
+            name = "network_request"
+            weight = 20.0
+            base_confidence = 0.4
+              [[capabilities.indicators]]
+              languages = ["javascript"]
+              type = "keyword"
+              patterns = ["fetch("]
+            "#,
+        )
+        .expect("parse rules");
+        let ctx = context_with_files(vec![DiscoveredFile {
+            path: file,
+            language: ScanLanguage::JavaScript,
+        }]);
+
+        let results = analyze_rule_line(&ctx, &rulebook).expect("analyze rules");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].line, 3);
 
         fs::remove_dir_all(root).expect("cleanup");
     }
