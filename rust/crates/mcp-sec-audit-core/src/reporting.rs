@@ -192,10 +192,6 @@ pub fn render_markdown(result: &StaticAnalysisResult, options: &MarkdownRenderOp
         format!("- CodeQL Results: {}", result.summary.codeql_result_count),
     ];
 
-    if let Some(severity) = &result.summary.highest_severity {
-        lines.push(format!("- Highest Severity: {:?}", severity));
-    }
-
     if options.include_facts {
         lines.push(String::new());
         lines.push("## Facts".to_string());
@@ -216,8 +212,8 @@ pub fn render_markdown(result: &StaticAnalysisResult, options: &MarkdownRenderOp
         }
         for finding in &result.fused_findings {
             lines.push(format!(
-                "- **{}** [{:?}/{:?}] — {}",
-                finding.title, finding.severity, finding.confidence, finding.category
+                "- **{}** [{:?}] — {}",
+                finding.title, finding.confidence, finding.category
             ));
             if !finding.supported_by.is_empty() {
                 lines.push(format!(
