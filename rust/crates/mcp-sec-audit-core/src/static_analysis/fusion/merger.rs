@@ -92,7 +92,7 @@ fn build_category(group: &super::matcher::MatchGroup) -> String {
         *counts.entry(&t.sink_kind).or_insert(0) += 1;
     }
     for c in &group.codeql_results {
-        *counts.entry(&c.rule_id).or_insert(0) += 1;
+        *counts.entry(&c.category).or_insert(0) += 1;
     }
     counts.into_iter()
         .max_by_key(|(cat, count)| (*count, cat.len())) // tie-break arbitrarily stable
@@ -319,7 +319,7 @@ mod tests {
         assert_eq!(findings.len(), 1);
         let f = &findings[0];
         assert_eq!(f.title, "Command Injection");
-        assert_eq!(f.category, "py/cmd-injection");
+        assert_eq!(f.category, "command_execution");
         assert_eq!(f.severity, Severity::High);
         assert_eq!(f.supported_by, vec!["codeql".to_string()]);
         assert_eq!(f.related_codeql_result_ids, vec!["ql:1".to_string()]);

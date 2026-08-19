@@ -161,8 +161,7 @@ pub(crate) fn match_results(
     }
 
     // CodeQL results carry a clean first Location; use its file/line for
-    // proximity matching and rule_id as the category (best-effort against the
-    // rule/taint category vocabularies, which use different naming).
+    // proximity matching and its shared-vocabulary category for stage-2 fusion.
     for (i, c) in codeql_orig.iter().enumerate() {
         let (file, line) = c
             .locations
@@ -172,7 +171,7 @@ pub(crate) fn match_results(
         items.push(Matchable {
             file,
             line,
-            category: Some(c.rule_id.clone()),
+            category: Some(c.category.clone()),
             kind: MatchKind::Codeql,
             rule_idx: None,
             taint_idx: None,
