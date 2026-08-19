@@ -4,7 +4,7 @@ pub(crate) mod mcp;
 pub(crate) mod sinks;
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -20,7 +20,7 @@ use crate::model::{
 };
 
 use super::{
-    ExtractionDiagnostic, display_path, fact_sort_key,
+    ExtractionDiagnostic, display_path, fact_sort_key, line_col_for_offset,
     make_assign_id, make_call_id, make_entrypoint_id,
     make_function_id, make_import_id, make_sink_id, make_source_id,
 };
@@ -66,6 +66,11 @@ struct RustFactExtractor<'a> {
 
     /// Tracks the current impl/struct context (e.g. "MyServer")
     impl_stack: Vec<String>,
+
+    /// (line, column) pairs of already-emitted call/sink spans, used to collapse
+    /// a method chain (whose every level shares the chain root's span start) to
+    /// a single CallFact + SinkFact.
+    seen_calls: BTreeSet<(u32, u32)>,
 }
 
 impl<'a> RustFactExtractor<'a> {
@@ -79,12 +84,20 @@ impl<'a> RustFactExtractor<'a> {
             use_aliases: BTreeMap::new(),
             scope: Vec::new(),
             impl_stack: Vec::new(),
+            seen_calls: BTreeSet::new(),
         }
     }
 
     fn line_of(&self, node: &impl Spanned) -> u32 {
         // Uses proc_macro2 span-locations feature for real line numbers.
         node.span().start().line as u32
+    }
+
+    fn column_of(&self, node: &impl Spanned) -> u32 {
+        // Accurate 0-based column from the byte offset of the span start.
+        let (_line, column) =
+            line_col_for_offset(self.source, node.span().byte_range().start as u32);
+        column
     }
 
     fn rel_path(&self) -> String {
@@ -479,7 +492,15 @@ impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
 
     fn visit_expr_call(&mut self, node: &'ast ExprCall) {
         let line = self.line_of(node);
-        let column = 0; // FIXME: accurate span column
+        let column = self.column_of(node);
+
+        if !self.seen_calls.insert((line, column)) {
+            // Same span start as an already-emitted level of this method chain.
+            // Skip emitting, but still recurse so nested distinct calls are seen.
+            syn::visit::visit_expr_call(self, node);
+            return;
+        }
+
         let file = self.rel_path();
         let callee = display::expr_to_string(&node.func);
         let (normalized_callee, import_alias) = self.resolve_callee(&callee);
@@ -577,7 +598,15 @@ impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
 
     fn visit_expr_method_call(&mut self, node: &'ast ExprMethodCall) {
         let line = self.line_of(node);
-        let column = 0;
+        let column = self.column_of(node);
+
+        if !self.seen_calls.insert((line, column)) {
+            // Same span start as an already-emitted level of this method chain.
+            // Skip emitting, but still recurse so nested distinct calls are seen.
+            syn::visit::visit_expr_method_call(self, node);
+            return;
+        }
+
         let file = self.rel_path();
         let method = node.method.to_string();
         let receiver = display::expr_to_string(&node.receiver);
@@ -1049,6 +1078,60 @@ fn risky_ops() {
         assert!(categories.contains(&"env_access"));
         assert!(categories.contains(&"deserialization"));
         assert!(categories.contains(&"unsafe_block"));
+    }
+
+    #[test]
+    fn dedups_method_chain_to_single_call_and_sink() {
+        let result = extract(
+            r#"
+use std::process::Command;
+
+fn run(shell_cmd: &str) {
+    Command::new("sh").arg("-c").arg(shell_cmd).output();
+}
+"#,
+        );
+
+        assert!(result.diagnostics.is_empty());
+        let sinks = sink_facts(&result);
+        let calls = call_facts(&result);
+
+        assert_eq!(sinks.len(), 1, "expected a single sink, got {sinks:?}");
+        assert_eq!(calls.len(), 1, "expected a single call, got {calls:?}");
+
+        assert_eq!(sinks[0].category, "command_execution");
+        // The emitted call is the outermost, most complete chain.
+        assert!(calls[0].callee.contains("Command::new"));
+        assert!(calls[0].callee.contains(".output"));
+        // Accurate column resolved (not the old hardcoded 0).
+        assert_ne!(calls[0].column, Some(0));
+        // Sink's call_id points at the surviving call.
+        assert_eq!(sinks[0].call_id, calls[0].base.id);
+    }
+
+    #[test]
+    fn keeps_distinct_calls_on_same_line_separate() {
+        let result = extract(
+            r#"
+use std::process::Command;
+
+fn run() {
+    let _ = (Command::new("a").output(), Command::new("b").output());
+}
+"#,
+        );
+
+        assert!(result.diagnostics.is_empty());
+        let sinks = sink_facts(&result);
+        let calls = call_facts(&result);
+
+        // Two separate chains on the same line must NOT be collapsed together.
+        assert_eq!(sinks.len(), 2, "expected two sinks, got {sinks:?}");
+        assert_eq!(calls.len(), 2, "expected two calls, got {calls:?}");
+
+        // Their call ids differ only in the (accurate) column component.
+        assert_ne!(calls[0].base.id, calls[1].base.id);
+        assert_ne!(calls[0].column, calls[1].column);
     }
 
     #[test]
