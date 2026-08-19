@@ -243,3 +243,128 @@ base_confidence = 0.3
     "std::env::var",
     "env::var(",
   ]
+
+[[capabilities]]
+name = "path_traversal"
+weight = 20.0
+base_confidence = 0.35
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "keyword"
+  patterns = [
+    "..",
+    "os.path.join",
+    "Path(",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["javascript", "typescript"]
+  type = "keyword"
+  patterns = [
+    "path.join",
+    "..",
+    "resolve(",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["rust"]
+  type = "keyword"
+  patterns = [
+    "Path::new",
+    "..",
+    "canonicalize",
+  ]
+
+[[capabilities]]
+name = "template_injection"
+weight = 20.0
+base_confidence = 0.35
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "keyword"
+  patterns = [
+    "render_template_string",
+    "jinja2",
+    "Template(",
+  ]
+
+[[capabilities]]
+name = "prompt_injection"
+weight = 25.0
+base_confidence = 0.4
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "keyword"
+  patterns = [
+    "openai",
+    "anthropic",
+    "ChatCompletion",
+    "messages.create",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["javascript", "typescript"]
+  type = "keyword"
+  patterns = [
+    "openai",
+    "anthropic",
+    "chat.completions",
+  ]
+
+[[capabilities]]
+name = "data_exfiltration"
+weight = 20.0
+base_confidence = 0.35
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "keyword"
+  patterns = [
+    "os.environ",
+    "requests.post",
+    "urllib",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["javascript", "typescript"]
+  type = "keyword"
+  patterns = [
+    "process.env",
+    "fetch(",
+    "axios.",
+  ]
+
+[[capabilities]]
+name = "tool_poisoning"
+weight = 20.0
+base_confidence = 0.3
+
+  [[capabilities.indicators]]
+  languages = ["python"]
+  type = "keyword"
+  patterns = [
+    "description",
+    "<IMPORTANT>",
+    "ignore previous instructions",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["javascript", "typescript"]
+  type = "keyword"
+  patterns = [
+    "description:",
+    "<IMPORTANT>",
+    "ignore previous instructions",
+  ]
+
+  [[capabilities.indicators]]
+  languages = ["rust"]
+  type = "keyword"
+  patterns = [
+    "description =",
+    "<IMPORTANT>",
+    "ignore previous instructions",
+  ]
