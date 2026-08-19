@@ -53,9 +53,9 @@ fn category_from_tags(rule: &serde_json::Value) -> Option<String> {
 fn category_from_rule_id(rule_id: &str) -> Option<String> {
     let cat = match rule_id {
         "rust/sql-injection" => "database_injection",
-        "rust/ssrf" => "network_request",
+        "rust/request-forgery" => "network_request",
         "rust/path-injection" => "path_traversal",
-        "rust/invalid-pointer-access" | "rust/access-invalid-pointer" => "unsafe_block",
+        "rust/access-invalid-pointer" | "rust/access-after-lifetime-ended" => "unsafe_block",
         "py/cmd-injection" | "py/command-injection" => "command_execution",
         "py/sql-injection" => "database_injection",
         "py/ssrf" => "network_request",
@@ -492,6 +492,11 @@ mod tests {
         );
         // Official query: curated rule_id → category map.
         assert_eq!(resolve_category("rust/sql-injection", None), "database_injection");
+        assert_eq!(resolve_category("rust/request-forgery", None), "network_request");
+        assert_eq!(
+            resolve_category("rust/access-after-lifetime-ended", None),
+            "unsafe_block"
+        );
         // Unknown: uncategorized fallback.
         assert_eq!(resolve_category("rust/unknown-thing", None), "uncategorized");
     }
