@@ -362,10 +362,10 @@ mod tests {
             }),
             Fact::Call(CallFact {
                 base: FactBase { id: call_id.clone(), file: file.clone(), line: 3, extractor: "test".into() },
-                caller: func_id.clone(), callee: "Command::new".into(),
-                normalized_callee: Some("std::process::Command::new".into()),
-                column: Some(0), end_line: Some(3), snippet: "Command::new(\"sh\")".into(),
-                args: vec![CallArg { index: 0, expr: "\"sh\"".into(), kind: "positional".into() }],
+                caller: func_id.clone(), callee: "Command::arg".into(),
+                normalized_callee: Some("std::process::Command::arg".into()),
+                column: Some(0), end_line: Some(3), snippet: "Command::new(\"sh\").arg(params)".into(),
+                args: vec![CallArg { index: 0, expr: "params".into(), kind: "positional".into() }],
                 kwargs: std::collections::BTreeMap::new(), resolution: None,
             }),
             Fact::Sink(SinkFact {

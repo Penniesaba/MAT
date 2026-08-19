@@ -112,6 +112,13 @@ fn propagate(
         };
 
         for edge in edges {
+            // Structural membership edges carry no dataflow: traversing them lets
+            // BFS hop source → function → call → sink in zero steps, which
+            // deduplicate_paths then keeps over the real (stepped) path.
+            if matches!(edge, Edge::SourceInFunction { .. } | Edge::CallInFunction { .. }) {
+                continue;
+            }
+
             let next_id = match direction {
                 Direction::Forward => edge.to_id(),
                 Direction::Backward => edge.from_id(),
@@ -592,5 +599,22 @@ mod tests {
             .filter_map(|(id, n)| if matches!(n, Node::Source { .. }) { Some(id.clone()) } else { None })
             .collect();
         assert!(!start_ids.is_empty());
+    }
+
+    #[test]
+    fn structural_edges_do_not_create_zero_step_shortcut() {
+        // A source whose ONLY structural link to its sink is via the function
+        // hub (SourceInFunction + FunctionCall) must NOT produce a result —
+        // real dataflow requires SourceToArg/SourceToVar/VarToArg.
+        let mut g = make_minimal_graph();
+        // make_minimal_graph already has SourceToArg (source→call). Remove it so
+        // the only remaining route is source→function→call→sink.
+        let src_id = "source:s.py:handler:cmd".to_string();
+        g.outgoing.get_mut(&src_id).unwrap().retain(|e| !matches!(e, Edge::SourceToArg { .. }));
+        let mut config = default_config();
+        config.backward = false;
+        let paths = propagate_forward(&g, &config);
+        // Without the SourceToArg dataflow edge, no forward path should survive.
+        assert!(paths.is_empty(), "structural shortcut must not yield a path: {paths:?}");
     }
 }

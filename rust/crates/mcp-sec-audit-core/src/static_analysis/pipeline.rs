@@ -477,8 +477,7 @@ const { exec } = require("child_process");
 const server = { tool: (name, handler) => ({ name, handler }) };
 
 server.tool("run_command", async (params) => {
-    const { command } = params;
-    exec(command, (error, stdout) => {
+    exec(params.command, (error, stdout) => {
         console.log(stdout);
     });
 });

@@ -86,6 +86,25 @@ pub fn build_graph(facts: &[Fact]) -> Graph {
     }
 
     // -----------------------------------------------------------------------
+    // Register Variable nodes (from Assign facts) before Call nodes so that
+    // the VarToArg edges built in Step 4 can link to variables defined
+    // anywhere in the file (removes line-order dependence).
+    // -----------------------------------------------------------------------
+    for fact in facts {
+        if let Fact::Assign(a) = fact {
+            let target_id = make_var_id(&a.function_id, &a.target);
+            g.add_node(
+                target_id.clone(),
+                Node::Variable {
+                    id: target_id,
+                    name: a.target.clone(),
+                    function_id: a.function_id.clone(),
+                },
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Step 4: Register Call nodes and resolve callees
     // -----------------------------------------------------------------------
     for fact in facts {
@@ -150,7 +169,7 @@ pub fn build_graph(facts: &[Fact]) -> Graph {
 
             // VarToArg edges: link variables used as call arguments
             for arg in &c.args {
-                let var_id = make_var_id(&c.caller, &arg.expr);
+                let var_id = make_var_id(&c.caller, strip_ref_prefix(&arg.expr));
                 if g.nodes.contains_key(&var_id) {
                     g.add_edge(Edge::VarToArg {
                         var_id,
@@ -172,7 +191,11 @@ pub fn build_graph(facts: &[Fact]) -> Graph {
                     })
                     .collect();
                 for (source_id, name) in source_matches {
-                    if name == arg.expr {
+                    let stripped = strip_ref_prefix(&arg.expr);
+                    if name == stripped
+                        || stripped.starts_with(&format!("{name}."))
+                        || stripped.starts_with(&format!("{name}["))
+                    {
                         g.add_edge(Edge::SourceToArg {
                             source_id,
                             call_id: call_id.clone(),
@@ -206,26 +229,9 @@ pub fn build_graph(facts: &[Fact]) -> Graph {
     }
 
     // -----------------------------------------------------------------------
-    // Step 6: Register Variables (pass 1) and assignment propagation (pass 2)
+    // Step 6: Assignment propagation — link each assignment's right-hand side
+    // back to the variables and sources it references.
     // -----------------------------------------------------------------------
-    // Pass 1 — register every assigned variable as a node up front so edges can
-    // link to variables defined later in the file (removes line-order dependence).
-    for fact in facts {
-        if let Fact::Assign(a) = fact {
-            let target_id = make_var_id(&a.function_id, &a.target);
-            g.add_node(
-                target_id.clone(),
-                Node::Variable {
-                    id: target_id,
-                    name: a.target.clone(),
-                    function_id: a.function_id.clone(),
-                },
-            );
-        }
-    }
-
-    // Pass 2 — link each assignment's right-hand side back to the variables and
-    // sources it references.
     for fact in facts {
         if let Fact::Assign(a) = fact {
             let target_id = make_var_id(&a.function_id, &a.target);
@@ -290,6 +296,20 @@ pub fn build_graph(facts: &[Fact]) -> Graph {
 /// Build a variable node ID: `{function_id}{SEP}{var_name}`
 fn make_var_id(function_id: &str, var_name: &str) -> String {
     format!("{function_id}{VAR_SEP}{var_name}")
+}
+
+/// Strip a leading `&` / `&mut` / `*` reference/deref prefix from an argument
+/// expression so source/variable name matching works on `&command`, `&mut x`,
+/// etc. (Rust call args are recorded with their reference operators).
+fn strip_ref_prefix(expr: &str) -> &str {
+    let mut s = expr.trim_start();
+    while s.starts_with('&') || s.starts_with('*') {
+        s = s[1..].trim_start();
+    }
+    if let Some(rest) = s.strip_prefix("mut ") {
+        s = rest;
+    }
+    s
 }
 
 /// Extract identifier tokens from an assignment's right-hand side expression.
@@ -716,5 +736,24 @@ mod tests {
             matches!(e, Edge::SourceToVar { source_id: sid, .. } if sid.as_str() == source_id.as_str())
         });
         assert!(linked, "expected SourceToVar from source `cmd` to variable `command`");
+    }
+
+    #[test]
+    fn reference_prefixed_arg_matches_source() {
+        let func_id = "rust:main.rs:exec_shell".to_string();
+        let source_id = "source:main.rs:exec_shell:command".to_string();
+        let facts = vec![
+            make_function(&func_id, "exec_shell", "exec_shell", "main.rs", vec!["command"]),
+            Fact::Source(crate::model::SourceFact {
+                base: FactBase { id: source_id.clone(), file: "main.rs".into(), line: 24, extractor: "test".into() },
+                kind: "mcp_tool_parameter".into(), function_id: func_id.clone(),
+                name: "command".into(), confidence: Confidence::High,
+            }),
+            make_call("call:main.rs:32:0", &func_id, "build_shell_command", "helpers::build_shell_command", "main.rs", 32, vec![(0, "&command")]),
+        ];
+        let g = build_graph(&facts);
+        let edges = g.outgoing_edges(&source_id);
+        assert!(edges.iter().any(|e| matches!(e, Edge::SourceToArg { call_id, .. } if call_id == "call:main.rs:32:0")),
+            "expected SourceToArg from `command` to the `&command` call");
     }
 }
