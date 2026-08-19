@@ -1,4 +1,4 @@
-name: mcp-sec-audit/mcp-queries
+name: mcp-sec-audit/mcp-python-queries
 version: 0.0.0
 dependencies:
   codeql/python-all: "*"

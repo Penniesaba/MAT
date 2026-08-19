@@ -129,16 +129,13 @@ impl CodeqlProvider for CliCodeqlProvider {
             .arg("--output")
             .arg(&output_path);
 
-        // Add query files. Built-in MCP queries are Python-only, so skip them
-        // for non-Python databases to avoid `import python` failures.
-        if !queries.is_builtin || db.language == "python" {
-            for qf in &queries.query_files {
-                cmd.arg(qf);
-            }
+        // Query files are already language-native (per-language pack).
+        for qf in &queries.query_files {
+            cmd.arg(qf);
         }
 
-        // Add suite references filtered to this database's language.
-        for suite in queries.suite_refs_for(&db.language) {
+        // Standard suite refs are already scoped to this database's language.
+        for suite in &queries.suite_refs {
             cmd.arg(suite);
         }
 

@@ -5,20 +5,20 @@ use anyhow::{Result, bail};
 /// Represents a resolved query pack ready for CodeQL analysis.
 #[derive(Debug, Clone)]
 pub struct QueryPack {
-    /// Paths to .ql files or .qlref references.
+    /// Paths to .ql files or .qlref references (language-native for this DB).
     pub query_files: Vec<PathBuf>,
-    /// Additional CodeQL query pack references (e.g. "codeql/python-queries").
+    /// Standard query pack references for this language (e.g. "codeql/rust-queries@0.1.39").
     pub suite_refs: Vec<String>,
-    /// Whether this is the built-in pack (whose queries are Python-only).
+    /// Whether this is a built-in pack (whose queries are language-native).
     pub is_builtin: bool,
 }
 
 impl QueryPack {
-    /// Build the default query pack: built-in MCP queries + standard security suites.
-    pub fn default() -> Result<Self> {
-        let mcp_dir = builtin_mcp_query_dir()?;
+    /// Build the built-in query pack for one database language.
+    pub fn for_language(language: &str) -> Result<Self> {
+        let dir = builtin_mcp_query_dir_for(language)?;
         let mut query_files = Vec::new();
-        for entry in std::fs::read_dir(&mcp_dir)? {
+        for entry in std::fs::read_dir(&dir)? {
             let entry = entry?;
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) == Some("ql") {
@@ -27,15 +27,12 @@ impl QueryPack {
         }
         Ok(Self {
             query_files,
-            suite_refs: vec![
-                "codeql/python-queries".to_string(),
-                "codeql/javascript-queries".to_string(),
-            ],
+            suite_refs: standard_suite_refs_for(language),
             is_builtin: true,
         })
     }
 
-    /// Load a user-specified query pack directory.
+    /// Load a user-specified query pack directory (applies to every language).
     pub fn from_path(path: &Path) -> Result<Self> {
         if !path.exists() {
             bail!("CodeQL query pack path does not exist: {}", path.display());
@@ -54,44 +51,44 @@ impl QueryPack {
             is_builtin: false,
         })
     }
-
-    /// Suites applicable to a given CodeQL language (a Python database must
-    /// not receive JavaScript security suites).
-    pub fn suite_refs_for(&self, language: &str) -> Vec<String> {
-        self.suite_refs
-            .iter()
-            .filter(|s| suite_matches_language(s, language))
-            .cloned()
-            .collect()
-    }
 }
 
-/// Whether a query suite reference applies to the given CodeQL language.
-fn suite_matches_language(suite: &str, language: &str) -> bool {
+/// Standard security suite reference for a database language.
+///
+/// Version-pinned: CLI 2.26.2 cannot resolve unversioned pack refs from the
+/// local cache, and the latest packs (built by CLI 2.26.3) fail to download.
+/// Revert to unversioned refs after a CLI upgrade to 2.26.3+.
+fn standard_suite_refs_for(language: &str) -> Vec<String> {
     match language {
-        "python" => suite.contains("python"),
-        "javascript" | "typescript" => suite.contains("javascript"),
-        _ => false,
+        "python" => vec!["codeql/python-queries@1.8.7".to_string()],
+        "javascript" | "typescript" => vec!["codeql/javascript-queries@2.4.2".to_string()],
+        "rust" => vec!["codeql/rust-queries@0.1.39".to_string()],
+        _ => Vec::new(),
     }
 }
 
-/// Resolve the active query pack: user override or built-in default.
-pub fn resolve_query_pack(custom_path: Option<&str>) -> Result<QueryPack> {
+/// Resolve the active query pack: user override or built-in per-language default.
+pub fn resolve_query_pack(custom_path: Option<&str>, language: &str) -> Result<QueryPack> {
     match custom_path {
         Some(p) => QueryPack::from_path(Path::new(p)),
-        None => QueryPack::default(),
+        None => QueryPack::for_language(language),
     }
 }
 
-/// Directory containing built-in MCP CodeQL queries.
-fn builtin_mcp_query_dir() -> Result<PathBuf> {
-    // Relative to the crate source at build/run time
+/// Directory containing built-in MCP CodeQL queries for one language.
+fn builtin_mcp_query_dir_for(language: &str) -> Result<PathBuf> {
+    let lang_dir = match language {
+        "python" => "mcp-python",
+        "javascript" | "typescript" => "mcp-js",
+        "rust" => "mcp-rust",
+        _ => bail!("no built-in MCP query pack for language '{}'", language),
+    };
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("src")
         .join("static_analysis")
         .join("codeql")
         .join("queries")
-        .join("mcp");
+        .join(lang_dir);
     if !dir.exists() {
         bail!(
             "Built-in CodeQL query directory not found: {}. \
@@ -107,21 +104,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_query_pack_includes_mcp_queries() {
-        let pack = QueryPack::default().expect("default query pack");
-        assert!(
-            !pack.query_files.is_empty(),
-            "Expected at least one built-in .ql file"
-        );
+    fn python_pack_has_mcp_queries_and_python_suite() {
+        let pack = QueryPack::for_language("python").expect("python pack");
         assert!(pack.query_files.iter().any(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
                 .map_or(false, |n| n.contains("ToolParameterToSink"))
         }));
-        assert_eq!(
-            pack.suite_refs,
-            vec!["codeql/python-queries", "codeql/javascript-queries"]
-        );
+        assert_eq!(pack.suite_refs, vec!["codeql/python-queries@1.8.7"]);
+    }
+
+    #[test]
+    fn rust_pack_has_rust_suite() {
+        let pack = QueryPack::for_language("rust").expect("rust pack");
+        assert_eq!(pack.suite_refs, vec!["codeql/rust-queries@0.1.39"]);
+    }
+
+    #[test]
+    fn unknown_language_errors() {
+        let err = QueryPack::for_language("cobol").expect_err("unknown language should fail");
+        assert!(err.to_string().contains("no built-in MCP query pack"));
     }
 
     #[test]
@@ -129,18 +131,16 @@ mod tests {
         let tmp = std::env::temp_dir().join("codeql-test-queries");
         std::fs::create_dir_all(&tmp).expect("create tmp dir");
         std::fs::write(tmp.join("test.ql"), "// test query").expect("write test file");
-
-        let pack = resolve_query_pack(Some(tmp.to_str().unwrap()))
-            .expect("resolve custom pack");
+        let pack =
+            resolve_query_pack(Some(tmp.to_str().unwrap()), "python").expect("resolve custom pack");
         assert!(!pack.query_files.is_empty());
         assert!(pack.suite_refs.is_empty());
-
         std::fs::remove_dir_all(&tmp).expect("cleanup");
     }
 
     #[test]
     fn missing_custom_path_returns_error() {
-        let err = resolve_query_pack(Some("/nonexistent/path/xyz"))
+        let err = resolve_query_pack(Some("/nonexistent/path/xyz"), "python")
             .expect_err("nonexistent path should fail");
         assert!(err.to_string().contains("does not exist"));
     }

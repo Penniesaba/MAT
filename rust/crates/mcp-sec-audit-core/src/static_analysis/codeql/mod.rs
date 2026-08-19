@@ -13,8 +13,8 @@ use provider::{CliCodeqlProvider, CodeqlProvider};
 use queries::resolve_query_pack;
 
 /// Hardcoded constants (not user-configurable).
-/// Languages CodeQL supports — Rust is NOT a first-class CodeQL language.
-const SUPPORTED_LANGUAGES: &[&str] = &["python", "javascript", "typescript"];
+/// Languages CodeQL supports — Rust is supported as of CodeQL 2.26.x.
+const SUPPORTED_LANGUAGES: &[&str] = &["python", "javascript", "typescript", "rust"];
 
 /// CodeQL line entry point.
 ///
@@ -40,11 +40,11 @@ pub fn run(ctx: &StaticScanContext, mut progress: impl FnMut(&str)) -> Result<Co
         .collect();
 
     if supported_files.is_empty() {
-        progress("CodeQL skipped: no supported language in target");
+        progress("CodeQL skipped: no CodeQL-supported language in target");
         let mut output = CodeqlOutput::empty();
         let total = ctx.discovered_files.len();
         output.diagnostics.push(format!(
-            "No Python/JS/TS files among {} discovered files — CodeQL line skipped.",
+            "No CodeQL-supported language files among {} discovered files — CodeQL line skipped.",
             total
         ));
         return Ok(output);
@@ -67,22 +67,33 @@ pub fn run(ctx: &StaticScanContext, mut progress: impl FnMut(&str)) -> Result<Co
         languages.insert(lang);
     }
 
-    // Determine source root from the first file.
+    // Determine source root from the configured scan targets (a directory target
+    // is used as-is; a file target contributes its parent directory).
     let target_root = ctx
-        .discovered_files
+        .config
+        .scan
+        .targets
         .first()
-        .and_then(|df| df.path.parent())
-        .map(|p| p.display().to_string())
+        .map(|t| {
+            let p = std::path::Path::new(t);
+            if p.is_dir() {
+                p.display().to_string()
+            } else {
+                p.parent()
+                    .map(|d| d.display().to_string())
+                    .unwrap_or_else(|| ".".to_string())
+            }
+        })
         .unwrap_or_else(|| ".".to_string());
-
-    // Resolve query pack (built-in or custom).
-    let query_pack = resolve_query_pack(codeql_config.query_pack_path.as_deref())?;
 
     let mut all_results = Vec::new();
     let mut all_diagnostics = Vec::new();
     let mut raw_sarif_parts = Vec::new();
 
     for language in &languages {
+        // Resolve the query pack for this database's language (built-in or custom).
+        let query_pack = resolve_query_pack(codeql_config.query_pack_path.as_deref(), language)?;
+
         // Create database for this language.
         let db = match provider.create_database(
             std::path::Path::new(&target_root),
@@ -180,7 +191,7 @@ mod tests {
         let output = run(&ctx, |_| {}).expect("run codeql with no files");
         assert!(output.results.is_empty());
         assert!(!output.diagnostics.is_empty());
-        assert!(output.diagnostics[0].contains("No Python/JS/TS files"));
+        assert!(output.diagnostics[0].contains("No CodeQL-supported language"));
     }
 
     #[test]
@@ -192,8 +203,8 @@ mod tests {
             config,
             rulebook_paths: Vec::new(),
             discovered_files: vec![DiscoveredFile {
-                path: "main.rs".into(),
-                language: ScanLanguage::Rust,
+                path: "data.json".into(),
+                language: ScanLanguage::Json,
             }],
         };
         let mut messages: Vec<String> = Vec::new();
