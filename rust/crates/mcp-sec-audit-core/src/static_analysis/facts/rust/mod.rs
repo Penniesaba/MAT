@@ -446,6 +446,54 @@ impl<'a> RustFactExtractor<'a> {
 // syn Visit trait implementation
 // ---------------------------------------------------------------------------
 
+/// Inspect an `unsafe { .. }` block for operations that actually exercise
+/// memory-unsafe semantics (raw pointer deref, transmute, uninitialized memory).
+/// Returns false when the block is a benign wrapper with no dangerous op.
+fn unsafe_block_is_dangerous(block: &syn::Block) -> bool {
+    struct Detector {
+        dangerous: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Detector {
+        fn visit_expr_unary(&mut self, e: &'ast syn::ExprUnary) {
+            if matches!(e.op, syn::UnOp::Deref(_)) {
+                self.dangerous = true;
+            }
+            syn::visit::visit_expr_unary(self, e);
+        }
+        fn visit_expr_call(&mut self, e: &'ast syn::ExprCall) {
+            if is_dangerous_callee(&display::expr_to_string(&e.func)) {
+                self.dangerous = true;
+            }
+            syn::visit::visit_expr_call(self, e);
+        }
+        fn visit_expr_method_call(&mut self, e: &'ast syn::ExprMethodCall) {
+            if is_dangerous_callee(&e.method.to_string()) {
+                self.dangerous = true;
+            }
+            syn::visit::visit_expr_method_call(self, e);
+        }
+    }
+    let mut detector = Detector { dangerous: false };
+    syn::visit::visit_block(&mut detector, block);
+    detector.dangerous
+}
+
+fn is_dangerous_callee(callee: &str) -> bool {
+    [
+        "transmute",
+        "MaybeUninit",
+        "uninitialized",
+        "assume_init",
+        "zeroed",
+        "uninit",
+        "get_unchecked",
+        "from_raw_parts",
+        "from_raw_parts_mut",
+    ]
+    .iter()
+    .any(|pattern| callee.contains(pattern))
+}
+
 impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
     fn visit_item_use(&mut self, node: &'ast ItemUse) {
         let line = self.line_of(node);
@@ -742,6 +790,18 @@ impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
         let file = self.rel_path();
         let call_id = make_call_id(&self.root, &self.file, line, 0);
 
+        let (severity_base, reason) = if unsafe_block_is_dangerous(&node.block) {
+            (
+                Severity::Medium,
+                "Unsafe block can bypass Rust's memory safety guarantees",
+            )
+        } else {
+            (
+                Severity::Low,
+                "Unsafe block present but no dangerous unsafe operation detected (no raw pointer deref / transmute / uninitialized memory)",
+            )
+        };
+
         self.facts.push(Fact::Sink(SinkFact {
             base: FactBase {
                 id: make_sink_id("unsafe_block", &self.root, &self.file, line),
@@ -753,8 +813,8 @@ impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
             category: "unsafe_block".to_string(),
             rule_id: "rust.unsafe_block".to_string(),
             sink_name: "unsafe".to_string(),
-            severity_base: Severity::Medium,
-            reason: "Unsafe block can bypass Rust's memory safety guarantees".to_string(),
+            severity_base,
+            reason: reason.to_string(),
             conditions: BTreeMap::new(),
             confidence: Confidence::High,
         }));
@@ -1074,6 +1134,50 @@ fn risky_ops() {
         assert!(categories.contains(&"env_access"));
         assert!(categories.contains(&"deserialization"));
         assert!(categories.contains(&"unsafe_block"));
+    }
+
+    #[test]
+    fn unsafe_block_without_dangerous_op_is_low_severity() {
+        let result = extract(
+            r#"
+fn f() {
+    unsafe {
+        let x = 5;
+        let _ = x;
+    }
+}
+"#,
+        );
+
+        assert!(result.diagnostics.is_empty());
+        let sinks = sink_facts(&result);
+        let unsafe_sink = sinks
+            .iter()
+            .find(|s| s.category == "unsafe_block")
+            .expect("unsafe_block sink");
+        assert_eq!(unsafe_sink.severity_base, Severity::Low);
+    }
+
+    #[test]
+    fn unsafe_block_with_pointer_deref_is_medium_severity() {
+        let result = extract(
+            r#"
+fn f() {
+    unsafe {
+        let ptr = 0xdeadbeef as *const u8;
+        let _ = *ptr;
+    }
+}
+"#,
+        );
+
+        assert!(result.diagnostics.is_empty());
+        let sinks = sink_facts(&result);
+        let unsafe_sink = sinks
+            .iter()
+            .find(|s| s.category == "unsafe_block")
+            .expect("unsafe_block sink");
+        assert_eq!(unsafe_sink.severity_base, Severity::Medium);
     }
 
     #[test]

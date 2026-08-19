@@ -95,14 +95,20 @@ pub(crate) static SINK_RULES: &[SinkRule] = &[
             "serde_json::from_str",
             "serde_json::from_slice",
             "serde_json::from_reader",
-            "serde_yaml::from_str",
             "toml",
             "ron",
-            "bincode::deserialize",
         ],
         category: "deserialization",
         rule_id: "rust.deserialization",
         severity: Severity::Medium,
+        reason: "Deserialization of untrusted input (memory-safe format; still lacks schema validation)",
+        confidence: Confidence::High,
+    },
+    SinkRule {
+        patterns: &["bincode::deserialize", "serde_yaml::from_str"],
+        category: "deserialization",
+        rule_id: "rust.deserialization",
+        severity: Severity::High,
         reason: "Deserialization of untrusted input can cause type-confusion or RCE",
         confidence: Confidence::High,
     },
@@ -173,6 +179,13 @@ mod tests {
             .map(|rule| rule.category)
     }
 
+    fn matched_sink(callee: &str) -> Option<(&'static Severity, &'static str)> {
+        SINK_RULES
+            .iter()
+            .find(|rule| matches_sink(callee, rule.patterns))
+            .map(|rule| (&rule.severity, rule.reason))
+    }
+
     #[test]
     fn classifies_extended_rust_sinks() {
         assert_eq!(category_for("std::process::Command::new"), Some("command_execution"));
@@ -185,5 +198,16 @@ mod tests {
         assert_eq!(category_for("tera::Tera::render"), Some("template_injection"));
         assert_eq!(category_for("serde_json::from_str"), Some("deserialization"));
         assert_eq!(category_for("libloading::Library::new"), Some("dynamic_loading"));
+    }
+
+    #[test]
+    fn deserialization_reasons_split_by_library() {
+        let (sev, reason) = matched_sink("serde_json::from_str").expect("serde_json::from_str sink");
+        assert_eq!(sev, &Severity::Medium);
+        assert!(reason.contains("memory-safe"), "reason was: {reason}");
+
+        let (sev, reason) = matched_sink("bincode::deserialize").expect("bincode::deserialize sink");
+        assert_eq!(sev, &Severity::High);
+        assert!(reason.contains("RCE"), "reason was: {reason}");
     }
 }
