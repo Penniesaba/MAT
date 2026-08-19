@@ -55,6 +55,8 @@ pub(crate) fn expr_to_string(expr: &Expr) -> String {
             let name = syn_path_to_string(&strct.path);
             format!("{name} {{ ... }}")
         }
+        Expr::Try(try_expr) => format!("{}?", expr_to_string(&try_expr.expr)),
+        Expr::Unsafe(_) => format!("unsafe {{ ... }}"),
         _ => format!("<{expr:?}>"),
     }
 }
@@ -264,5 +266,26 @@ pub(crate) fn pat_to_string(pat: &Pat) -> String {
             format!("{{ {} }}", fields.join(", "))
         }
         _ => "<pat>".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::expr_to_string;
+
+    #[test]
+    fn try_expr_renders_as_source_not_debug() {
+        let e: syn::Expr = syn::parse_str("foo()?").unwrap();
+        let s = expr_to_string(&e);
+        assert!(!s.contains("<Expr::"), "debug dump leaked: {s}");
+        assert_eq!(s, "foo()?");
+    }
+
+    #[test]
+    fn unsafe_expr_renders_as_placeholder_not_debug() {
+        let e: syn::Expr = syn::parse_str("unsafe { *p }").unwrap();
+        let s = expr_to_string(&e);
+        assert!(!s.contains("<Expr::"), "debug dump leaked: {s}");
+        assert_eq!(s, "unsafe { ... }");
     }
 }
