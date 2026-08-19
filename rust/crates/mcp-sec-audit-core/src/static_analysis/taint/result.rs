@@ -47,7 +47,8 @@ pub fn build_taint_results(
             let dataflow_path: Vec<String> = path
                 .steps
                 .iter()
-                .filter_map(|s| s.snippet.clone())
+                .filter_map(|s| s.snippet.clone().or_else(|| s.name.clone()))
+                .filter(|s| !s.is_empty())
                 .collect();
 
             let evidence: Vec<String> = path
@@ -83,6 +84,21 @@ pub fn build_taint_results(
         .collect()
 }
 
+/// Derive the source file path from a `sink:<category>:<rel_path>:<line>` id.
+///
+/// The id is produced by `facts::ids::make_sink_id`, e.g.
+/// `sink:command_execution:main.rs:33` -> `main.rs`. Paths that themselves
+/// contain `:` (rare, but possible on some filesystems) are preserved because
+/// only the leading `sink:`/category and the trailing line are stripped.
+fn file_from_sink_id(sink_id: &str) -> String {
+    let parts: Vec<&str> = sink_id.split(':').collect();
+    if parts.len() >= 4 {
+        parts[2..parts.len() - 1].join(":")
+    } else {
+        String::new()
+    }
+}
+
 /// Convert propagation paths into DataFlowFact values for persistence.
 pub fn build_dataflow_facts(
     paths: &[PropagationPath],
@@ -90,7 +106,7 @@ pub fn build_dataflow_facts(
     paths
         .iter()
         .map(|path| {
-            let file = "".to_string(); // Derive from source/sink context
+            let file = file_from_sink_id(&path.sink_id);
             let line = path.steps.first().map(|s| s.line).unwrap_or(0);
             Fact::Dataflow(DataFlowFact {
                 base: FactBase {
@@ -194,12 +210,42 @@ mod tests {
         assert_eq!(facts.len(), 1);
         if let Fact::Dataflow(df) = &facts[0] {
             assert!(df.base.id.starts_with("dataflow:"));
+            assert_eq!(df.base.file, "s.py");
             assert_eq!(df.source_id, "source:s.py:handler:cmd");
             assert_eq!(df.sink_id, "sink:cmd:s.py:3");
             assert_eq!(df.confidence, Confidence::Medium);
         } else {
             panic!("Expected Dataflow fact");
         }
+    }
+
+    #[test]
+    fn taint_results_dataflow_path_falls_back_to_name() {
+        let g = make_test_graph();
+        let paths = vec![PropagationPath {
+            source_id: "source:s.py:handler:cmd".into(),
+            sink_id: "sink:cmd:s.py:3".into(),
+            entrypoint_id: Some("entry:s.py:handler".into()),
+            steps: vec![
+                PathStep {
+                    kind: PathStepKind::Param,
+                    line: 3,
+                    name: Some("cmd".into()),
+                    function: Some("python:s.py:handler".into()),
+                    from_: None,
+                    to: None,
+                    snippet: None,
+                    call_id: Some("call:s.py:3:0".into()),
+                    arg_index: Some(0),
+                },
+            ],
+            confidence: Confidence::High,
+            has_external_call: true,
+        }];
+
+        let results = build_taint_results(&paths, &g);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].dataflow_path, vec!["cmd".to_string()]);
     }
 
     #[test]
