@@ -116,7 +116,7 @@ pub fn run_static_scan_with_progress(
     } else {
         "CodeQL analysis: skipped (disabled)"
     });
-    let codeql_output = codeql::run(&ctx)?;
+    let codeql_output = codeql::run(&ctx, &mut progress)?;
     progress(&format!(
         "CodeQL analysis done: {} findings",
         codeql_output.results.len()

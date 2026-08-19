@@ -21,7 +21,7 @@ const SUPPORTED_LANGUAGES: &[&str] = &["python", "javascript", "typescript"];
 /// Filters to Python/JS/TS targets, creates CodeQL databases per language,
 /// runs analysis with built-in or custom queries, and parses SARIF output
 /// into structured results.
-pub fn run(ctx: &StaticScanContext) -> Result<CodeqlOutput> {
+pub fn run(ctx: &StaticScanContext, mut progress: impl FnMut(&str)) -> Result<CodeqlOutput> {
     let codeql_config = &ctx.config.static_.codeql;
 
     if !codeql_config.enabled {
@@ -40,6 +40,7 @@ pub fn run(ctx: &StaticScanContext) -> Result<CodeqlOutput> {
         .collect();
 
     if supported_files.is_empty() {
+        progress("CodeQL skipped: no supported language in target");
         let mut output = CodeqlOutput::empty();
         let total = ctx.discovered_files.len();
         output.diagnostics.push(format!(
@@ -160,7 +161,7 @@ mod tests {
             rulebook_paths: Vec::new(),
             discovered_files: Vec::new(),
         };
-        let output = run(&ctx).expect("run disabled codeql");
+        let output = run(&ctx, |_| {}).expect("run disabled codeql");
         assert!(output.results.is_empty());
         assert!(output.raw_sarif.is_none());
         assert!(output.diagnostics.is_empty());
@@ -176,9 +177,28 @@ mod tests {
             discovered_files: Vec::new(),
         };
         // Safe even without CodeQL CLI: no files → returns before CLI check.
-        let output = run(&ctx).expect("run codeql with no files");
+        let output = run(&ctx, |_| {}).expect("run codeql with no files");
         assert!(output.results.is_empty());
         assert!(!output.diagnostics.is_empty());
         assert!(output.diagnostics[0].contains("No Python/JS/TS files"));
+    }
+
+    #[test]
+    fn unsupported_language_emits_skip_progress() {
+        use crate::static_analysis::discovery::{DiscoveredFile, ScanLanguage};
+        let mut config = RuntimeConfig::default();
+        config.static_.codeql.enabled = true;
+        let ctx = StaticScanContext {
+            config,
+            rulebook_paths: Vec::new(),
+            discovered_files: vec![DiscoveredFile {
+                path: "main.rs".into(),
+                language: ScanLanguage::Rust,
+            }],
+        };
+        let mut messages: Vec<String> = Vec::new();
+        let output = run(&ctx, |m| messages.push(m.to_string())).expect("run");
+        assert!(output.results.is_empty());
+        assert!(messages.iter().any(|m| m.contains("CodeQL skipped")));
     }
 }
