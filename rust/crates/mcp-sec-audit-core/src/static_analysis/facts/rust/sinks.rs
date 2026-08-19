@@ -165,6 +165,10 @@ pub(crate) fn matches_sink(callee: &str, patterns: &[&str]) -> bool {
             || callee.ends_with(&format!("::{pattern}"))
             || callee.starts_with(&format!("{pattern}::"))
             || callee.starts_with(&format!("{pattern}<"))
+            // Flattened method chains render `receiver.method(...)` as
+            // `std::fs::write(...).map_err`, so the sink's base callee is
+            // followed by `(` rather than `::`.
+            || callee.starts_with(&format!("{pattern}("))
     })
 }
 

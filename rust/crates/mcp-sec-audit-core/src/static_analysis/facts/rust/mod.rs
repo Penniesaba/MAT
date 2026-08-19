@@ -705,7 +705,7 @@ impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
         // the same line still keep distinct columns.
         if self.seen_calls.insert((line, column)) {
             let (normalized_callee, import_alias) = self.resolve_callee(&callee);
-            let args = calls::extract_call_args(&node.args);
+            let args = calls::extract_method_chain_args(node);
             let call_id = make_call_id(&self.root, &self.file, line, column);
 
             self.facts.push(Fact::Call(CallFact {
