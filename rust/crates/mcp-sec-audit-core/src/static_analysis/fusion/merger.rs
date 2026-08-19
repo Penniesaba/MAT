@@ -289,6 +289,9 @@ mod tests {
                 result_id: "ql:1".into(),
                 rule_id: "py/cmd-injection".into(),
                 rule_name: "Command Injection".into(),
+                category: "command_execution".into(),
+                query_source: "built-in".into(),
+                languages: vec!["python".into()],
                 message: "User input reaches shell".into(),
                 severity: Severity::High,
                 locations: vec![Location {

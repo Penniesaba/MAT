@@ -84,6 +84,15 @@ pub struct CodeqlAnalysisResult {
     pub result_id: String,
     pub rule_id: String,
     pub rule_name: String,
+    /// Category in the shared rule/taint vocabulary (e.g. "command_execution").
+    #[serde(default = "default_uncategorized")]
+    pub category: String,
+    /// Where the query came from: "built-in" or a custom pack path.
+    #[serde(default)]
+    pub query_source: String,
+    /// Languages the database was built for.
+    #[serde(default)]
+    pub languages: Vec<String>,
     pub message: String,
     pub severity: Severity,
     pub locations: Vec<Location>,
@@ -105,6 +114,10 @@ pub struct CodeqlAnalysisResult {
 
 fn default_verification_status() -> String {
     "uncorroborated".to_string()
+}
+
+fn default_uncategorized() -> String {
+    "uncategorized".to_string()
 }
 
 /// Composite output from the CodeQL line — structured results + raw SARIF + diagnostics.

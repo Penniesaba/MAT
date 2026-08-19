@@ -440,6 +440,9 @@ mod tests {
             result_id: id.to_string(),
             rule_id: rule_id.to_string(),
             rule_name: format!("{rule_id} rule"),
+            category: "command_execution".to_string(),
+            query_source: "built-in".to_string(),
+            languages: vec!["python".to_string()],
             message: "CodeQL finding".to_string(),
             severity,
             locations: vec![Location {

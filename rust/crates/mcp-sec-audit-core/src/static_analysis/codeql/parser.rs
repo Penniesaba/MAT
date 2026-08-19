@@ -3,18 +3,88 @@ use anyhow::Result;
 use crate::model::{CodeqlAnalysisResult, DataFlowPath, DataFlowPathStep, Location, Severity};
 
 /// Metadata attached to every result from this CodeQL run.
-///
-/// Reserved for annotating results with their query source and languages; the
-/// SARIF parser does not yet attach these fields to `CodeqlAnalysisResult`.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct CodeqlMetadata {
     pub query_source: String, // "built-in" or custom path
     pub languages: Vec<String>,
 }
 
+/// Categories in the shared vocabulary (snake_case).
+const KNOWN_CATEGORIES: &[&str] = &[
+    "command_execution",
+    "dynamic_execution",
+    "database_injection",
+    "file_read",
+    "file_write",
+    "network_request",
+    "deserialization",
+    "template_injection",
+    "path_traversal",
+    "prompt_injection",
+    "data_exfiltration",
+    "tool_poisoning",
+    "unsafe_block",
+    "env_access",
+];
+
+fn normalize_tag(tag: &str) -> String {
+    tag.trim().replace('-', "_").replace(' ', "_").to_lowercase()
+}
+
+/// Extract a shared-vocabulary category from a SARIF rule's `properties.tags`.
+fn category_from_tags(rule: &serde_json::Value) -> Option<String> {
+    let tags = rule.get("properties")?.get("tags")?;
+    let list: Vec<String> = if let Some(arr) = tags.as_array() {
+        arr.iter()
+            .filter_map(|t| t.as_str().map(str::to_string))
+            .collect()
+    } else if let Some(s) = tags.as_str() {
+        s.split(',').map(|t| t.trim().to_string()).collect()
+    } else {
+        return None;
+    };
+    list.iter().find_map(|t| {
+        let n = normalize_tag(t);
+        KNOWN_CATEGORIES.contains(&n.as_str()).then(|| n)
+    })
+}
+
+/// Curated map from official CodeQL rule ids to shared categories.
+fn category_from_rule_id(rule_id: &str) -> Option<String> {
+    let cat = match rule_id {
+        "rust/sql-injection" => "database_injection",
+        "rust/ssrf" => "network_request",
+        "rust/path-injection" => "path_traversal",
+        "rust/invalid-pointer-access" | "rust/access-invalid-pointer" => "unsafe_block",
+        "py/cmd-injection" | "py/command-injection" => "command_execution",
+        "py/sql-injection" => "database_injection",
+        "py/ssrf" => "network_request",
+        "py/path-injection" => "path_traversal",
+        "py/deserialization" => "deserialization",
+        "py/code-injection" => "dynamic_execution",
+        "js/command-line-injection" => "command_execution",
+        "js/sql-injection" => "database_injection",
+        "js/ssrf" => "network_request",
+        "js/path-injection" => "path_traversal",
+        "js/code-injection" => "dynamic_execution",
+        _ => return None,
+    };
+    Some(cat.to_string())
+}
+
+/// Resolve a result's category: our query's `@tags` first, then the curated
+/// official rule_id map, then "uncategorized".
+pub fn resolve_category(rule_id: &str, rule: Option<&serde_json::Value>) -> String {
+    if let Some(rule) = rule {
+        if let Some(cat) = category_from_tags(rule) {
+            return cat;
+        }
+    }
+    category_from_rule_id(rule_id).unwrap_or_else(|| "uncategorized".to_string())
+}
+
 /// Parse SARIF v2.1.0 JSON output from CodeQL into structured results.
-pub fn parse_sarif(sarif_json: &str, _metadata: &CodeqlMetadata) -> Result<Vec<CodeqlAnalysisResult>> {
+pub fn parse_sarif(sarif_json: &str, metadata: &CodeqlMetadata) -> Result<Vec<CodeqlAnalysisResult>> {
     let root: serde_json::Value =
         serde_json::from_str(sarif_json).map_err(|e| anyhow::anyhow!("invalid SARIF JSON: {}", e))?;
 
@@ -56,6 +126,9 @@ pub fn parse_sarif(sarif_json: &str, _metadata: &CodeqlMetadata) -> Result<Vec<C
                 .unwrap_or(&rule_id)
                 .to_string();
 
+            let rule = rule_index.get(rule_id.as_str()).copied();
+            let category = resolve_category(&rule_id, rule);
+
             let message = sr["message"]["text"]
                 .as_str()
                 .unwrap_or("")
@@ -92,6 +165,9 @@ pub fn parse_sarif(sarif_json: &str, _metadata: &CodeqlMetadata) -> Result<Vec<C
                 result_id,
                 rule_id,
                 rule_name,
+                category,
+                query_source: metadata.query_source.clone(),
+                languages: metadata.languages.clone(),
                 message,
                 severity,
                 locations,
@@ -403,5 +479,20 @@ mod tests {
 }"#;
         let results = parse_sarif(sarif, &metadata()).expect("parse SARIF");
         assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn extracts_category_from_tags_and_rule_id_map() {
+        // Our query: @tags carry the category directly (kebab → snake).
+        assert_eq!(
+            resolve_category("mcp/python/command-execution", Some(&serde_json::json!({
+                "properties": { "tags": ["security", "mcp", "command-execution"] }
+            }))),
+            "command_execution"
+        );
+        // Official query: curated rule_id → category map.
+        assert_eq!(resolve_category("rust/sql-injection", None), "database_injection");
+        // Unknown: uncategorized fallback.
+        assert_eq!(resolve_category("rust/unknown-thing", None), "uncategorized");
     }
 }

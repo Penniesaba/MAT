@@ -159,6 +159,9 @@ pub fn synthetic_codeql_analysis_result() -> CodeqlAnalysisResult {
         result_id: "codeql:py/command-injection:server.py:42".to_string(),
         rule_id: "py/command-injection".to_string(),
         rule_name: "Uncontrolled command line".to_string(),
+        category: "command_execution".to_string(),
+        query_source: "built-in".to_string(),
+        languages: vec!["python".to_string()],
         message: "This command line depends on a user-provided value.".to_string(),
         severity: Severity::High,
         locations: vec![Location {
