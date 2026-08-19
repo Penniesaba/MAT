@@ -26,6 +26,11 @@ pub(crate) fn extract_method_chain_args(node: &syn::ExprMethodCall) -> Vec<CallA
     let mut args = Vec::new();
     collect_receiver_args(&node.receiver, &mut args);
     args.extend(extract_call_args(&node.args));
+    // Each sub-call's extract_call_args restarts `index` at 0, so re-index the
+    // flattened list to keep arg_index unique and monotonically increasing.
+    for (i, arg) in args.iter_mut().enumerate() {
+        arg.index = i as u32;
+    }
     args
 }
 
