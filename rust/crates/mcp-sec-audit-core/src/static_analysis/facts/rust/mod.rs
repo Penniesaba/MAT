@@ -493,46 +493,12 @@ impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
     fn visit_expr_call(&mut self, node: &'ast ExprCall) {
         let line = self.line_of(node);
         let column = self.column_of(node);
-
-        if !self.seen_calls.insert((line, column)) {
-            // Same span start as an already-emitted level of this method chain.
-            // Skip emitting, but still recurse so nested distinct calls are seen.
-            syn::visit::visit_expr_call(self, node);
-            return;
-        }
-
         let file = self.rel_path();
         let callee = display::expr_to_string(&node.func);
-        let (normalized_callee, import_alias) = self.resolve_callee(&callee);
-        let args = calls::extract_call_args(&node.args);
-        let call_id = make_call_id(&self.root, &self.file, line, column);
         let caller = self.caller_function_id().unwrap_or_default();
 
-        self.facts.push(Fact::Call(CallFact {
-            base: FactBase {
-                id: call_id.clone(),
-                file: file.clone(),
-                line,
-                extractor: EXTRACTOR_NAME.to_string(),
-            },
-            caller: caller.clone(),
-            callee: callee.clone(),
-            normalized_callee: Some(normalized_callee.clone()),
-            column: Some(column),
-            end_line: Some(line),
-            snippet: String::new(),
-            args,
-            kwargs: BTreeMap::new(),
-            resolution: import_alias.map(|alias| crate::model::CallResolution {
-                import_alias: Some(alias),
-                confidence: Confidence::High,
-            }),
-        }));
-
-        // Check sinks
-        self.check_sink(&normalized_callee, &call_id, line);
-
-        // Check MCP registration via function call (e.g. server.tool("name", |params| {...}))
+        // MCP registration detection runs for every call, even dedup'd levels of
+        // a method chain, so chained registrations are not lost.
         if mcp::is_mcp_registration(&callee) {
             if let Some(first_arg) = node.args.first() {
                 let tool_name = display::expr_to_string(first_arg).trim_matches('"').to_string();
@@ -593,53 +559,52 @@ impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
             }
         }
 
+        // Only the CallFact + sink are dedup'd per span start; distinct calls on
+        // the same line still keep distinct columns.
+        if self.seen_calls.insert((line, column)) {
+            let (normalized_callee, import_alias) = self.resolve_callee(&callee);
+            let args = calls::extract_call_args(&node.args);
+            let call_id = make_call_id(&self.root, &self.file, line, column);
+
+            self.facts.push(Fact::Call(CallFact {
+                base: FactBase {
+                    id: call_id.clone(),
+                    file: file.clone(),
+                    line,
+                    extractor: EXTRACTOR_NAME.to_string(),
+                },
+                caller: caller.clone(),
+                callee: callee.clone(),
+                normalized_callee: Some(normalized_callee.clone()),
+                column: Some(column),
+                end_line: Some(line),
+                snippet: String::new(),
+                args,
+                kwargs: BTreeMap::new(),
+                resolution: import_alias.map(|alias| crate::model::CallResolution {
+                    import_alias: Some(alias),
+                    confidence: Confidence::High,
+                }),
+            }));
+
+            // Check sinks
+            self.check_sink(&normalized_callee, &call_id, line);
+        }
+
         syn::visit::visit_expr_call(self, node);
     }
 
     fn visit_expr_method_call(&mut self, node: &'ast ExprMethodCall) {
         let line = self.line_of(node);
         let column = self.column_of(node);
-
-        if !self.seen_calls.insert((line, column)) {
-            // Same span start as an already-emitted level of this method chain.
-            // Skip emitting, but still recurse so nested distinct calls are seen.
-            syn::visit::visit_expr_method_call(self, node);
-            return;
-        }
-
         let file = self.rel_path();
         let method = node.method.to_string();
         let receiver = display::expr_to_string(&node.receiver);
         let callee = format!("{receiver}.{method}");
-        let (normalized_callee, import_alias) = self.resolve_callee(&callee);
-        let args = calls::extract_call_args(&node.args);
-        let call_id = make_call_id(&self.root, &self.file, line, column);
         let caller = self.caller_function_id().unwrap_or_default();
 
-        self.facts.push(Fact::Call(CallFact {
-            base: FactBase {
-                id: call_id.clone(),
-                file: file.clone(),
-                line,
-                extractor: EXTRACTOR_NAME.to_string(),
-            },
-            caller: caller.clone(),
-            callee: callee.clone(),
-            normalized_callee: Some(normalized_callee.clone()),
-            column: Some(column),
-            end_line: Some(line),
-            snippet: String::new(),
-            args,
-            kwargs: BTreeMap::new(),
-            resolution: import_alias.map(|alias| crate::model::CallResolution {
-                import_alias: Some(alias),
-                confidence: Confidence::High,
-            }),
-        }));
-
-        self.check_sink(&normalized_callee, &call_id, line);
-
-        // MCP registration via method call (e.g. server.tool("name", handler))
+        // MCP registration detection runs for every method call, even dedup'd
+        // levels of a method chain, so chained registrations are not lost.
         if mcp::is_mcp_registration(&method)
             && let Some(first_arg) = node.args.first()
         {
@@ -686,6 +651,37 @@ impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
                     closure_sig.as_ref(),
                 );
             }
+        }
+
+        // Only the CallFact + sink are dedup'd per span start; distinct calls on
+        // the same line still keep distinct columns.
+        if self.seen_calls.insert((line, column)) {
+            let (normalized_callee, import_alias) = self.resolve_callee(&callee);
+            let args = calls::extract_call_args(&node.args);
+            let call_id = make_call_id(&self.root, &self.file, line, column);
+
+            self.facts.push(Fact::Call(CallFact {
+                base: FactBase {
+                    id: call_id.clone(),
+                    file: file.clone(),
+                    line,
+                    extractor: EXTRACTOR_NAME.to_string(),
+                },
+                caller: caller.clone(),
+                callee: callee.clone(),
+                normalized_callee: Some(normalized_callee.clone()),
+                column: Some(column),
+                end_line: Some(line),
+                snippet: String::new(),
+                args,
+                kwargs: BTreeMap::new(),
+                resolution: import_alias.map(|alias| crate::model::CallResolution {
+                    import_alias: Some(alias),
+                    confidence: Confidence::High,
+                }),
+            }));
+
+            self.check_sink(&normalized_callee, &call_id, line);
         }
 
         syn::visit::visit_expr_method_call(self, node);
@@ -1205,5 +1201,33 @@ fn my_handler(params: Value) -> Result<(), String> {
         assert_eq!(entries[0].name, "my_tool");
         assert_eq!(entries[0].evidence.as_ref().unwrap().kind, "sdk_call");
         assert_eq!(entries[0].params, Vec::<String>::new());
+    }
+
+    #[test]
+    fn preserves_chained_mcp_registration_entrypoints_under_dedup() {
+        let result = extract(
+            r#"
+fn register(server: &mut Server) {
+    server.tool("tool_a", |params: Value| {
+        println!("got: {:?}", params);
+        Ok(())
+    })
+    .tool("tool_b", |params: Value| {
+        println!("got: {:?}", params);
+        Ok(())
+    });
+}
+"#,
+        );
+
+        assert!(result.diagnostics.is_empty());
+        let entries = entrypoint_facts(&result);
+
+        // Dedup collapses the chain to a single call/sink, but BOTH chained
+        // MCP registrations must still be detected as entrypoints.
+        assert_eq!(entries.len(), 2, "expected two entrypoints, got {entries:?}");
+        assert!(entries.iter().any(|e| e.name == "tool_a"));
+        assert!(entries.iter().any(|e| e.name == "tool_b"));
+        assert!(entries.iter().all(|e| e.kind == EntryPointKind::McpTool));
     }
 }
