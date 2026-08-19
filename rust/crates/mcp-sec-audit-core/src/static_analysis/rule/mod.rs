@@ -60,7 +60,8 @@ fn analyze_rule_line(
                     continue;
                 }
 
-                let matches = match_indicator(indicator, &input.text).with_context(|| {
+                let matches = match_indicator(indicator, &input.text, &input.aliases)
+                    .with_context(|| {
                     format!("match indicator for capability '{}'", capability.name)
                 })?;
                 if matches.is_empty() {
@@ -130,6 +131,9 @@ struct RuleInput {
     file: String,
     language: &'static str,
     text: String,
+    /// Rust `use`-derived alias -> full path mapping (e.g. `fs` -> `std::fs`),
+    /// parsed from the RAW source before masking. Empty for non-Rust files.
+    aliases: Vec<(String, String)>,
 }
 
 #[derive(Debug)]
@@ -145,10 +149,16 @@ fn collect_inputs(files: &[DiscoveredFile]) -> Result<Vec<RuleInput>> {
             continue;
         };
         let language = effective_language(file);
+        let aliases = if language == "rust" {
+            parse_rust_aliases(&text)
+        } else {
+            Vec::new()
+        };
         inputs.push(RuleInput {
             file: file.path.display().to_string(),
             language,
             text: mask_non_code(&text, language),
+            aliases,
         });
     }
     Ok(inputs)
@@ -184,6 +194,218 @@ fn load_text_for_rule_analysis(file: &DiscoveredFile) -> Result<Option<String>> 
     }
 
     Ok(Some(tool_content.to_string()))
+}
+
+/// Parse `use` statements from RAW (unmasked) Rust source into an
+/// `alias -> full path` mapping. This must run on the raw text because
+/// `mask_rust` blanks out `use`/`mod`/`extern crate` statements.
+fn parse_rust_aliases(text: &str) -> Vec<(String, String)> {
+    let bytes = text.as_bytes();
+    let n = bytes.len();
+    let mut aliases = Vec::new();
+    let mut i = 0;
+    while i < n {
+        let b = bytes[i];
+        // Skip line comments so `// use std::fs;` isn't parsed.
+        if b == b'/' && i + 1 < n && bytes[i + 1] == b'/' {
+            i += 2;
+            while i < n && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        // Skip block comments.
+        if b == b'/' && i + 1 < n && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < n && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            i = (i + 2).min(n);
+            continue;
+        }
+        // Skip string literals so `use` inside a string isn't parsed.
+        if b == b'"' {
+            skip_quoted_string(bytes, &mut i);
+            continue;
+        }
+        if is_use_keyword_at(bytes, i) {
+            i += b"use".len();
+            while i < n && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'\n') {
+                i += 1;
+            }
+            let start = i;
+            let mut depth = 0usize;
+            let mut end = start;
+            while end < n {
+                match bytes[end] {
+                    b'{' => depth += 1,
+                    b'}' => depth = depth.saturating_sub(1),
+                    b';' if depth == 0 => break,
+                    _ => {}
+                }
+                end += 1;
+            }
+            parse_use_tree(&text[start..end], "", &mut aliases);
+            i = (end + 1).min(n);
+            continue;
+        }
+        i += 1;
+    }
+    aliases
+}
+
+/// `use` keyword at a statement boundary, followed by whitespace.
+fn is_use_keyword_at(bytes: &[u8], i: usize) -> bool {
+    let at_boundary = i == 0
+        || bytes[i - 1] == b'\n'
+        || bytes[i - 1] == b'{'
+        || bytes[i - 1] == b'}'
+        || bytes[i - 1] == b';'
+        || bytes[i - 1] == b' '
+        || bytes[i - 1] == b'\t';
+    at_boundary
+        && bytes[i..].starts_with(b"use")
+        && i + 3 < bytes.len()
+        && (bytes[i + 3] == b' ' || bytes[i + 3] == b'\t' || bytes[i + 3] == b'\n')
+}
+
+/// Recursively resolve a `use` tree fragment into `(alias, full_path)` pairs.
+/// Handles groups (`{a, b}`), renames (`path as Alias`), nested paths
+/// (`a::b::c`), globs (`*`) and `self`.
+fn parse_use_tree(s: &str, prefix: &str, out: &mut Vec<(String, String)>) {
+    let s = s.trim();
+    if s.is_empty() {
+        return;
+    }
+
+    if s.starts_with('{') {
+        if let Some(end) = matching_brace(s) {
+            for item in split_top_level_commas(&s[1..end]) {
+                parse_use_tree(item, prefix, out);
+            }
+        }
+        return;
+    }
+
+    if let Some(pos) = find_top_level_as(s) {
+        let lhs = s[..pos].trim();
+        let alias = s[pos + 4..].trim();
+        if !alias.is_empty() && alias != "_" {
+            let full = join_path(prefix, lhs);
+            if !full.is_empty() {
+                out.push((alias.to_string(), full));
+            }
+        }
+        return;
+    }
+
+    if let Some(pos) = find_top_level_double_colon(s) {
+        let head = s[..pos].trim();
+        let tail = s[pos + 2..].trim();
+        let new_prefix = join_path(prefix, head);
+        parse_use_tree(tail, &new_prefix, out);
+        return;
+    }
+
+    if s == "*" || s == "_" || s == "self" {
+        return;
+    }
+    let full = join_path(prefix, s);
+    if !full.is_empty() {
+        out.push((s.to_string(), full));
+    }
+}
+
+/// Index of the matching `}` for a string that starts with `{`.
+fn matching_brace(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut depth = 0usize;
+    for (idx, &b) in bytes.iter().enumerate() {
+        match b {
+            b'{' => depth += 1,
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Split a group body on top-level commas (ignoring commas nested in braces).
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    let bytes = s.as_bytes();
+    let mut depth = 0usize;
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (idx, &b) in bytes.iter().enumerate() {
+        match b {
+            b'{' => depth += 1,
+            b'}' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
+                out.push(&s[start..idx]);
+                start = idx + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&s[start..]);
+    out
+}
+
+/// Index of the top-level ` as ` (rename) in a `use` tree, or None.
+fn find_top_level_as(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut depth = 0usize;
+    let mut i = 0;
+    while i + 3 < bytes.len() {
+        match bytes[i] {
+            b'{' => depth += 1,
+            b'}' => depth = depth.saturating_sub(1),
+            _ if depth == 0
+                && bytes[i] == b' '
+                && bytes[i + 1] == b'a'
+                && bytes[i + 2] == b's'
+                && bytes[i + 3] == b' ' =>
+            {
+                return Some(i);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Index of the first top-level `::` in a `use` tree, or None.
+fn find_top_level_double_colon(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut depth = 0usize;
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        match bytes[i] {
+            b'{' => depth += 1,
+            b'}' => depth = depth.saturating_sub(1),
+            b':' if depth == 0 && bytes[i + 1] == b':' => return Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+fn join_path(prefix: &str, segment: &str) -> String {
+    let segment = segment.trim();
+    if prefix.is_empty() {
+        segment.to_string()
+    } else if segment.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{prefix}::{segment}")
+    }
 }
 
 /// Mask non-code regions (comments, docstrings) with spaces so that keyword and
@@ -375,23 +597,33 @@ fn indicator_applies_to_language(indicator: &IndicatorRule, language: &str) -> b
     indicator.languages.iter().any(|item| item == language)
 }
 
-fn match_indicator(indicator: &IndicatorRule, text: &str) -> Result<Vec<TextMatch>> {
+fn match_indicator(
+    indicator: &IndicatorRule,
+    text: &str,
+    aliases: &[(String, String)],
+) -> Result<Vec<TextMatch>> {
     match indicator.indicator_type.as_str() {
-        "keyword" => Ok(match_keyword_indicator(indicator, text)),
+        "keyword" => Ok(match_keyword_indicator(indicator, text, aliases)),
         "regex" => match_regex_indicator(indicator, text),
         _ => Ok(Vec::new()),
     }
 }
 
-fn match_keyword_indicator(indicator: &IndicatorRule, text: &str) -> Vec<TextMatch> {
+fn match_keyword_indicator(
+    indicator: &IndicatorRule,
+    text: &str,
+    aliases: &[(String, String)],
+) -> Vec<TextMatch> {
     let haystack = if indicator.case_sensitive {
         text.to_string()
     } else {
         text.to_lowercase()
     };
 
+    let patterns = expanded_patterns(&indicator.patterns, aliases);
+
     let mut matches = Vec::new();
-    for pattern in &indicator.patterns {
+    for pattern in &patterns {
         let needle = if indicator.case_sensitive {
             pattern.clone()
         } else {
@@ -405,6 +637,25 @@ fn match_keyword_indicator(indicator: &IndicatorRule, text: &str) -> Vec<TextMat
         }
     }
     matches
+}
+
+/// Expand keyword patterns through Rust `use` aliases. For every pattern that
+/// starts with a full path (e.g. `std::fs::write`) and every alias mapping to
+/// that path (`fs` -> `std::fs`), also emit the alias-qualified short form
+/// (`fs::write`) so `use std::{fs, io};` followed by `fs::write(...)` matches.
+fn expanded_patterns(patterns: &[String], aliases: &[(String, String)]) -> Vec<String> {
+    let mut out = patterns.to_vec();
+    for pattern in patterns {
+        for (alias, full) in aliases {
+            if let Some(tail) = pattern.strip_prefix(full.as_str()) {
+                let expanded = format!("{alias}{tail}");
+                if !out.contains(&expanded) {
+                    out.push(expanded);
+                }
+            }
+        }
+    }
+    out
 }
 
 fn match_regex_indicator(indicator: &IndicatorRule, text: &str) -> Result<Vec<TextMatch>> {
@@ -808,6 +1059,39 @@ def fetch_url(url):
         assert_eq!(results[0].line, 3);
         assert!(!results[0].evidence.iter().any(|e| e.contains(":1:")));
 
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn rust_alias_import_matches_file_write() {
+        let root = temp_dir("rule-rust-alias");
+        let file = root.join("main.rs");
+        fs::write(
+            &file,
+            "use std::{fs, io};\nfn f(p: &str) { fs::write(p, b\"x\"); }\n",
+        )
+        .expect("write source");
+        let rulebook = parse_rulebook_toml(
+            r#"
+        [[capabilities]]
+        name = "file_write"
+        weight = 15.0
+        base_confidence = 0.35
+          [[capabilities.indicators]]
+          languages = ["rust"]
+          type = "keyword"
+          patterns = ["std::fs::write", "File::create"]
+        "#,
+        )
+        .expect("parse rules");
+        let ctx = context_with_files(vec![DiscoveredFile {
+            path: file,
+            language: ScanLanguage::Rust,
+        }]);
+        let results = analyze_rule_line(&ctx, &rulebook).expect("analyze rules");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].rule_id, "file_write");
+        assert_eq!(results[0].line, 2);
         fs::remove_dir_all(root).expect("cleanup");
     }
 
