@@ -295,8 +295,8 @@ pub fn render_markdown(result: &StaticAnalysisResult, options: &MarkdownRenderOp
 }
 
 /// Resolve a `[report].output` path template by replacing the `<timestamp>`
-/// placeholder with the current UTC timestamp (`%Y%m%d-%H%M%S`, e.g.
-/// `20260815-171234`). Paths without the placeholder are returned unchanged.
+/// placeholder with the current local timestamp (`%Y%m%d-%H%M%S`, e.g.
+/// `20260819-131244`). Paths without the placeholder are returned unchanged.
 ///
 /// The timestamp is generated once per call, so a single resolved value shared
 /// across all report formats keeps `.md`/`.json`/`.jsonl` on the same second.
@@ -304,7 +304,36 @@ pub fn resolve_output_path(output: &str) -> String {
     if !output.contains("<timestamp>") {
         return output.to_string();
     }
-    output.replace("<timestamp>", &current_utc_timestamp())
+    output.replace("<timestamp>", &current_local_timestamp())
+}
+
+/// Current local time formatted as `YYYYMMDD-HHMMSS`.
+fn current_local_timestamp() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as libc::time_t;
+
+    // `localtime_r` is reentrant: it writes the local-time breakdown into `tm`
+    // directly rather than sharing a static buffer across threads.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: `tm` outlives the call and is a valid writable buffer; `secs` is
+    // a valid `time_t`. `localtime_r` never reads from uninitialized `tm`.
+    let result = unsafe { libc::localtime_r(&secs, &mut tm) };
+    if result.is_null() {
+        // No local timezone data available on this platform — fall back to UTC.
+        return current_utc_timestamp();
+    }
+
+    format!(
+        "{:04}{:02}{:02}-{:02}{:02}{:02}",
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec,
+    )
 }
 
 /// Current UTC time formatted as `YYYYMMDD-HHMMSS`.
@@ -476,10 +505,22 @@ mod tests {
         let resolved = resolve_output_path("/tmp/report-<timestamp>");
         assert!(!resolved.contains("<timestamp>"));
         assert!(resolved.starts_with("/tmp/report-"));
-        // Format is `YYYYMMDD-HHMMSS`.
+        // Local format is `YYYYMMDD-HHMMSS`.
         let stamp = resolved.trim_start_matches("/tmp/report-");
         assert_eq!(stamp.len(), 15);
         assert_eq!(stamp.as_bytes()[8], b'-');
+    }
+
+    #[test]
+    fn local_timestamp_is_well_formed_and_whole_minute_offset() {
+        let local = current_local_timestamp();
+        let utc = current_utc_timestamp();
+        assert_eq!(local.len(), 15);
+        assert_eq!(utc.len(), 15);
+        // Timezone offsets are always a whole number of minutes, so the seconds
+        // field must agree between the local and UTC breakdowns even though the
+        // hours/minutes (and possibly the date) may shift.
+        assert_eq!(&local[13..15], &utc[13..15]);
     }
 
     #[test]

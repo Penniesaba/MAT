@@ -662,6 +662,7 @@ name = "mcp-sec-audit-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "libc",
  "proc-macro2",
  "regex",
  "rustpython-parser",
