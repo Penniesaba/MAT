@@ -337,6 +337,16 @@ fn mask_rust(text: &str) -> String {
                 }
                 i += 1;
             }
+        } else if is_rust_item_keyword_at(bytes, i) {
+            // use / mod / extern crate 项：掩码到行尾分号，保留换行。
+            while i < n && bytes[i] != b';' && bytes[i] != b'\n' {
+                out[i] = b' ';
+                i += 1;
+            }
+            if i < n && bytes[i] == b';' {
+                out[i] = b' ';
+                i += 1;
+            }
         } else if b == b'"' {
             // String literal: skip so `//` inside isn't a comment.
             skip_quoted_string(bytes, &mut i);
@@ -345,6 +355,20 @@ fn mask_rust(text: &str) -> String {
         }
     }
     String::from_utf8(out).expect("masked source must remain valid UTF-8")
+}
+
+fn is_rust_item_keyword_at(bytes: &[u8], i: usize) -> bool {
+    let at_boundary = i == 0
+        || bytes[i - 1] == b'\n'
+        || bytes[i - 1] == b'{'
+        || bytes[i - 1] == b' '
+        || bytes[i - 1] == b'\t';
+    if !at_boundary {
+        return false;
+    }
+    ["use ", "mod ", "extern crate "]
+        .iter()
+        .any(|kw| bytes[i..].starts_with(kw.as_bytes()))
 }
 
 fn indicator_applies_to_language(indicator: &IndicatorRule, language: &str) -> bool {
@@ -747,6 +771,42 @@ def fetch_url(url):
         assert_eq!(results[0].confidence, Confidence::High);
         assert!(results[0].evidence[0].contains("a.py"));
         assert!(results[0].evidence[1].contains("b.py"));
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn rust_use_statement_is_not_matched_as_code() {
+        let root = temp_dir("rule-rust-use");
+        let file = root.join("main.rs");
+        fs::write(
+            &file,
+            "use std::process::Command as ShellCmd;\nfn f() {\n    let o = ShellCmd::new(\"sh\").output();\n}\n",
+        )
+        .expect("write source");
+        let rulebook = parse_rulebook_toml(
+            r#"
+            [[capabilities]]
+            name = "command_execution"
+            weight = 25.0
+            base_confidence = 0.4
+              [[capabilities.indicators]]
+              languages = ["rust"]
+              type = "keyword"
+              patterns = ["std::process::Command", "Command::new", ".output()"]
+            "#,
+        )
+        .expect("parse rules");
+        let ctx = context_with_files(vec![DiscoveredFile {
+            path: file,
+            language: ScanLanguage::Rust,
+        }]);
+
+        let results = analyze_rule_line(&ctx, &rulebook).expect("analyze rules");
+        assert_eq!(results.len(), 1);
+        // 锚点应落在真实调用 .output() 的第 3 行，而非 use 语句的第 1 行
+        assert_eq!(results[0].line, 3);
+        assert!(!results[0].evidence.iter().any(|e| e.contains(":1:")));
 
         fs::remove_dir_all(root).expect("cleanup");
     }
