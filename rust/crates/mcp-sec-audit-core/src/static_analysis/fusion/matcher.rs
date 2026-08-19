@@ -13,6 +13,8 @@
 //! stage 1 proximity. Items that never match become single-item groups, so no
 //! result is silently dropped.
 
+use std::path::Path;
+
 use crate::model::{AgentAnalysisResult, CodeqlAnalysisResult, RuleAnalysisResult, TaintAnalysisResult};
 
 /// A group of related results from different analysis lines.
@@ -314,6 +316,15 @@ fn parse_first_location(locations: &[String]) -> (String, u32) {
     (String::new(), 0)
 }
 
+/// 取文件身份键：优先 basename（`a/b/main.rs` → `main.rs`）。
+/// 消除 rule（完整路径）与 fact-derived（basename）之间的路径不一致。
+fn file_key(file: &str) -> &str {
+    Path::new(file)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(file)
+}
+
 /// Stage 1: can the item at `candidate_idx` join `group` by sharing a file
 /// with a member whose line is within `line_proximity`?
 fn can_join_group_proximity(
@@ -325,7 +336,9 @@ fn can_join_group_proximity(
     let candidate = &items[candidate_idx];
     group.iter().any(|&member_idx| {
         let member = &items[member_idx];
-        member.file == candidate.file
+        let member_key = file_key(&member.file);
+        let candidate_key = file_key(&candidate.file);
+        member_key == candidate_key
             && member.line.abs_diff(candidate.line) <= line_proximity
     })
 }
@@ -337,7 +350,8 @@ fn can_join_group_category(candidate_idx: usize, group: &[usize], items: &[Match
     candidate.category.is_some()
         && group.iter().any(|&member_idx| {
             let member = &items[member_idx];
-            member.file == candidate.file && member.category == candidate.category
+            file_key(&member.file) == file_key(&candidate.file)
+                && member.category == candidate.category
         })
 }
 
@@ -576,5 +590,15 @@ mod tests {
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].line_count(), 1);
         assert_eq!(groups[0].supported_by(), vec!["codeql"]);
+    }
+
+    #[test]
+    fn matches_rule_full_path_with_taint_basename() {
+        // rule 用完整路径，taint sink_id 只含 basename —— 应能融合
+        let rules = vec![make_rule("r1", "proj/src/main.rs", 33, "cmd_inj", Confidence::High)];
+        let taints = vec![make_taint("t1", "sink:command_execution:main.rs:36", "command_execution", Confidence::Medium)];
+        let groups = match_results(rules, taints, vec![], vec![], 5);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].supported_by(), vec!["rule", "taint"]);
     }
 }
