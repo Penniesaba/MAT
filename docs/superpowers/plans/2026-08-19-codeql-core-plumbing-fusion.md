@@ -27,6 +27,7 @@ depends on the Rust QL API reference produced by Task 9 here.
 
 - CodeQL CLI binary default is `"codeql"` (on PATH); config override is `[static.codeql].binary`.
 - Standard packs are NOT bundled — `codeql/{python,javascript,rust}-queries` must be downloaded (Task 1).
+- **Pack refs are version-pinned** (CLI 2.26.2 cannot resolve unversioned/latest — see M0 findings): `codeql/python-queries@1.8.7`, `codeql/javascript-queries@2.4.2`, `codeql/rust-queries@0.1.39`. Revert to unversioned only after CLI upgrade to 2.26.3+.
 - Category vocabulary is snake_case: `command_execution`, `dynamic_execution`, `database_injection`, `file_read`, `file_write`, `network_request`, `deserialization`, `template_injection`, `path_traversal`, `prompt_injection`, `data_exfiltration`, `tool_poisoning`, `unsafe_block`, `env_access`.
 - Unknown/uncategorized CodeQL results use `category = "uncategorized"` (still fuse by line proximity).
 - `cargo test` must stay green at the end of every task.
@@ -636,11 +637,15 @@ impl QueryPack {
 }
 
 /// Standard security suite reference for a database language.
+///
+/// Version-pinned: CLI 2.26.2 cannot resolve unversioned pack refs from the
+/// local cache, and the latest packs (built by CLI 2.26.3) fail to download.
+/// See Global Constraints. Revert to unversioned refs after a CLI upgrade.
 fn standard_suite_refs_for(language: &str) -> Vec<String> {
     match language {
-        "python" => vec!["codeql/python-queries".to_string()],
-        "javascript" | "typescript" => vec!["codeql/javascript-queries".to_string()],
-        "rust" => vec!["codeql/rust-queries".to_string()],
+        "python" => vec!["codeql/python-queries@1.8.7".to_string()],
+        "javascript" | "typescript" => vec!["codeql/javascript-queries@2.4.2".to_string()],
+        "rust" => vec!["codeql/rust-queries@0.1.39".to_string()],
         _ => Vec::new(),
     }
 }
@@ -693,13 +698,13 @@ mod tests {
         assert!(pack.query_files.iter().any(|p| {
             p.file_name().and_then(|n| n.to_str()).map_or(false, |n| n.contains("ToolParameterToSink"))
         }));
-        assert_eq!(pack.suite_refs, vec!["codeql/python-queries"]);
+        assert_eq!(pack.suite_refs, vec!["codeql/python-queries@1.8.7"]);
     }
 
     #[test]
     fn rust_pack_has_rust_suite() {
         let pack = QueryPack::for_language("rust").expect("rust pack");
-        assert_eq!(pack.suite_refs, vec!["codeql/rust-queries"]);
+        assert_eq!(pack.suite_refs, vec!["codeql/rust-queries@0.1.39"]);
     }
 
     #[test]
