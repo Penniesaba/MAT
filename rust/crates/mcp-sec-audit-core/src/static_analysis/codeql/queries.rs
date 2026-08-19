@@ -9,8 +9,6 @@ pub struct QueryPack {
     pub query_files: Vec<PathBuf>,
     /// Standard query pack references for this language (e.g. "codeql/rust-queries@0.1.39").
     pub suite_refs: Vec<String>,
-    /// Whether this is a built-in pack (whose queries are language-native).
-    pub is_builtin: bool,
 }
 
 impl QueryPack {
@@ -28,7 +26,6 @@ impl QueryPack {
         Ok(Self {
             query_files,
             suite_refs: standard_suite_refs_for(language),
-            is_builtin: true,
         })
     }
 
@@ -48,7 +45,6 @@ impl QueryPack {
         Ok(Self {
             query_files,
             suite_refs: Vec::new(),
-            is_builtin: false,
         })
     }
 }
