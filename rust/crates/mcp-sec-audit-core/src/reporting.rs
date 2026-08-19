@@ -212,8 +212,8 @@ pub fn render_markdown(result: &StaticAnalysisResult, options: &MarkdownRenderOp
         }
         for finding in &result.fused_findings {
             lines.push(format!(
-                "- **{}** [{:?}] — {}",
-                finding.title, finding.confidence, finding.category
+                "- **{}** [sev: {:?}, conf: {:?}] — {}",
+                finding.title, finding.severity, finding.confidence, finding.category
             ));
             if !finding.supported_by.is_empty() {
                 lines.push(format!(
@@ -403,6 +403,9 @@ mod tests {
         assert!(markdown.contains("# Static Analysis Summary"));
         assert!(markdown.contains("## Fused Findings"));
         assert!(markdown.contains("Command execution reachable from MCP tool"));
+        // Fused findings label both severity and confidence so the per-finding
+        // line agrees with the summary's `Risk Level` (derived from severity).
+        assert!(markdown.contains("[sev: High, conf: High]"));
         // Raw per-line sections now render by default.
         assert!(markdown.contains("## Raw Rule Results"));
         assert!(markdown.contains("## Raw Taint Results"));
