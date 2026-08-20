@@ -6,6 +6,7 @@ mod codeql;
 mod discovery;
 mod fusion;
 mod pipeline;
+pub(crate) mod recon;
 mod rule;
 mod taint;
 
