@@ -43,6 +43,10 @@ pub struct StaticConfig {
     pub agent: StaticAgentConfig,
     #[serde(default)]
     pub codeql: StaticCodeqlConfig,
+    /// Optional directory of extra sink-model YAML files, merged onto the
+    /// built-in catalog at runtime (the seam R5's `learned/` dir reuses).
+    #[serde(default)]
+    pub models_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -252,6 +256,7 @@ impl Default for StaticConfig {
             taint: StaticTaintConfig::default(),
             agent: StaticAgentConfig::default(),
             codeql: StaticCodeqlConfig::default(),
+            models_dir: None,
         }
     }
 }
@@ -602,5 +607,25 @@ mod tests {
         assert!(logging.show_progress);
         assert!(logging.log_file.is_none());
         assert!(logging.scopes.is_empty());
+    }
+
+    #[test]
+    fn models_dir_parses_from_toml() {
+        let config: RuntimeConfig = toml::from_str(
+            r#"
+            [scan]
+            targets = ["src"]
+
+            [static]
+            models_dir = "models/custom"
+            "#,
+        )
+        .expect("parse config");
+        assert_eq!(config.static_.models_dir.as_deref(), Some("models/custom"));
+    }
+
+    #[test]
+    fn models_dir_defaults_to_none() {
+        assert_eq!(StaticConfig::default().models_dir, None);
     }
 }

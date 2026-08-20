@@ -2,7 +2,7 @@ use std::fs;
 
 use anyhow::{Context, Result, bail};
 
-use crate::models::default_catalog;
+use crate::models::{default_catalog, load_models_dir};
 use crate::{Fact, ScanLanguage, static_analysis::pipeline::StaticScanContext};
 
 use super::{extract_js_ts_facts, extract_python_facts, extract_rust_facts, ExtractionDiagnostic};
@@ -11,7 +11,22 @@ pub fn extract_static_facts(ctx: &StaticScanContext) -> Result<Vec<Fact>> {
     let mut facts = Vec::new();
     let mut diagnostics = Vec::new();
 
-    let catalog = default_catalog();
+    let mut catalog = default_catalog();
+    if let Some(dir) = &ctx.config.static_.models_dir {
+        let extra = load_models_dir(std::path::Path::new(dir))?;
+        tracing::info!(
+            target: "mcp_sec_audit::taint",
+            models_dir = %dir,
+            loaded = extra.sink_count(),
+            "loaded extra sink models"
+        );
+        catalog.merge(extra);
+    }
+    tracing::info!(
+        target: "mcp_sec_audit::taint",
+        sinks = catalog.sink_count(),
+        "sink model catalog ready"
+    );
 
     for file in &ctx.discovered_files {
         match file.language {
@@ -229,6 +244,37 @@ async fn run_command(command: String) -> Result<String, String> {
             .facts
             .iter()
             .any(|f| matches!(f, Fact::Sink(s) if s.sink_name == "totally.custom.sink")));
+    }
+
+    #[test]
+    fn models_dir_loads_and_merges_custom_sinks() {
+        let root = temp_dir("models-dir");
+        let models_dir = root.join("models");
+        fs::create_dir_all(&models_dir).expect("create models dir");
+        fs::write(
+            models_dir.join("custom.yaml"),
+            "- language: python\n  category: command_execution\n  severity: high\n  confidence: high\n  reason: custom\n  patterns: [totally.custom.sink]\n",
+        )
+        .expect("write custom model");
+        let file = root.join("a.py");
+        fs::write(&file, "totally.custom.sink('x')\n").expect("write source");
+
+        let mut config = RuntimeConfig::default();
+        config.static_.models_dir = Some(models_dir.display().to_string());
+        let ctx = StaticScanContext {
+            config,
+            rulebook_paths: Vec::new(),
+            discovered_files: vec![DiscoveredFile {
+                path: file.clone(),
+                language: ScanLanguage::Python,
+            }],
+        };
+        let facts = extract_static_facts(&ctx).expect("extract facts");
+        assert!(facts
+            .iter()
+            .any(|f| matches!(f, Fact::Sink(s) if s.sink_name == "totally.custom.sink")));
+
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     fn temp_dir(name: &str) -> PathBuf {
