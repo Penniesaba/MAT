@@ -1,6 +1,7 @@
 pub mod facts;
 
 mod agent;
+pub(crate) mod category;
 mod codeql;
 mod discovery;
 mod fusion;
