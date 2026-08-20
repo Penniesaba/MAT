@@ -97,39 +97,42 @@ following vulnerability categories are specific to MCP server contexts:
 
 ## Output Format
 
-After completing your analysis, output EXACTLY ONE JSON block (wrapped
-in a ```json code fence) containing all findings. Do not include any
-other JSON blocks in your response.
+After completing your analysis, output EXACTLY ONE JSON block (wrapped in a
+```json code fence) with TWO arrays:
 
-Before emitting each finding, re-read the cited file to confirm each
-line number is correct; a finding with an imprecise location will be
-discarded.
+1. `findings` — vulnerabilities you verified or discovered semantically.
+2. `model_candidates` — new sink/source/sanitizer models you inferred while
+   reading the code. A "model" is a reusable fact about a library function,
+   NOT a single vulnerability. Only propose a model when you are confident it
+   generalizes beyond the one call site you saw.
+
+For each model candidate use:
+- kind: "sink" (dangerous operation consuming untrusted data), "source"
+  (user-controllable entrypoint), or "sanitizer" (function that neutralizes
+  taint).
+- name: the exact callee, e.g. "openpyxl.load_workbook".
+- category: one of command_execution, dynamic_execution, file_read,
+  file_write, file_delete, network_request, database_injection,
+  deserialization, template_injection, path_traversal, prompt_injection,
+  data_exfiltration.
+- language: python | javascript | rust.
+- argument: the 0-based index of the dangerous parameter (sink only).
+- confidence: high | medium | low.
+- evidence_snippets: the exact source lines that justify the model.
+```
 
 ```json
 {
   "findings": [
-    {
-      "candidate_title": "Clear vulnerability description",
-      "affected_locations": ["path/to/file.rs:42", "path/to/file.rs:58"],
-      "reasoning_summary": "Explanation of why this is a vulnerability,
-          how it could be exploited, and what the impact would be.",
-      "evidence_snippets": [
-        "let output = Command::new(\"sh\").arg(user_input).output()",
-        "fn run_tool(cmd: String) {"
-      ],
-      "confidence": "high",
-      "limitations": [
-        "Did not verify if input validation happens in caller"
-      ]
-    }
+    { "candidate_title": "...", "affected_locations": ["path/to/file.rs:42"], "reasoning_summary": "...", "evidence_snippets": ["..."], "confidence": "high", "limitations": [] }
+  ],
+  "model_candidates": [
+    { "kind": "sink", "name": "openpyxl.load_workbook", "category": "file_read", "language": "python", "argument": 0, "confidence": "medium", "evidence_snippets": ["wb = openpyxl.load_workbook(filepath)"] }
   ]
 }
 ```
 
-If you find NO vulnerabilities, return:
-```json
-{"findings": []}
-```
+If you find NO vulnerabilities and NO models, return `{"findings": [], "model_candidates": []}`.
 
 Begin your analysis now. Read the source files and identify
 vulnerabilities.
@@ -264,6 +267,6 @@ mod tests {
     fn render_builtin_template_requires_precise_line_numbers() {
         let prompt = render(None, &[], "/tmp/test").expect("render");
         assert!(prompt.contains("single positive integer line number"));
-        assert!(prompt.contains("imprecise location will be"));
+        assert!(prompt.contains("model_candidates"));
     }
 }

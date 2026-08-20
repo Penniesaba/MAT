@@ -78,6 +78,33 @@ pub struct AgentAnalysisResult {
     pub limitations: Vec<String>,
 }
 
+/// A sink/source/sanitizer model proposed by the agent (three-role "model" output).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelCandidate {
+    /// "sink" | "source" | "sanitizer".
+    pub kind: String,
+    /// Callee name, e.g. "openpyxl.load_workbook".
+    pub name: String,
+    /// Canonical category (snake_case), e.g. "file_read".
+    pub category: String,
+    /// "python" | "javascript" | "rust".
+    pub language: String,
+    /// Dangerous argument index (sink) — `None` when unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub argument: Option<u32>,
+    pub confidence: Confidence,
+    #[serde(default)]
+    pub evidence_snippets: Vec<String>,
+}
+
+/// Combined output of the agent line: findings + proposed models.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentOutput {
+    pub findings: Vec<AgentAnalysisResult>,
+    #[serde(default)]
+    pub model_candidates: Vec<ModelCandidate>,
+}
+
 /// Result from the CodeQL analysis line.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeqlAnalysisResult {

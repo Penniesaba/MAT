@@ -14,7 +14,7 @@ pub use facts::{
 };
 pub use report::{CapabilityFinding, DetectionResult};
 pub use static_result::{
-    AgentAnalysisResult, CodeqlAnalysisResult, CodeqlOutput, ConfigSnapshot, DataFlowPath,
-    DataFlowPathStep, FusedFinding, Location, RuleAnalysisResult, StaticAnalysisResult,
-    StaticAnalysisSummary, TaintAnalysisResult,
+    AgentAnalysisResult, AgentOutput, CodeqlAnalysisResult, CodeqlOutput, ConfigSnapshot,
+    DataFlowPath, DataFlowPathStep, FusedFinding, Location, ModelCandidate, RuleAnalysisResult,
+    StaticAnalysisResult, StaticAnalysisSummary, TaintAnalysisResult,
 };

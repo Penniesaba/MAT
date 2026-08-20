@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde::Deserialize;
 
-use crate::model::{AgentAnalysisResult, Confidence};
+use crate::model::{AgentAnalysisResult, AgentOutput, Confidence, ModelCandidate};
 
 /// Metadata attached to every agent-produced result.
 pub struct AgentMetadata {
@@ -27,9 +27,25 @@ struct RawFinding {
 }
 
 #[derive(Debug, Deserialize)]
+struct RawModelCandidate {
+    kind: String,
+    name: String,
+    category: String,
+    language: String,
+    #[serde(default)]
+    argument: Option<u32>,
+    #[serde(default)]
+    confidence: String,
+    #[serde(default)]
+    evidence_snippets: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct RawOutput {
     #[serde(default)]
     findings: Vec<RawFinding>,
+    #[serde(default)]
+    model_candidates: Vec<RawModelCandidate>,
 }
 
 /// Hardcoded minimum confidence threshold. Findings whose confidence is not
@@ -107,7 +123,7 @@ fn extract_json_block(stdout: &str) -> Option<&str> {
 pub fn parse_agent_output(
     stdout: &str,
     metadata: &AgentMetadata,
-) -> Result<Vec<AgentAnalysisResult>> {
+) -> Result<AgentOutput> {
     let json_str = extract_json_block(stdout)
         .ok_or_else(|| anyhow::anyhow!(
             "no valid JSON output from agent provider. \
@@ -169,7 +185,25 @@ pub fn parse_agent_output(
         });
     }
 
-    Ok(results)
+    let model_candidates = raw
+        .model_candidates
+        .into_iter()
+        .filter(|m| !m.name.trim().is_empty() && !m.category.trim().is_empty())
+        .map(|m| ModelCandidate {
+            kind: m.kind,
+            name: m.name,
+            category: m.category,
+            language: m.language,
+            argument: m.argument,
+            confidence: parse_confidence(&m.confidence),
+            evidence_snippets: m.evidence_snippets,
+        })
+        .collect();
+
+    Ok(AgentOutput {
+        findings: results,
+        model_candidates,
+    })
 }
 
 #[cfg(test)]
@@ -206,7 +240,8 @@ Some preamble text...
 
 Some trailing text.
 "#;
-        let results = parse_agent_output(stdout, &metadata()).expect("parse");
+        let out = parse_agent_output(stdout, &metadata()).expect("parse");
+        let results = &out.findings;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].candidate_title, "Command injection in run_cmd");
         assert_eq!(results[0].affected_locations, vec!["server.py:42"]);
@@ -220,7 +255,8 @@ Some trailing text.
     #[test]
     fn parse_bare_json() {
         let stdout = r#"{"findings":[{"candidate_title":"Test","affected_locations":["a.rs:1"],"reasoning_summary":"x","confidence":"medium"}]}"#;
-        let results = parse_agent_output(stdout, &metadata()).expect("parse");
+        let out = parse_agent_output(stdout, &metadata()).expect("parse");
+        let results = &out.findings;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].confidence, Confidence::Medium);
     }
@@ -246,8 +282,8 @@ Some trailing text.
         let stdout = r#"```json
 {"findings": []}
 ```"#;
-        let results = parse_agent_output(stdout, &metadata()).expect("parse");
-        assert!(results.is_empty());
+        let out = parse_agent_output(stdout, &metadata()).expect("parse");
+        assert!(out.findings.is_empty());
     }
 
     #[test]
@@ -270,7 +306,8 @@ Some trailing text.
   ]
 }
 ```"#;
-        let results = parse_agent_output(stdout, &metadata()).expect("parse");
+        let out = parse_agent_output(stdout, &metadata()).expect("parse");
+        let results = &out.findings;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].candidate_title, "Valid finding");
     }
@@ -307,7 +344,8 @@ Some trailing text.
   ]
 }
 ```"#;
-        let results = parse_agent_output(stdout, &metadata()).expect("parse");
+        let out = parse_agent_output(stdout, &metadata()).expect("parse");
+        let results = &out.findings;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].candidate_title, "Precise location");
         assert_eq!(results[0].affected_locations, vec!["server.py:86"]);
@@ -327,7 +365,8 @@ Some trailing text.
   ]
 }
 ```"#;
-        let results = parse_agent_output(stdout, &metadata()).expect("parse");
+        let out = parse_agent_output(stdout, &metadata()).expect("parse");
+        let results = &out.findings;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].affected_locations, vec!["server.py:86"]);
     }
@@ -336,7 +375,21 @@ Some trailing text.
     fn extract_json_handles_whitespace_variations() {
         // JSON with space after {
         let stdout = r#"{ "findings": [{"candidate_title":"T","affected_locations":["x:1"],"reasoning_summary":"r","confidence":"high"}] }"#;
-        let results = parse_agent_output(stdout, &metadata()).expect("parse");
-        assert_eq!(results.len(), 1);
+        let out = parse_agent_output(stdout, &metadata()).expect("parse");
+        assert_eq!(out.findings.len(), 1);
+    }
+
+    #[test]
+    fn parses_model_candidates_alongside_findings() {
+        let stdout = r#"```json
+{"findings": [], "model_candidates": [
+  {"kind":"sink","name":"openpyxl.load_workbook","category":"file_read","language":"python","argument":0,"confidence":"medium","evidence_snippets":["x"]}
+]}
+```"#;
+        let out = parse_agent_output(stdout, &metadata()).expect("parse");
+        assert!(out.findings.is_empty());
+        assert_eq!(out.model_candidates.len(), 1);
+        assert_eq!(out.model_candidates[0].name, "openpyxl.load_workbook");
+        assert_eq!(out.model_candidates[0].confidence, Confidence::Medium);
     }
 }

@@ -149,7 +149,7 @@ pub fn run_static_scan_with_progress(
             "Agent analysis: skipped (disabled)"
         });
         let start = std::time::Instant::now();
-        let results = agent::run(&ctx)?;
+        let results = agent::run(&ctx)?.findings;
         tracing::info!(
             target: "mcp_sec_audit::agent",
             findings = results.len(),

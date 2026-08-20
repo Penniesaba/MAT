@@ -14,9 +14,10 @@ pub use config::{
     load_runtime_config, parse_runtime_config_toml,
 };
 pub use model::{
-    AgentAnalysisResult, CapabilityFinding, Confidence, ConfigSnapshot, DetectionResult,
-    EvidenceSource, Fact, FindingFact, FindingStatus, FusedFinding, RuleAnalysisResult,
-    SCHEMA_VERSION, Severity, StaticAnalysisResult, StaticAnalysisSummary, TaintAnalysisResult,
+    AgentAnalysisResult, AgentOutput, CapabilityFinding, Confidence, ConfigSnapshot,
+    DetectionResult, EvidenceSource, Fact, FindingFact, FindingStatus, FusedFinding,
+    ModelCandidate, RuleAnalysisResult, SCHEMA_VERSION, Severity, StaticAnalysisResult,
+    StaticAnalysisSummary, TaintAnalysisResult,
 };
 pub use models::{
     ModelCatalog, SinkModel, default_catalog, load_models_dir, parse_sinks,

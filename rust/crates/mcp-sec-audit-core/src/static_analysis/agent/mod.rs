@@ -4,7 +4,7 @@ pub mod provider;
 
 use anyhow::Result;
 
-use crate::model::AgentAnalysisResult;
+use crate::model::AgentOutput;
 
 use super::pipeline::StaticScanContext;
 use prompt::FileSummary;
@@ -34,11 +34,14 @@ fn absolute_path(path: &std::path::Path) -> std::path::PathBuf {
 /// Prepares file context, renders the prompt template, invokes the
 /// configured CLI agent provider, and parses structured results from
 /// the agent's output.
-pub fn run(ctx: &StaticScanContext) -> Result<Vec<AgentAnalysisResult>> {
+pub fn run(ctx: &StaticScanContext) -> Result<AgentOutput> {
     let agent_config = &ctx.config.static_.agent;
 
     if !agent_config.enabled {
-        return Ok(Vec::new());
+        return Ok(AgentOutput {
+            findings: Vec::new(),
+            model_candidates: Vec::new(),
+        });
     }
 
     // Build file summaries (capped at MAX_FILES)
@@ -62,7 +65,10 @@ pub fn run(ctx: &StaticScanContext) -> Result<Vec<AgentAnalysisResult>> {
         .collect();
 
     if file_summaries.is_empty() {
-        return Ok(Vec::new());
+        return Ok(AgentOutput {
+            findings: Vec::new(),
+            model_candidates: Vec::new(),
+        });
     }
 
     // Determine target root from the first file's parent (canonicalized so the
@@ -107,11 +113,11 @@ pub fn run(ctx: &StaticScanContext) -> Result<Vec<AgentAnalysisResult>> {
         input_scope,
     };
 
-    let mut results = parser::parse_agent_output(&output.stdout, &metadata)?;
+    let mut agent_output = parser::parse_agent_output(&output.stdout, &metadata)?;
 
     // Annotate timeout limitation
     if output.timed_out {
-        for r in &mut results {
+        for r in &mut agent_output.findings {
             r.limitations.push(format!(
                 "agent analysis timed out after {}s",
                 agent_config.timeout_seconds
@@ -119,7 +125,7 @@ pub fn run(ctx: &StaticScanContext) -> Result<Vec<AgentAnalysisResult>> {
         }
     }
 
-    Ok(results)
+    Ok(agent_output)
 }
 
 #[cfg(test)]
@@ -134,8 +140,9 @@ mod tests {
             rulebook_paths: Vec::new(),
             discovered_files: Vec::new(),
         };
-        let results = run(&ctx).expect("run disabled agent");
-        assert!(results.is_empty());
+        let output = run(&ctx).expect("run disabled agent");
+        assert!(output.findings.is_empty());
+        assert!(output.model_candidates.is_empty());
     }
 
     #[test]
@@ -147,7 +154,8 @@ mod tests {
             rulebook_paths: Vec::new(),
             discovered_files: Vec::new(),
         };
-        let results = run(&ctx).expect("run agent with no files");
-        assert!(results.is_empty());
+        let output = run(&ctx).expect("run agent with no files");
+        assert!(output.findings.is_empty());
+        assert!(output.model_candidates.is_empty());
     }
 }
