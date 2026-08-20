@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::model::{Confidence, Fact, FactBase, ModelCandidate, Severity, SinkFact};
 use crate::models::{rule_prefix, PackageRule, SinkModel};
 
-use super::infer::name_category;
+use super::infer::{language_from_file, name_category};
 
 /// Gating decision for an agent-proposed sink model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +48,9 @@ pub fn sink_candidates_to_sink_facts(facts: &[Fact], candidates: &[ModelCandidat
         let callee = call.normalized_callee.as_deref().unwrap_or(&call.callee);
         for c in candidates {
             if c.kind != "sink" { continue; }
+            if language_from_file(&call.base.file) != c.language { continue; }
+            // Unqualified method names are too low-specificity to re-inject.
+            if !c.name.contains('.') && !c.name.contains("::") { continue; }
             let hit = callee == c.name
                 || callee.ends_with(&format!(".{}", c.name))
                 || callee.ends_with(&format!("::{}", c.name));
@@ -145,11 +148,15 @@ mod tests {
     use crate::models::default_package_rules;
 
     fn cand(name: &str, category: &str) -> ModelCandidate {
+        cand_lang(name, category, "python")
+    }
+
+    fn cand_lang(name: &str, category: &str, language: &str) -> ModelCandidate {
         ModelCandidate {
             kind: "sink".into(),
             name: name.into(),
             category: category.into(),
-            language: "python".into(),
+            language: language.into(),
             argument: Some(0),
             confidence: Confidence::Medium,
             evidence_snippets: vec![],
@@ -230,6 +237,24 @@ mod tests {
             assert_eq!(s.category, "file_read");
             assert_eq!(s.confidence, Confidence::Medium);
         } else { panic!("expected Sink"); }
+    }
+
+    #[test]
+    fn wrong_language_candidate_is_not_reinjected() {
+        // A "rust" candidate must not match a Python (`s.py`) call.
+        let facts = vec![call_fact("call:1", "foo.read")];
+        let cands = vec![cand_lang("foo.read", "file_read", "rust")];
+        let new = sink_candidates_to_sink_facts(&facts, &cands);
+        assert!(new.is_empty(), "expected no re-injection across languages");
+    }
+
+    #[test]
+    fn bare_name_candidate_is_not_reinjected() {
+        // A bare, unqualified method name is too low-specificity to re-inject.
+        let facts = vec![call_fact("call:1", "threading.Thread.run")];
+        let cands = vec![cand("run", "command_execution")];
+        let new = sink_candidates_to_sink_facts(&facts, &cands);
+        assert!(new.is_empty(), "expected no re-injection for a bare method name");
     }
 
     #[test]

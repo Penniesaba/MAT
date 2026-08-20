@@ -242,7 +242,9 @@ pub fn run_static_scan_with_progress(
 
     // --- Phase 5: cold persistence ---
     if let Some(dir) = &ctx.config.static_.learned_dir {
-        let models: Vec<_> = model_candidates.iter()
+        // Only Hot/Warm (gated) sinks are persisted — a Cold/agent-only claim
+        // is never written to learned/, so it can't be re-admitted next run.
+        let models: Vec<_> = hot_warm.iter()
             .filter_map(|c| learning::candidate_to_sink_model(c, "scan", "agent"))
             .collect();
         learning::write_learned_sinks(std::path::Path::new(dir), &models)?;

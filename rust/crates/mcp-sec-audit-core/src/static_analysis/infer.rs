@@ -77,7 +77,7 @@ fn package_matches(callee: &str, package: &str) -> bool {
 }
 
 /// Best-effort language key from a source file path's extension.
-fn language_from_file(file: &str) -> &str {
+pub(crate) fn language_from_file(file: &str) -> &str {
     let ext = std::path::Path::new(file)
         .extension()
         .and_then(|e| e.to_str())
