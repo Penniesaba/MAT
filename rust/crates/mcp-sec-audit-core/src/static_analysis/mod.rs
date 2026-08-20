@@ -5,6 +5,7 @@ pub(crate) mod category;
 mod codeql;
 mod discovery;
 mod fusion;
+pub(crate) mod infer;
 mod pipeline;
 pub(crate) mod recon;
 mod rule;
