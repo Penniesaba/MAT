@@ -7,11 +7,11 @@ use std::{
 use anyhow::{Context, Result, bail};
 
 use crate::{
-    ConfigSnapshot, FusedFinding, RuleBook, RuntimeConfig, Severity, StaticAnalysisResult,
-    StaticAnalysisSummary, load_rulebook,
+    ConfigSnapshot, FusedFinding, ModelCandidate, RuleBook, RuntimeConfig, Severity,
+    StaticAnalysisResult, StaticAnalysisSummary, load_rulebook,
 };
 
-use super::{agent, codeql, fusion, rule, taint, DiscoveredFile, discover_files};
+use super::{agent, codeql, fusion, learning, rule, taint, DiscoveredFile, discover_files};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaticScanContext {
@@ -136,7 +136,7 @@ pub fn run_static_scan_with_progress(
         (results, facts)
     };
 
-    let agent_results = {
+    let (agent_results, model_candidates) = {
         let _enter = tracing::info_span!(
             target: "mcp_sec_audit::agent",
             "agent",
@@ -149,15 +149,18 @@ pub fn run_static_scan_with_progress(
             "Agent analysis: skipped (disabled)"
         });
         let start = std::time::Instant::now();
-        let results = agent::run(&ctx)?.findings;
+        let agent_output = agent::run(&ctx)?;
+        let results = agent_output.findings;
+        let model_candidates = agent_output.model_candidates;
         tracing::info!(
             target: "mcp_sec_audit::agent",
             findings = results.len(),
+            candidates = model_candidates.len(),
             elapsed_ms = start.elapsed().as_millis() as u64,
             "agent analysis complete"
         );
         progress(&format!("Agent analysis done: {} findings", results.len()));
-        results
+        (results, model_candidates)
     };
 
     let codeql_output = {
@@ -191,7 +194,31 @@ pub fn run_static_scan_with_progress(
         output
     };
 
-    // Phase 13: Fusion
+    // --- Phase 3: gate + warm re-injection (taint only) ---
+    let rules = crate::models::default_package_rules();
+    let hot_warm: Vec<ModelCandidate> = model_candidates.iter()
+        .filter(|c| c.kind == "sink"
+            && matches!(learning::gate_sink_candidate(c, &rules),
+                        learning::GateDecision::Hot | learning::GateDecision::Warm))
+        .cloned()
+        .collect();
+
+    let mut facts = all_facts;
+    let mut taint_results = taint_results;
+    if !hot_warm.is_empty() {
+        tracing::info!(target: "mcp_sec_audit::learning", hot_warm = hot_warm.len(),
+            "warm re-injecting agent sink models");
+        let new_sink_facts = learning::sink_candidates_to_sink_facts(&facts, &hot_warm);
+        facts.extend(new_sink_facts);
+        if ctx.config.static_.taint.enabled {
+            let (t2, df2) = taint::run_taint_analysis(&facts, &ctx.config.static_.taint)?;
+            taint_results = t2;
+            facts.extend(df2);
+        }
+        // CodeQL warm re-run (MaD) is DEFERRED — see RULING R5-A / R4 RULING 11.
+    }
+
+    // --- Phase 4: fusion on the post-warm results ---
     let fused_findings = {
         let _enter = tracing::info_span!(target: "mcp_sec_audit::fusion", "fusion").entered();
         progress("Fusing results...");
@@ -213,6 +240,15 @@ pub fn run_static_scan_with_progress(
         findings
     };
 
+    // --- Phase 5: cold persistence ---
+    if let Some(dir) = &ctx.config.static_.learned_dir {
+        let models: Vec<_> = model_candidates.iter()
+            .filter_map(|c| learning::candidate_to_sink_model(c, "scan", "agent"))
+            .collect();
+        learning::write_learned_sinks(std::path::Path::new(dir), &models)?;
+        tracing::info!(target: "mcp_sec_audit::learning", learned = models.len(), "persisted learned models");
+    }
+
     // Count fused findings that involve the codeql line (solo or corroborated).
     let codeql_fused_count = fused_findings.iter()
         .filter(|f| f.supported_by.contains(&"codeql".to_string()))
@@ -220,7 +256,7 @@ pub fn run_static_scan_with_progress(
 
     let summary = StaticAnalysisSummary {
         target: target_label(&targets),
-        fact_count: all_facts.len(),
+        fact_count: facts.len(),
         rule_result_count: rule_results.len(),
         taint_result_count: taint_results.len(),
         agent_result_count: agent_results.len(),
@@ -234,13 +270,14 @@ pub fn run_static_scan_with_progress(
     };
 
     Ok(StaticAnalysisResult {
-        facts: all_facts,
+        facts,
         rule_results,
         taint_results,
         agent_results,
         codeql_results: codeql_output.results,
         codeql_diagnostics: codeql_output.diagnostics,
         codeql_raw_sarif: codeql_output.raw_sarif,
+        model_candidates,
         fused_findings,
         summary,
         config_snapshot: ConfigSnapshot {
@@ -323,6 +360,7 @@ fn empty_result(
         codeql_results: Vec::new(),
         codeql_diagnostics: Vec::new(),
         codeql_raw_sarif: None,
+        model_candidates: Vec::new(),
         fused_findings: Vec::new(),
         summary: StaticAnalysisSummary {
             target,
@@ -753,6 +791,71 @@ def run_command(command: str):
 
         assert_eq!(result.summary.fused_finding_count, 0);
         assert!(result.fused_findings.is_empty());
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agent_warm_reinjection_adds_taint_finding_for_learned_sink() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_dir("warm-reinject");
+        let rules = write_rulebook(&root, "rules.toml", "command_exec");
+        fs::write(
+            root.join("server.py"),
+            r#"
+import openpyxl
+
+@mcp.tool()
+def read_sheet(filename: str):
+    wb = openpyxl.load_workbook(filename)
+    return wb
+"#,
+        )
+        .expect("write file");
+
+        // Stub agent: a tiny shell script that prints a fixed agent output
+        // proposing `openpyxl.load_workbook` as a `file_read` sink.
+        let stub = root.join("stub-agent.sh");
+        fs::write(
+            &stub,
+            r#"#!/bin/sh
+printf '%s\n' '{"findings":[],"model_candidates":[{"kind":"sink","name":"openpyxl.load_workbook","category":"file_read","language":"python","argument":0,"confidence":"medium","evidence_snippets":[]}]}'
+"#,
+        )
+        .expect("write stub");
+        let mut perms = fs::metadata(&stub).expect("stub metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&stub, perms).expect("chmod stub");
+
+        let mut config = RuntimeConfig::default();
+        config.static_.taint.enabled = true;
+        config.static_.agent.enabled = true;
+        config.static_.agent.provider = stub.display().to_string();
+
+        let result = run_static_scan(&config, &[rules], Some(&[root.clone()]))
+            .expect("run scan");
+
+        // The agent-proposed sink model should be surfaced in the result.
+        assert_eq!(
+            result.model_candidates.len(),
+            1,
+            "agent candidate should be surfaced"
+        );
+        // The warm re-injection should produce a file_read taint finding.
+        assert!(
+            result
+                .taint_results
+                .iter()
+                .any(|t| t.sink_kind == "file_read"),
+            "expected a file_read taint finding from the warm re-injected sink; got {:?}",
+            result
+                .taint_results
+                .iter()
+                .map(|t| &t.sink_kind)
+                .collect::<Vec<_>>()
+        );
 
         fs::remove_dir_all(root).expect("cleanup");
     }

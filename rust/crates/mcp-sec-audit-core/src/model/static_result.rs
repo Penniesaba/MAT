@@ -79,7 +79,7 @@ pub struct AgentAnalysisResult {
 }
 
 /// A sink/source/sanitizer model proposed by the agent (three-role "model" output).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelCandidate {
     /// "sink" | "source" | "sanitizer".
     pub kind: String,
@@ -223,6 +223,9 @@ pub struct StaticAnalysisResult {
     /// Raw concatenated SARIF produced by CodeQL, preserved for debugging.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codeql_raw_sarif: Option<String>,
+    /// Sink/source/sanitizer models proposed by the agent this run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub model_candidates: Vec<ModelCandidate>,
     pub fused_findings: Vec<FusedFinding>,
     pub summary: StaticAnalysisSummary,
     pub config_snapshot: ConfigSnapshot,
