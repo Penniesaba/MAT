@@ -10,6 +10,7 @@
 use uuid::Uuid;
 
 use crate::model::{FindingStatus, FusedFinding, Severity};
+use crate::static_analysis::category::normalize_category;
 
 use super::scorer::ScoredGroup;
 
@@ -81,22 +82,23 @@ fn build_title(group: &super::matcher::MatchGroup) -> String {
 }
 
 fn build_category(group: &super::matcher::MatchGroup) -> String {
-    // Collect categories from rule and taint results (agent has no category).
-    // Plurality vote; tie breaks by highest-severity result.
+    // Collect categories from rule, taint, and codeql results (agent has no
+    // category), normalized to the shared vocabulary. Plurality vote; tie
+    // breaks by longest category name (arbitrarily stable).
     use std::collections::HashMap;
-    let mut counts: HashMap<&str, u32> = HashMap::new();
+    let mut counts: HashMap<String, u32> = HashMap::new();
     for r in &group.rule_results {
-        *counts.entry(&r.category).or_insert(0) += 1;
+        *counts.entry(normalize_category(&r.category)).or_insert(0) += 1;
     }
     for t in &group.taint_results {
-        *counts.entry(&t.sink_kind).or_insert(0) += 1;
+        *counts.entry(normalize_category(&t.sink_kind)).or_insert(0) += 1;
     }
     for c in &group.codeql_results {
-        *counts.entry(&c.category).or_insert(0) += 1;
+        *counts.entry(normalize_category(&c.category)).or_insert(0) += 1;
     }
     counts.into_iter()
-        .max_by_key(|(cat, count)| (*count, cat.len())) // tie-break arbitrarily stable
-        .map(|(cat, _)| cat.to_string())
+        .max_by_key(|(cat, count)| (*count, cat.len()))
+        .map(|(cat, _)| cat)
         .unwrap_or_else(|| "unknown".to_string())
 }
 
@@ -324,5 +326,43 @@ mod tests {
         assert_eq!(f.supported_by, vec!["codeql".to_string()]);
         assert_eq!(f.related_codeql_result_ids, vec!["ql:1".to_string()]);
         assert_eq!(f.evidence, vec!["User input reaches shell".to_string()]);
+    }
+
+    #[test]
+    fn build_category_votes_canonical_across_vocabularies() {
+        use crate::model::TaintAnalysisResult;
+        let group = MatchGroup {
+            rule_results: vec![RuleAnalysisResult {
+                result_id: "r1".into(),
+                rule_id: "command_exec".into(),
+                category: "command_exec".into(),
+                owasp_mcp: None,
+                file: "a.py".into(),
+                line: 1,
+                matched_text: None,
+                evidence: vec![],
+                severity: Severity::High,
+                confidence: Confidence::High,
+                recommendation: None,
+                related_facts_exist: false,
+            }],
+            taint_results: vec![TaintAnalysisResult {
+                result_id: "t1".into(),
+                source_id: "s:x".into(),
+                source_kind: "p".into(),
+                entrypoint_id: None,
+                sink_id: "sink:command_execution:a.py:0".into(),
+                sink_kind: "command_execution".into(),
+                call_chain: vec![],
+                dataflow_path: vec![],
+                evidence: vec![],
+                taint_confidence: Confidence::Medium,
+                entrypoint_is_mcp: false,
+                backward_trace_found_root: false,
+            }],
+            agent_results: vec![],
+            codeql_results: vec![],
+        };
+        assert_eq!(build_category(&group), "command_execution");
     }
 }

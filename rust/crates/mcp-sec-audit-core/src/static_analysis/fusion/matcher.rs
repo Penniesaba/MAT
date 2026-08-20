@@ -16,6 +16,7 @@
 use std::path::Path;
 
 use crate::model::{AgentAnalysisResult, CodeqlAnalysisResult, RuleAnalysisResult, TaintAnalysisResult};
+use crate::static_analysis::category::normalize_category;
 
 /// A group of related results from different analysis lines.
 #[derive(Debug, Clone)]
@@ -350,7 +351,8 @@ fn can_join_group_category(candidate_idx: usize, group: &[usize], items: &[Match
         && group.iter().any(|&member_idx| {
             let member = &items[member_idx];
             file_key(&member.file) == file_key(&candidate.file)
-                && member.category == candidate.category
+                && member.category.as_deref().map(normalize_category)
+                    == candidate.category.as_deref().map(normalize_category)
         })
 }
 
@@ -474,8 +476,9 @@ mod tests {
 
     #[test]
     fn stage1_proximity_excludes_far_lines() {
+        // Different categories as well as far lines, so neither stage can fuse.
         let rules = vec![make_rule("r1", "a.py", 10, "cmd_inj", Confidence::High)];
-        let taints = vec![make_taint("t1", "sink:command_exec:a.py:0", "command_exec", Confidence::Medium)];
+        let taints = vec![make_taint("t1", "sink:file_read:a.py:0", "file_read", Confidence::Medium)];
         let agents = vec![];
         let groups = match_results(rules, taints, agents, vec![], 5);
         // taint line is 0, proximity |10-0|=10 > 5
@@ -602,5 +605,24 @@ mod tests {
         let groups = match_results(rules, taints, vec![], vec![], 5);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].supported_by(), vec!["rule", "taint"]);
+    }
+
+    #[test]
+    fn stage2_category_matches_across_vocabularies() {
+        // rule uses "command_exec", taint uses "command_execution" — must fuse.
+        let rules = vec![make_rule("r1", "a.py", 10, "command_exec", Confidence::High)];
+        let taints = vec![make_taint("t1", "sink:command_execution:a.py:0", "command_execution", Confidence::Medium)];
+        let groups = match_results(rules, taints, vec![], vec![], 1);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].line_count(), 2);
+    }
+
+    #[test]
+    fn codeql_relative_path_matches_rule_full_path_via_basename() {
+        let rules = vec![make_rule("r1", "/proj/src/main.py", 42, "command_execution", Confidence::High)];
+        let codeql = vec![make_codeql("c1", "src/main.py", 41, "py/cmd-injection", Severity::High)];
+        let groups = match_results(rules, vec![], vec![], codeql, 5);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].supported_by(), vec!["rule", "codeql"]);
     }
 }
