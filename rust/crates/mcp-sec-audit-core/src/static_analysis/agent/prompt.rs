@@ -84,8 +84,9 @@ following vulnerability categories are specific to MCP server contexts:
 4. For each finding, provide:
    - A clear title describing the vulnerability
    - The exact file:line locations affected. Every location MUST be
-     `relative/path:LINE` with a single positive integer line number
-     (e.g. `server.py:86`). Never use ranges (e.g. `10-20`), bare
+     `path:LINE` with a single positive integer line number, using the
+     exact path string as listed in the Files section above (e.g.
+     `/abs/path/server.py:86`). Never use ranges (e.g. `10-20`), bare
      filenames without a line, or "around line N". The line MUST point
      at the actual vulnerable statement (the dangerous call), not at a
      comment, docstring, or function signature.

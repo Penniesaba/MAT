@@ -14,6 +14,21 @@ use provider::{AgentProvider, AgentRunConfig, CliAgentProvider};
 const PROMPT_PROFILE: &str = "mcp_security_audit";
 const MAX_FILES: usize = 80;
 
+/// Resolve `path` to an absolute path. Prefers `canonicalize` (resolves `..`
+/// and symlinks, and requires the path to exist); falls back to joining the
+/// current directory so the result is still absolute even if the path was
+/// deleted between discovery and here.
+fn absolute_path(path: &std::path::Path) -> std::path::PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    path.canonicalize().unwrap_or_else(|_| {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    })
+}
+
 /// Agent line entry point.
 ///
 /// Prepares file context, renders the prompt template, invokes the
@@ -36,7 +51,10 @@ pub fn run(ctx: &StaticScanContext) -> Result<Vec<AgentAnalysisResult>> {
                 .map(|s| s.lines().count())
                 .unwrap_or(0);
             FileSummary {
-                path: df.path.display().to_string(),
+                // Canonicalize to an absolute path: the agent subprocess runs
+                // with a different cwd (target_root), so the relative paths
+                // produced by discovery would not resolve there.
+                path: absolute_path(&df.path).display().to_string(),
                 language: df.language.config_keys()[0].to_string(),
                 line_count,
             }
@@ -47,12 +65,13 @@ pub fn run(ctx: &StaticScanContext) -> Result<Vec<AgentAnalysisResult>> {
         return Ok(Vec::new());
     }
 
-    // Determine target root from the first file's parent
+    // Determine target root from the first file's parent (canonicalized so the
+    // agent subprocess runs in a valid absolute directory).
     let target_root = ctx
         .discovered_files
         .first()
         .and_then(|df| df.path.parent())
-        .map(|p| p.display().to_string())
+        .map(|p| absolute_path(p).display().to_string())
         .unwrap_or_else(|| ".".to_string());
 
     // Render the prompt
