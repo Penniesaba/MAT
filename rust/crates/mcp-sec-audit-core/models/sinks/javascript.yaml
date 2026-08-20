@@ -1,0 +1,62 @@
+# JavaScript/TypeScript sink models. Every entry uses `confidence: high`,
+# matching the legacy hardcoded `Confidence::High` in `js_ts/sinks.rs`.
+- language: javascript
+  category: command_execution
+  severity: high
+  confidence: high
+  reason: "Executes external commands via child_process"
+  patterns: [child_process.exec, child_process.execSync, child_process.spawn, child_process.spawnSync, child_process.execFile, child_process.fork, shelljs.exec, shell.exec]
+- language: javascript
+  category: dynamic_execution
+  severity: critical
+  confidence: high
+  reason: "Dynamic code execution can run attacker-controlled code"
+  patterns: [eval, "new Function", Function]
+- language: javascript
+  category: file_read
+  severity: medium
+  confidence: high
+  reason: "File read access can leak sensitive data"
+  patterns: [fs.readFile, fs.readFileSync, fs.createReadStream, fs.promises.readFile, fs.readdir, fs.readdirSync]
+- language: javascript
+  category: file_write
+  severity: medium
+  confidence: high
+  reason: "File write can modify filesystem contents"
+  patterns: [fs.writeFile, fs.writeFileSync, fs.createWriteStream, fs.promises.writeFile, fs.appendFile, fs.appendFileSync, fs.mkdir]
+- language: javascript
+  category: file_delete
+  severity: medium
+  confidence: high
+  reason: "File deletion can remove attacker-controlled paths"
+  patterns: [fs.unlink, fs.unlinkSync, fs.rm, fs.rmSync, fs.rmdir, fs.rmdirSync, fs.promises.rm]
+- language: javascript
+  category: network_request
+  severity: medium
+  confidence: high
+  reason: "Network request can reach attacker-controlled URLs (SSRF)"
+  patterns: [http.request, https.request, http.get, https.get, fetch, net.connect, axios]
+- language: javascript
+  category: env_access
+  severity: high
+  confidence: high
+  reason: "Access to environment variables can leak credentials"
+  patterns: [process.env]
+- language: javascript
+  category: database_injection
+  severity: critical
+  confidence: high
+  reason: "Database query may be vulnerable to injection"
+  patterns: [connection.query, connection.execute, db.run, Model.find, mysql.createConnection, mysql.createPool, mysql.query, mongoose.Model, mongoose.Query.prototype.exec, pg.query, sqlite3, sequelize.query, collection.find, collection.findOne, collection.aggregate, collection.update, knex]
+- language: javascript
+  category: deserialization_rce
+  severity: critical
+  confidence: high
+  reason: "Deserialization/vm execution can run attacker-controlled code"
+  patterns: [vm.runInNewContext, vm.Script, "new WebAssembly.Module"]
+- language: javascript
+  category: template_injection
+  severity: critical
+  confidence: high
+  reason: "Template rendering can execute attacker-controlled code (SSTI)"
+  patterns: [ejs.render, ejs.renderFile, ejs.compile, pug.render, pug.renderFile, pug.compile, handlebars.compile, mustache.render, nunjucks.render, nunjucks.renderString, "_.template", lodash.template]

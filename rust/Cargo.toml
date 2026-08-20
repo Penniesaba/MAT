@@ -23,6 +23,7 @@ rustpython-parser = "0.4"
 # private (E0432).  This pin is required as long as we use swc_core 0.101.
 serde = { version = "=1.0.224", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 proc-macro2 = { version = "1", features = ["span-locations"] }
 syn = { version = "2", features = ["full", "visit", "extra-traits"] }
 swc_core = { version = "0.101", features = [

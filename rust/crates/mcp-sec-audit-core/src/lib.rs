@@ -3,6 +3,7 @@
 pub mod config;
 pub mod fixtures;
 pub mod model;
+pub mod models;
 pub mod reporting;
 pub mod rules;
 pub mod static_analysis;
@@ -16,6 +17,9 @@ pub use model::{
     AgentAnalysisResult, CapabilityFinding, Confidence, ConfigSnapshot, DetectionResult,
     EvidenceSource, Fact, FindingFact, FindingStatus, FusedFinding, RuleAnalysisResult,
     SCHEMA_VERSION, Severity, StaticAnalysisResult, StaticAnalysisSummary, TaintAnalysisResult,
+};
+pub use models::{
+    ModelCatalog, SinkModel, default_catalog, load_models_dir, parse_sinks,
 };
 pub use reporting::{
     JsonlRenderOptions, MarkdownRenderOptions, ReportFormat, render_json, render_jsonl,
