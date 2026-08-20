@@ -31,6 +31,7 @@ pub trait CodeqlProvider {
         queries: &QueryPack,
         timeout_seconds: u64,
         extra_args: &[String],
+        model_packs: &[PathBuf],
     ) -> Result<String>;
 }
 
@@ -63,6 +64,15 @@ impl CodeqlProvider for CliCodeqlProvider {
             .join("mcp-sec-audit-codeql")
             .join(format!("db-{}", std::process::id()))
             .join(language);
+
+        // Reuse a cached database when one already exists for this process +
+        // language, so a re-created session does not re-extract the source.
+        if db_dir.join("codeql-database.yml").exists() {
+            return Ok(DatabaseInfo {
+                path: db_dir,
+                language: language.to_string(),
+            });
+        }
 
         std::fs::create_dir_all(&db_dir)?;
 
@@ -112,6 +122,7 @@ impl CodeqlProvider for CliCodeqlProvider {
         queries: &QueryPack,
         timeout_seconds: u64,
         extra_args: &[String],
+        model_packs: &[PathBuf],
     ) -> Result<String> {
         // `--output=-` (SARIF to stdout) is unreliable across CodeQL versions,
         // so write to a temp file and read it back instead.
@@ -128,6 +139,12 @@ impl CodeqlProvider for CliCodeqlProvider {
             .arg("--format=sarif-latest")
             .arg("--output")
             .arg(&output_path);
+
+        // Model packs (MaD) are injected before the query files so standard
+        // queries can resolve the sinkModel extensions.
+        for mp in model_packs {
+            cmd.arg("--model-packs").arg(mp);
+        }
 
         // Query files are already language-native (per-language pack).
         for qf in &queries.query_files {
