@@ -242,6 +242,8 @@ async fn run_command(command: String) -> Result<String, String> {
             confidence: crate::Confidence::High,
             reason: "custom".into(),
             patterns: vec!["totally.custom.sink".into()],
+            source: None,
+            learned_from: None,
         };
         let source = "import os\ntotally.custom.sink('x')\n";
         let result = extract_python_facts(

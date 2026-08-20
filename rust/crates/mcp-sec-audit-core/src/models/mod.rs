@@ -18,6 +18,12 @@ pub struct SinkModel {
     pub reason: String,
     /// Callee patterns matched with the language's separator rules.
     pub patterns: Vec<String>,
+    /// "manual" | "package" | "learned" — `None` treated as manual.
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Provenance for learned models: "scan-id/agent-id".
+    #[serde(default)]
+    pub learned_from: Option<String>,
 }
 
 impl SinkModel {
@@ -189,6 +195,8 @@ patterns = ["subprocess.run", "os.system"]
             confidence: Confidence::High,
             reason: "x".into(),
             patterns: vec![],
+            source: None,
+            learned_from: None,
         };
         assert_eq!(model.rule_id(), "js.command_execution");
     }

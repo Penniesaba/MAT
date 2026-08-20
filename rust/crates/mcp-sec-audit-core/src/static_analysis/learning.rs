@@ -1,8 +1,10 @@
 //! Gate for classifying agent-proposed sink candidates against cheap
 //! semantic-inference heuristics.
 
-use crate::model::ModelCandidate;
-use crate::models::PackageRule;
+use std::path::Path;
+
+use crate::model::{Confidence, ModelCandidate, Severity};
+use crate::models::{PackageRule, SinkModel};
 
 use super::infer::name_category;
 
@@ -35,6 +37,54 @@ pub fn gate_sink_candidate(candidate: &ModelCandidate, rules: &[PackageRule]) ->
         return GateDecision::Warm;
     }
     GateDecision::Cold
+}
+
+/// Convert a gated sink candidate into a low-confidence `learned` sink model.
+pub fn candidate_to_sink_model(
+    c: &ModelCandidate,
+    scan_id: &str,
+    agent_id: &str,
+) -> Option<SinkModel> {
+    if c.kind != "sink" || c.name.trim().is_empty() || c.category.trim().is_empty() {
+        return None;
+    }
+    Some(SinkModel {
+        language: c.language.clone(),
+        category: c.category.clone(),
+        severity: Severity::Medium,
+        confidence: Confidence::Low,
+        reason: format!(
+            "learned sink: {} (evidence: {})",
+            c.category,
+            c.evidence_snippets.first().cloned().unwrap_or_default()
+        ),
+        patterns: vec![c.name.clone()],
+        source: Some("learned".to_string()),
+        learned_from: Some(format!("{scan_id}/{agent_id}")),
+    })
+}
+
+/// Append learned models to a directory as one TOML file per model (sorted by
+/// name for determinism). Creates the directory if absent.
+pub fn write_learned_sinks(dir: &Path, models: &[SinkModel]) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    for (i, m) in models.iter().enumerate() {
+        let safe = m.patterns.first().map(|p| p.replace(['.', ':', '/'], "_")).unwrap_or_else(|| i.to_string());
+        let text = format!(
+            "[[sinks]]\nlanguage = {:?}\ncategory = {:?}\nseverity = {:?}\nconfidence = {:?}\nreason = {:?}\npatterns = {:?}\nsource = \"learned\"\nlearned_from = {:?}\n",
+            m.language, m.category, severity_str(&m.severity), confidence_str(&m.confidence),
+            m.reason, m.patterns, m.learned_from.as_deref().unwrap_or("unknown")
+        );
+        std::fs::write(dir.join(format!("learned-{safe}.toml")), text)?;
+    }
+    Ok(())
+}
+
+fn severity_str(s: &Severity) -> &'static str {
+    match s { Severity::Critical => "critical", Severity::High => "high", Severity::Medium => "medium", Severity::Low => "low" }
+}
+fn confidence_str(c: &Confidence) -> &'static str {
+    match c { Confidence::High => "high", Confidence::Medium => "medium", Confidence::Low => "low" }
 }
 
 #[cfg(test)]
@@ -80,5 +130,36 @@ mod tests {
         // openpyxl is file_read, but agent claims command_execution → no agreement.
         let d = gate_sink_candidate(&cand("openpyxl.load_workbook", "command_execution"), &default_package_rules());
         assert_ne!(d, GateDecision::Hot);
+    }
+
+    fn tmp_dir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("learn-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn candidate_converts_to_learned_sink_model() {
+        let m = candidate_to_sink_model(
+            &cand("openpyxl.load_workbook", "file_read"),
+            "scan-1", "claude",
+        ).expect("sink candidate maps");
+        assert_eq!(m.language, "python");
+        assert_eq!(m.category, "file_read");
+        assert_eq!(m.patterns, vec!["openpyxl.load_workbook"]);
+        assert_eq!(m.confidence, Confidence::Low);   // learned enters low
+        assert_eq!(m.source.as_deref(), Some("learned"));
+        assert_eq!(m.learned_from.as_deref(), Some("scan-1/claude"));
+    }
+
+    #[test]
+    fn write_learned_sinks_roundtrips() {
+        let dir = tmp_dir("write");
+        let m = candidate_to_sink_model(&cand("openpyxl.load_workbook", "file_read"), "scan-1", "claude").unwrap();
+        write_learned_sinks(&dir, &[m]).expect("write");
+        let loaded = crate::models::load_models_dir(&dir).expect("load");
+        assert_eq!(loaded.sink_count(), 1);
+        assert!(loaded.sinks_for_language("python")[0].source.as_deref() == Some("learned"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

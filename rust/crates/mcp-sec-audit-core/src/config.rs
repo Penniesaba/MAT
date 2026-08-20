@@ -47,6 +47,9 @@ pub struct StaticConfig {
     /// built-in catalog at runtime (the seam R5's `learned/` dir reuses).
     #[serde(default)]
     pub models_dir: Option<String>,
+    /// Directory where gated learned models are cold-persisted (next run loads them).
+    #[serde(default)]
+    pub learned_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -257,6 +260,7 @@ impl Default for StaticConfig {
             agent: StaticAgentConfig::default(),
             codeql: StaticCodeqlConfig::default(),
             models_dir: None,
+            learned_dir: None,
         }
     }
 }
@@ -627,5 +631,25 @@ mod tests {
     #[test]
     fn models_dir_defaults_to_none() {
         assert_eq!(StaticConfig::default().models_dir, None);
+    }
+
+    #[test]
+    fn learned_dir_parses_from_toml() {
+        let config: RuntimeConfig = toml::from_str(
+            r#"
+            [scan]
+            targets = ["src"]
+
+            [static]
+            learned_dir = "models/learned"
+            "#,
+        )
+        .expect("parse config");
+        assert_eq!(config.static_.learned_dir.as_deref(), Some("models/learned"));
+    }
+
+    #[test]
+    fn learned_dir_defaults_to_none() {
+        assert_eq!(StaticConfig::default().learned_dir, None);
     }
 }

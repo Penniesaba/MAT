@@ -144,6 +144,8 @@ mod tests {
             confidence: Confidence::High,
             reason: "t".into(),
             patterns: patterns.iter().map(|s| s.to_string()).collect(),
+            source: None,
+            learned_from: None,
         }
     }
 
