@@ -189,6 +189,13 @@ pub struct StaticAnalysisResult {
     pub taint_results: Vec<TaintAnalysisResult>,
     pub agent_results: Vec<AgentAnalysisResult>,
     pub codeql_results: Vec<CodeqlAnalysisResult>,
+    /// Diagnostics emitted by the CodeQL line (skip reasons, create/analyze
+    /// failures, SARIF parse errors). Surfaced so "0 results" is never silent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub codeql_diagnostics: Vec<String>,
+    /// Raw concatenated SARIF produced by CodeQL, preserved for debugging.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codeql_raw_sarif: Option<String>,
     pub fused_findings: Vec<FusedFinding>,
     pub summary: StaticAnalysisSummary,
     pub config_snapshot: ConfigSnapshot,

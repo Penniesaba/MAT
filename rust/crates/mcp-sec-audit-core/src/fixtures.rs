@@ -208,6 +208,8 @@ pub fn synthetic_static_analysis_result() -> StaticAnalysisResult {
         taint_results: vec![synthetic_taint_analysis_result()],
         agent_results: vec![synthetic_agent_analysis_result()],
         codeql_results: vec![synthetic_codeql_analysis_result()],
+        codeql_diagnostics: vec!["Synthetic CodeQL diagnostic".to_string()],
+        codeql_raw_sarif: None,
         fused_findings: vec![FusedFinding {
             finding_id: "finding:demo:fused:1".to_string(),
             title: "Command execution reachable from MCP tool".to_string(),

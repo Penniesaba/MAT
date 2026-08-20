@@ -185,6 +185,9 @@ pub fn run_static_scan_with_progress(
             "CodeQL analysis done: {} findings",
             output.results.len()
         ));
+        for diag in &output.diagnostics {
+            tracing::warn!(target: "mcp_sec_audit::codeql", "{diag}");
+        }
         output
     };
 
@@ -236,6 +239,8 @@ pub fn run_static_scan_with_progress(
         taint_results,
         agent_results,
         codeql_results: codeql_output.results,
+        codeql_diagnostics: codeql_output.diagnostics,
+        codeql_raw_sarif: codeql_output.raw_sarif,
         fused_findings,
         summary,
         config_snapshot: ConfigSnapshot {
@@ -316,6 +321,8 @@ fn empty_result(
         taint_results: Vec::new(),
         agent_results: Vec::new(),
         codeql_results: Vec::new(),
+        codeql_diagnostics: Vec::new(),
+        codeql_raw_sarif: None,
         fused_findings: Vec::new(),
         summary: StaticAnalysisSummary {
             target,
@@ -686,6 +693,21 @@ def run_command(command: str):
         assert!(result.summary.fused_finding_count > 0);
         assert!(!result.fused_findings.is_empty());
 
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn codeql_skip_diagnostic_is_surfaced_in_result() {
+        let root = temp_dir("codeql-skip-diag");
+        let rules = write_rulebook(&root, "rules.toml", "command_exec");
+        fs::write(root.join("data.json"), "{}").expect("write json");
+        let mut config = RuntimeConfig::default();
+        config.static_.codeql.enabled = true;
+        let result = run_static_scan(&config, &[rules], Some(&[root.clone()])).expect("run scan");
+        assert!(result
+            .codeql_diagnostics
+            .iter()
+            .any(|d| d.contains("No CodeQL-supported language")));
         fs::remove_dir_all(root).expect("cleanup");
     }
 
