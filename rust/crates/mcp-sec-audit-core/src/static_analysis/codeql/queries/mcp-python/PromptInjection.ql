@@ -5,20 +5,30 @@
  * @kind path-problem
  * @problem.severity warning
  * @id mcp/prompt-injection
+ * @tags security mcp prompt-injection
  */
 
+// Test sample: test-targets/python-mcp-server/server.py
 import python
 import semmle.python.dataflow.new.DataFlow
 import semmle.python.dataflow.new.TaintTracking
 import semmle.python.ApiGraphs
+import semmle.python.frameworks.internal.PoorMansFunctionResolution
 
-// MCP prompt entrypoints
+// MCP prompt entrypoints — decorated with @mcp.prompt() or registered via mcp.prompt("name", handler)
 class McpPromptSource extends DataFlow::Node {
   McpPromptSource() {
     exists(Function f |
       f.getADecorator().(Call).getFunc().(Attribute).getObject().(Name).getId() = "mcp" and
       f.getADecorator().(Call).getFunc().(Attribute).getName() = "prompt" and
       this = DataFlow::parameterNode(f.getArg(0))
+    )
+    or
+    // Registration form: mcp.prompt("name", handler) — handler's parameters.
+    exists(DataFlow::CallCfgNode call, Function handler |
+      call = API::moduleImport("mcp").getMember("prompt").getACall()
+      and poorMansFunctionTracker(handler) = call.getArg(1)
+      and this = DataFlow::parameterNode(handler.getAnArg())
     )
   }
 }
