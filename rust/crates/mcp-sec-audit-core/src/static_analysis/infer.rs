@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::recon::PackageInventory;
+use super::recon::{PackageInventory, collect_packages};
 use crate::model::{CallFact, Confidence, Fact, FactBase, Severity, SinkFact};
 use crate::models::{PackageRule, rule_prefix};
 
@@ -180,6 +180,23 @@ pub(crate) fn infer_by_name(
         ));
     }
     out
+}
+
+/// Full model-assembly pass: layer 2 (package) then layer 3 (naming) inference.
+/// Returns only the additional sink facts to append to the extraction output.
+pub(crate) fn assemble(facts: &[Fact], rules: &[PackageRule]) -> Vec<Fact> {
+    let inventory = collect_packages(facts);
+    let mut inferred = infer_by_package(facts, &inventory, rules);
+    let skip: BTreeSet<String> = facts
+        .iter()
+        .chain(inferred.iter())
+        .filter_map(|f| match f {
+            Fact::Sink(s) => Some(s.call_id.clone()),
+            _ => None,
+        })
+        .collect();
+    inferred.extend(infer_by_name(facts, &skip));
+    inferred
 }
 
 #[cfg(test)]

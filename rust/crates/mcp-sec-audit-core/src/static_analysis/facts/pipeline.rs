@@ -3,6 +3,7 @@ use std::fs;
 use anyhow::{Context, Result, bail};
 
 use crate::models::{default_catalog, load_models_dir};
+use crate::static_analysis::{infer, recon};
 use crate::{Fact, ScanLanguage, static_analysis::pipeline::StaticScanContext};
 
 use super::{extract_js_ts_facts, extract_python_facts, extract_rust_facts, ExtractionDiagnostic};
@@ -103,6 +104,15 @@ pub fn extract_static_facts(ctx: &StaticScanContext) -> Result<Vec<Fact>> {
             .join("; ");
         bail!("fact extraction produced diagnostics: {summary}");
     }
+
+    let inferred = infer::assemble(&facts, &crate::models::default_package_rules());
+    tracing::info!(
+        target: "mcp_sec_audit::taint",
+        inferred_sinks = inferred.len(),
+        packages = recon::collect_packages(&facts).len(),
+        "semantic sink inference complete"
+    );
+    facts.extend(inferred);
 
     Ok(facts)
 }
@@ -273,6 +283,40 @@ async fn run_command(command: String) -> Result<String, String> {
         assert!(facts
             .iter()
             .any(|f| matches!(f, Fact::Sink(s) if s.sink_name == "totally.custom.sink")));
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn semantic_inference_detects_unmodeled_package_sink() {
+        let root = temp_dir("infer-pipeline");
+        let file = root.join("server.py");
+        fs::write(
+            &file,
+            r#"
+import openpyxl
+
+@mcp.tool()
+def read_workbook(path: str):
+    return openpyxl.load_workbook(path)
+"#,
+        )
+        .expect("write Python file");
+
+        let ctx = StaticScanContext {
+            config: RuntimeConfig::default(),
+            rulebook_paths: Vec::new(),
+            discovered_files: vec![DiscoveredFile {
+                path: file,
+                language: ScanLanguage::Python,
+            }],
+        };
+
+        let facts = extract_static_facts(&ctx).expect("extract facts");
+        assert!(facts.iter().any(|f| matches!(f, Fact::Sink(s)
+            if s.sink_name == "openpyxl.load_workbook"
+               && s.category == "file_read"
+               && s.confidence == crate::Confidence::Medium)));
 
         fs::remove_dir_all(root).expect("cleanup");
     }
