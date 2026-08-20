@@ -1,4 +1,4 @@
 name: mcp-sec-audit/mcp-js-queries
 version: 0.0.0
 dependencies:
-  codeql/javascript-all: "*"
+  codeql/javascript-all: "2.8.2"
