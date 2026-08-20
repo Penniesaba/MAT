@@ -43,7 +43,7 @@ pub struct StaticConfig {
     pub agent: StaticAgentConfig,
     #[serde(default)]
     pub codeql: StaticCodeqlConfig,
-    /// Optional directory of extra sink-model YAML files, merged onto the
+    /// Optional directory of extra sink-model TOML files, merged onto the
     /// built-in catalog at runtime (the seam R5's `learned/` dir reuses).
     #[serde(default)]
     pub models_dir: Option<String>,

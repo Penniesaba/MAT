@@ -1,5 +1,5 @@
 //! Sink matching for Rust APIs. Sink models are loaded from the model catalog
-//! (`models/sinks/rust.yaml`); this module only owns the Rust-specific `::`
+//! (`models/sinks/rust.toml`); this module only owns the Rust-specific `::`
 //! separator matching.
 
 pub(crate) fn matches_sink(callee: &str, patterns: &[String]) -> bool {

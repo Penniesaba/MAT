@@ -252,8 +252,8 @@ async fn run_command(command: String) -> Result<String, String> {
         let models_dir = root.join("models");
         fs::create_dir_all(&models_dir).expect("create models dir");
         fs::write(
-            models_dir.join("custom.yaml"),
-            "- language: python\n  category: command_execution\n  severity: high\n  confidence: high\n  reason: custom\n  patterns: [totally.custom.sink]\n",
+            models_dir.join("custom.toml"),
+            "[[sinks]]\nlanguage = \"python\"\ncategory = \"command_execution\"\nseverity = \"high\"\nconfidence = \"high\"\nreason = \"custom\"\npatterns = [\"totally.custom.sink\"]\n",
         )
         .expect("write custom model");
         let file = root.join("a.py");

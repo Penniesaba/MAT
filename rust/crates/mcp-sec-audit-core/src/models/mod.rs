@@ -77,28 +77,33 @@ impl ModelCatalog {
     }
 }
 
-/// Parse a YAML list of sink models.
-pub fn parse_sinks(yaml: &str) -> Result<Vec<SinkModel>> {
-    serde_yaml::from_str(yaml).context("parse sink models YAML")
+/// Parse a TOML document of sink models (a `[[sinks]]` array of tables).
+pub fn parse_sinks(toml_str: &str) -> Result<Vec<SinkModel>> {
+    #[derive(Deserialize)]
+    struct SinkFile {
+        sinks: Vec<SinkModel>,
+    }
+    let file: SinkFile = toml::from_str(toml_str).context("parse sink models TOML")?;
+    Ok(file.sinks)
 }
 
-/// The default catalog, compiled from `models/sinks/*.yaml` at build time.
+/// The default catalog, compiled from `models/sinks/*.toml` at build time.
 pub fn default_catalog() -> ModelCatalog {
     let mut models = Vec::new();
     models.extend(
-        parse_sinks(include_str!("../../models/sinks/python.yaml")).expect("python sink models"),
+        parse_sinks(include_str!("../../models/sinks/python.toml")).expect("python sink models"),
     );
     models.extend(
-        parse_sinks(include_str!("../../models/sinks/javascript.yaml"))
+        parse_sinks(include_str!("../../models/sinks/javascript.toml"))
             .expect("javascript sink models"),
     );
     models.extend(
-        parse_sinks(include_str!("../../models/sinks/rust.yaml")).expect("rust sink models"),
+        parse_sinks(include_str!("../../models/sinks/rust.toml")).expect("rust sink models"),
     );
     ModelCatalog::from_sinks(models)
 }
 
-/// Load + merge all `*.yaml` files in a directory (used by `models_dir` / `learned/`).
+/// Load + merge all `*.toml` files in a directory (used by `models_dir` / `learned/`).
 pub fn load_models_dir(dir: &Path) -> Result<ModelCatalog> {
     let mut models = Vec::new();
     let mut entries: Vec<_> = std::fs::read_dir(dir)
@@ -107,14 +112,12 @@ pub fn load_models_dir(dir: &Path) -> Result<ModelCatalog> {
     entries.sort_by_key(|e| e.path());
     for entry in entries {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("yaml")
-            && path.extension().and_then(|e| e.to_str()) != Some("yml")
-        {
+        if path.extension().and_then(|e| e.to_str()) != Some("toml") {
             continue;
         }
-        let yaml = std::fs::read_to_string(&path)
+        let text = std::fs::read_to_string(&path)
             .with_context(|| format!("read model file {}", path.display()))?;
-        models.extend(parse_sinks(&yaml)?);
+        models.extend(parse_sinks(&text)?);
     }
     Ok(ModelCatalog::from_sinks(models))
 }
@@ -125,17 +128,16 @@ mod tests {
 
     #[test]
     fn parse_sinks_reads_a_model_list() {
-        let yaml = r#"
-- language: python
-  category: command_execution
-  severity: high
-  confidence: high
-  reason: "Runs commands"
-  patterns:
-    - subprocess.run
-    - os.system
+        let toml_str = r#"
+[[sinks]]
+language = "python"
+category = "command_execution"
+severity = "high"
+confidence = "high"
+reason = "Runs commands"
+patterns = ["subprocess.run", "os.system"]
 "#;
-        let models = parse_sinks(yaml).expect("parse models");
+        let models = parse_sinks(toml_str).expect("parse models");
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].language, "python");
         assert_eq!(models[0].severity, Severity::High);
@@ -160,11 +162,11 @@ mod tests {
     #[test]
     fn catalog_groups_and_merges_by_language() {
         let a = parse_sinks(
-            "- language: python\n  category: command_execution\n  severity: high\n  confidence: high\n  reason: x\n  patterns: [subprocess.run]\n",
+            "[[sinks]]\nlanguage = \"python\"\ncategory = \"command_execution\"\nseverity = \"high\"\nconfidence = \"high\"\nreason = \"x\"\npatterns = [\"subprocess.run\"]\n",
         )
         .unwrap();
         let b = parse_sinks(
-            "- language: rust\n  category: file_read\n  severity: medium\n  confidence: high\n  reason: y\n  patterns: [std::fs::read]\n",
+            "[[sinks]]\nlanguage = \"rust\"\ncategory = \"file_read\"\nseverity = \"medium\"\nconfidence = \"high\"\nreason = \"y\"\npatterns = [\"std::fs::read\"]\n",
         )
         .unwrap();
         let mut cat = ModelCatalog::from_sinks(a);
