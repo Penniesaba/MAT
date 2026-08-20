@@ -87,51 +87,128 @@ pub fn run_static_scan_with_progress(
         discovered_files: discovery.discovered_files,
     };
 
-    progress(if effective_config.static_.rule.enabled {
-        "Running rule analysis..."
-    } else {
-        "Rule analysis: skipped (disabled)"
-    });
-    let rule_results = rule::run(&ctx, loaded_rulebook.as_ref())?;
-    progress(&format!("Rule analysis done: {} findings", rule_results.len()));
+    let rule_results = {
+        let _enter = tracing::info_span!(
+            target: "mcp_sec_audit::rule",
+            "rule",
+            enabled = effective_config.static_.rule.enabled
+        )
+        .entered();
+        progress(if effective_config.static_.rule.enabled {
+            "Running rule analysis..."
+        } else {
+            "Rule analysis: skipped (disabled)"
+        });
+        let start = std::time::Instant::now();
+        let results = rule::run(&ctx, loaded_rulebook.as_ref())?;
+        tracing::info!(
+            target: "mcp_sec_audit::rule",
+            findings = results.len(),
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            "rule analysis complete"
+        );
+        progress(&format!("Rule analysis done: {} findings", results.len()));
+        results
+    };
 
-    progress(if effective_config.static_.taint.enabled {
-        "Running taint analysis..."
-    } else {
-        "Taint analysis: skipped (disabled)"
-    });
-    let (taint_results, all_facts) = taint::run(&ctx)?;
-    progress(&format!("Taint analysis done: {} findings", taint_results.len()));
+    let (taint_results, all_facts) = {
+        let _enter = tracing::info_span!(
+            target: "mcp_sec_audit::taint",
+            "taint",
+            enabled = effective_config.static_.taint.enabled
+        )
+        .entered();
+        progress(if effective_config.static_.taint.enabled {
+            "Running taint analysis..."
+        } else {
+            "Taint analysis: skipped (disabled)"
+        });
+        let start = std::time::Instant::now();
+        let (results, facts) = taint::run(&ctx)?;
+        tracing::info!(
+            target: "mcp_sec_audit::taint",
+            findings = results.len(),
+            facts = facts.len(),
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            "taint analysis complete"
+        );
+        progress(&format!("Taint analysis done: {} findings", results.len()));
+        (results, facts)
+    };
 
-    progress(if effective_config.static_.agent.enabled {
-        "Running agent analysis..."
-    } else {
-        "Agent analysis: skipped (disabled)"
-    });
-    let agent_results = agent::run(&ctx)?;
-    progress(&format!("Agent analysis done: {} findings", agent_results.len()));
+    let agent_results = {
+        let _enter = tracing::info_span!(
+            target: "mcp_sec_audit::agent",
+            "agent",
+            enabled = effective_config.static_.agent.enabled
+        )
+        .entered();
+        progress(if effective_config.static_.agent.enabled {
+            "Running agent analysis..."
+        } else {
+            "Agent analysis: skipped (disabled)"
+        });
+        let start = std::time::Instant::now();
+        let results = agent::run(&ctx)?;
+        tracing::info!(
+            target: "mcp_sec_audit::agent",
+            findings = results.len(),
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            "agent analysis complete"
+        );
+        progress(&format!("Agent analysis done: {} findings", results.len()));
+        results
+    };
 
-    progress(if effective_config.static_.codeql.enabled {
-        "Running CodeQL analysis..."
-    } else {
-        "CodeQL analysis: skipped (disabled)"
-    });
-    let codeql_output = codeql::run(&ctx, &mut progress)?;
-    progress(&format!(
-        "CodeQL analysis done: {} findings",
-        codeql_output.results.len()
-    ));
+    let codeql_output = {
+        let _enter = tracing::info_span!(
+            target: "mcp_sec_audit::codeql",
+            "codeql",
+            enabled = effective_config.static_.codeql.enabled
+        )
+        .entered();
+        progress(if effective_config.static_.codeql.enabled {
+            "Running CodeQL analysis..."
+        } else {
+            "CodeQL analysis: skipped (disabled)"
+        });
+        let start = std::time::Instant::now();
+        let output = codeql::run(&ctx, &mut progress)?;
+        tracing::info!(
+            target: "mcp_sec_audit::codeql",
+            findings = output.results.len(),
+            diagnostics = output.diagnostics.len(),
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            "codeql analysis complete"
+        );
+        progress(&format!(
+            "CodeQL analysis done: {} findings",
+            output.results.len()
+        ));
+        output
+    };
 
     // Phase 13: Fusion
-    progress("Fusing results...");
-    let fused_findings = fusion::run(
-        &ctx.config.fusion,
-        rule_results.clone(),
-        taint_results.clone(),
-        agent_results.clone(),
-        codeql_output.results.clone(),
-    );
-    progress(&format!("Fused {} findings", fused_findings.len()));
+    let fused_findings = {
+        let _enter = tracing::info_span!(target: "mcp_sec_audit::fusion", "fusion").entered();
+        progress("Fusing results...");
+        let start = std::time::Instant::now();
+        let findings = fusion::run(
+            &ctx.config.fusion,
+            rule_results.clone(),
+            taint_results.clone(),
+            agent_results.clone(),
+            codeql_output.results.clone(),
+        );
+        tracing::info!(
+            target: "mcp_sec_audit::fusion",
+            findings = findings.len(),
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            "fusion complete"
+        );
+        progress(&format!("Fused {} findings", findings.len()));
+        findings
+    };
 
     // Count fused findings that involve the codeql line (solo or corroborated).
     let codeql_fused_count = fused_findings.iter()

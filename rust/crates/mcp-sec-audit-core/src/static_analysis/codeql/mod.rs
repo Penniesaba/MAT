@@ -40,6 +40,10 @@ pub fn run(ctx: &StaticScanContext, mut progress: impl FnMut(&str)) -> Result<Co
         .collect();
 
     if supported_files.is_empty() {
+        tracing::warn!(
+            target: "mcp_sec_audit::codeql",
+            "CodeQL skipped: no CodeQL-supported language in target"
+        );
         progress("CodeQL skipped: no CodeQL-supported language in target");
         let mut output = CodeqlOutput::empty();
         let total = ctx.discovered_files.len();
@@ -95,6 +99,11 @@ pub fn run(ctx: &StaticScanContext, mut progress: impl FnMut(&str)) -> Result<Co
         let query_pack = resolve_query_pack(codeql_config.query_pack_path.as_deref(), language)?;
 
         // Create database for this language.
+        tracing::debug!(
+            target: "mcp_sec_audit::codeql",
+            language = %language,
+            "creating CodeQL database"
+        );
         let db = match provider.create_database(
             std::path::Path::new(&target_root),
             language,
@@ -110,6 +119,11 @@ pub fn run(ctx: &StaticScanContext, mut progress: impl FnMut(&str)) -> Result<Co
         };
 
         // Run analysis against the database.
+        tracing::debug!(
+            target: "mcp_sec_audit::codeql",
+            language = %language,
+            "running CodeQL analysis"
+        );
         match provider.run_analysis(
             &db,
             &query_pack,
@@ -127,6 +141,12 @@ pub fn run(ctx: &StaticScanContext, mut progress: impl FnMut(&str)) -> Result<Co
 
                 match parser::parse_sarif(&sarif, &metadata) {
                     Ok(results) => {
+                        tracing::info!(
+                            target: "mcp_sec_audit::codeql",
+                            language = %language,
+                            findings = results.len(),
+                            "CodeQL analysis produced results"
+                        );
                         all_results.extend(results);
                         raw_sarif_parts.push(sarif);
                     }

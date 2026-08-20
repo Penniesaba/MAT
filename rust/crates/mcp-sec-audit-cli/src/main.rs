@@ -141,14 +141,19 @@ fn main() -> Result<()> {
 
 fn run_static_scan_from_config(config_path: &PathBuf) -> Result<()> {
     let config = mcp_sec_audit_core::load_runtime_config(config_path)?;
+    logging::init(&config.logging)?;
     let result = mcp_sec_audit_core::run_static_scan_with_progress(
         &config,
         &[] as &[PathBuf],
         None,
-        |msg| eprintln!("{msg}"),
+        |msg| {
+            if config.logging.show_progress {
+                tracing::info!(target: "mcp_sec_audit::pipeline", "{msg}");
+            }
+        },
     )?;
     for path in write_report_files(&result, &config.report)? {
-        eprintln!("Wrote {}", path.display());
+        tracing::info!(target: "mcp_sec_audit::pipeline", path = %path.display(), "wrote report");
     }
     Ok(())
 }
