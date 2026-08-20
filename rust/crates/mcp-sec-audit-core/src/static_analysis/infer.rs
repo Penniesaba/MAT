@@ -115,6 +115,73 @@ fn make_inferred_sink(
     })
 }
 
+const NAME_PREFIX_CATEGORY: &[(&str, &str)] = &[
+    ("load", "file_read"),
+    ("read", "file_read"),
+    ("open", "file_read"),
+    ("save", "file_write"),
+    ("write", "file_write"),
+    ("dump", "file_write"),
+    ("exec", "dynamic_execution"),
+    ("eval", "dynamic_execution"),
+    ("run", "command_execution"),
+    ("get", "network_request"),
+    ("post", "network_request"),
+    ("fetch", "network_request"),
+    ("download", "network_request"),
+    ("upload", "network_request"),
+    ("delete", "file_delete"),
+    ("remove", "file_delete"),
+    ("unlink", "file_delete"),
+    ("rmdir", "file_delete"),
+];
+
+const ARG_PATH_HINTS: &[&str] = &["path", "file", "url", "cmd", "command", "dir", "host"];
+
+/// Layer 3: weak naming-pattern heuristic for calls whose package is unmodeled.
+/// Fires only for calls with a dangerous method-name prefix AND a first argument
+/// that looks like a path/url/command. Low confidence — never reported alone.
+pub(crate) fn infer_by_name(
+    facts: &[Fact],
+    skip_call_ids: &BTreeSet<String>,
+) -> Vec<Fact> {
+    let mut out = Vec::new();
+    for fact in facts {
+        let Fact::Call(call) = fact else { continue };
+        if skip_call_ids.contains(&call.base.id) {
+            continue;
+        }
+        let callee = call.normalized_callee.as_deref().unwrap_or(&call.callee);
+        let method = callee
+            .rsplit(['.', ':'])
+            .next()
+            .unwrap_or(callee)
+            .to_lowercase();
+        let Some((_, category)) = NAME_PREFIX_CATEGORY
+            .iter()
+            .find(|(prefix, _)| method.starts_with(prefix))
+        else {
+            continue;
+        };
+        let first_arg = call
+            .args
+            .first()
+            .map(|a| a.expr.to_lowercase())
+            .unwrap_or_default();
+        if !ARG_PATH_HINTS.iter().any(|h| first_arg.contains(h)) {
+            continue;
+        }
+        out.push(make_inferred_sink(
+            call,
+            callee,
+            category,
+            Confidence::Low,
+            language_from_file(&call.base.file),
+        ));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -209,5 +276,24 @@ def handle(f):
         let inferred = infer_pkg(&facts, &crate::models::default_package_rules());
         assert!(inferred.iter().any(|f| matches!(f, Fact::Sink(s)
             if s.sink_name == "sh.ls" && s.category == "command_execution")));
+    }
+
+    #[test]
+    fn infers_low_confidence_sink_from_naming_pattern() {
+        let facts = extract(
+            r#"
+@mcp.tool()
+def handle(filepath: str, url: str):
+    load_config(filepath)
+    fetch_url(url)
+    compute(123)
+"#,
+        );
+        let inferred = infer_by_name(&facts, &BTreeSet::new());
+        let names = sink_names(&inferred);
+        assert!(names.contains(&("load_config", "file_read")));
+        assert!(names.contains(&("fetch_url", "network_request")));
+        assert!(!inferred.iter().any(|f| matches!(f, Fact::Sink(s) if s.sink_name == "compute")));
+        assert!(inferred.iter().all(|f| matches!(f, Fact::Sink(s) if s.confidence == Confidence::Low)));
     }
 }
