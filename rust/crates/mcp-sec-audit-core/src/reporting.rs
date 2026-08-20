@@ -176,6 +176,13 @@ pub fn render_jsonl(result: &StaticAnalysisResult, options: &JsonlRenderOptions)
         }
     }
 
+    for diag in &result.codeql_diagnostics {
+        lines.push(serde_json::to_string(&JsonlRecord {
+            event: "codeql_diagnostic",
+            data: diag,
+        })?);
+    }
+
     Ok(lines.join("\n"))
 }
 
@@ -191,6 +198,14 @@ pub fn render_markdown(result: &StaticAnalysisResult, options: &MarkdownRenderOp
         format!("- Agent Results: {}", result.summary.agent_result_count),
         format!("- CodeQL Results: {}", result.summary.codeql_result_count),
     ];
+
+    if !result.codeql_diagnostics.is_empty() {
+        lines.push(String::new());
+        lines.push("## CodeQL Diagnostics".to_string());
+        for diag in &result.codeql_diagnostics {
+            lines.push(format!("- {diag}"));
+        }
+    }
 
     if options.include_facts {
         lines.push(String::new());
@@ -414,7 +429,7 @@ mod tests {
         let jsonl = render_jsonl(&result, &JsonlRenderOptions::default()).expect("render jsonl");
         let lines = jsonl.lines().collect::<Vec<_>>();
 
-        assert_eq!(lines.len(), 7);
+        assert_eq!(lines.len(), 8);
         assert!(lines[0].contains(r#""event":"summary""#));
         assert!(lines[1].contains(r#""event":"fact""#));
         assert!(lines[2].contains(r#""event":"fused_finding""#));
@@ -422,6 +437,7 @@ mod tests {
         assert!(lines[4].contains(r#""event":"taint_result""#));
         assert!(lines[5].contains(r#""event":"agent_result""#));
         assert!(lines[6].contains(r#""event":"codeql_result""#));
+        assert!(lines[7].contains(r#""event":"codeql_diagnostic""#));
     }
 
     #[test]
@@ -535,6 +551,14 @@ mod tests {
         assert_eq!(civil_from_days(1), (1970, 1, 2));
         // 2000-01-01 is 10957 days after the Unix epoch.
         assert_eq!(civil_from_days(10_957), (2000, 1, 1));
+    }
+
+    #[test]
+    fn markdown_renders_codeql_diagnostics_when_present() {
+        let result = crate::fixtures::synthetic_static_analysis_result();
+        let markdown = render_markdown(&result, &MarkdownRenderOptions::default());
+        assert!(markdown.contains("## CodeQL Diagnostics"));
+        assert!(markdown.contains("- Synthetic CodeQL diagnostic"));
     }
 
     #[test]
