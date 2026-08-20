@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -15,6 +15,8 @@ pub struct RuntimeConfig {
     pub fusion: FusionConfig,
     #[serde(default)]
     pub report: ReportConfig,
+    #[serde(default)]
+    pub logging: LoggingConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,6 +157,69 @@ pub struct ReportConfig {
     pub include_facts: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+impl Default for LogLevel {
+    fn default() -> Self {
+        LogLevel::Info
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogFormat {
+    Full,
+    Compact,
+    Pretty,
+    Json,
+}
+
+impl Default for LogFormat {
+    fn default() -> Self {
+        LogFormat::Compact
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoggingConfig {
+    #[serde(default)]
+    pub level: LogLevel,
+    #[serde(default)]
+    pub format: LogFormat,
+    #[serde(default = "default_true")]
+    pub ansi: bool,
+    #[serde(default = "default_true")]
+    pub show_timestamps: bool,
+    #[serde(default = "default_true")]
+    pub show_progress: bool,
+    #[serde(default)]
+    pub log_file: Option<String>,
+    #[serde(default)]
+    pub scopes: BTreeMap<String, LogLevel>,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            level: LogLevel::Info,
+            format: LogFormat::Compact,
+            ansi: true,
+            show_timestamps: true,
+            show_progress: true,
+            log_file: None,
+            scopes: BTreeMap::new(),
+        }
+    }
+}
+
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
@@ -163,6 +228,7 @@ impl Default for RuntimeConfig {
             dynamic: DynamicConfig::default(),
             fusion: FusionConfig::default(),
             report: ReportConfig::default(),
+            logging: LoggingConfig::default(),
         }
     }
 }
@@ -495,5 +561,46 @@ mod tests {
         // defaults preserved
         assert_eq!(config.fusion.taint_weight, 2);
         assert!(config.fusion.enabled);
+    }
+
+    #[test]
+    fn logging_config_parses_from_toml() {
+        let config: RuntimeConfig = toml::from_str(
+            r#"
+            [logging]
+            level = "debug"
+            format = "json"
+            ansi = false
+            show_timestamps = false
+            show_progress = false
+            log_file = "logs/audit.log"
+
+            [logging.scopes]
+            codeql = "trace"
+            rule = "debug"
+            "#,
+        )
+        .expect("parse config");
+
+        assert_eq!(config.logging.level, LogLevel::Debug);
+        assert_eq!(config.logging.format, LogFormat::Json);
+        assert!(!config.logging.ansi);
+        assert!(!config.logging.show_timestamps);
+        assert!(!config.logging.show_progress);
+        assert_eq!(config.logging.log_file.as_deref(), Some("logs/audit.log"));
+        assert_eq!(config.logging.scopes.get("codeql"), Some(&LogLevel::Trace));
+        assert_eq!(config.logging.scopes.get("rule"), Some(&LogLevel::Debug));
+    }
+
+    #[test]
+    fn logging_config_defaults_are_stable() {
+        let logging = LoggingConfig::default();
+        assert_eq!(logging.level, LogLevel::Info);
+        assert_eq!(logging.format, LogFormat::Compact);
+        assert!(logging.ansi);
+        assert!(logging.show_timestamps);
+        assert!(logging.show_progress);
+        assert!(logging.log_file.is_none());
+        assert!(logging.scopes.is_empty());
     }
 }

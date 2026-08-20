@@ -8,9 +8,9 @@ pub mod rules;
 pub mod static_analysis;
 
 pub use config::{
-    DynamicConfig, FusionConfig, ReportConfig, RuntimeConfig, ScanConfig, StaticAgentConfig,
-    StaticConfig, StaticRuleConfig, StaticTaintConfig, load_runtime_config,
-    parse_runtime_config_toml,
+    DynamicConfig, FusionConfig, LogFormat, LogLevel, LoggingConfig, ReportConfig, RuntimeConfig,
+    ScanConfig, StaticAgentConfig, StaticConfig, StaticRuleConfig, StaticTaintConfig,
+    load_runtime_config, parse_runtime_config_toml,
 };
 pub use model::{
     AgentAnalysisResult, CapabilityFinding, Confidence, ConfigSnapshot, DetectionResult,
