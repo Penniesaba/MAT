@@ -19,6 +19,13 @@ use queries::{QueryPack, resolve_query_pack};
 /// Languages CodeQL supports — Rust is supported as of CodeQL 2.26.x.
 const SUPPORTED_LANGUAGES: &[&str] = &["python", "javascript", "typescript", "rust"];
 
+/// MaD model-pack injection is DISABLED under CLI 2.26.2: `--model-packs`
+/// rejects the 3-column `sinkModel` extension ("Expected 4, but was 3")
+/// when the mcp-* query packs (with their lock files) are evaluated in
+/// overlay-eval mode. See SDD ledger RULING 11. Flip to `true` after a
+/// CLI upgrade to 2.26.3+.
+const MAD_INJECT_ENABLED: bool = false;
+
 /// A prepared CodeQL scan: provider, config, and per-language databases and
 /// query packs. `create` builds databases (reusing any cached DB); `analyze`
 /// runs analysis and parses SARIF.
@@ -240,18 +247,25 @@ pub fn run(ctx: &StaticScanContext, mut progress: impl FnMut(&str)) -> Result<Co
     };
 
     // Compile the shared sink model catalog into a CodeQL MaD model pack and
-    // feed it to every `analyze`. MaD compilation is non-fatal: on error fall
-    // back to built-in queries and warn, so the CodeQL line still runs.
-    let model_packs = match models::write_model_pack_dir(&crate::models::default_catalog(), ctx) {
-        Ok(pack) => vec![pack],
-        Err(e) => {
-            tracing::warn!(
-                target: "mcp_sec_audit::codeql",
-                error = %e,
-                "MaD model pack compilation failed; running with built-in queries only"
-            );
-            Vec::new()
+    // feed it to every `analyze`. Injection is const-gated (RULING 11): disabled
+    // under CLI 2.26.2 because `--model-packs` rejects the 3-column `sinkModel`
+    // extension when the lock-file mcp-* query packs are evaluated in
+    // overlay-eval mode. MaD compilation is non-fatal: on error fall back to
+    // built-in queries and warn, so the CodeQL line still runs.
+    let model_packs: Vec<models::MadPack> = if MAD_INJECT_ENABLED {
+        match models::write_model_pack_dir(&crate::models::default_catalog(), ctx) {
+            Ok(pack) => vec![pack],
+            Err(e) => {
+                tracing::warn!(
+                    target: "mcp_sec_audit::codeql",
+                    error = %e,
+                    "failed to compile MaD model packs; running without them"
+                );
+                Vec::new()
+            }
         }
+    } else {
+        Vec::new()
     };
 
     session.analyze(&model_packs, &mut progress)
