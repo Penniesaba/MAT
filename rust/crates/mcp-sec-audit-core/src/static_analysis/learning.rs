@@ -3,8 +3,8 @@
 
 use std::path::Path;
 
-use crate::model::{Confidence, ModelCandidate, Severity};
-use crate::models::{PackageRule, SinkModel};
+use crate::model::{Confidence, Fact, FactBase, ModelCandidate, Severity, SinkFact};
+use crate::models::{rule_prefix, PackageRule, SinkModel};
 
 use super::infer::name_category;
 
@@ -37,6 +37,57 @@ pub fn gate_sink_candidate(candidate: &ModelCandidate, rules: &[PackageRule]) ->
         return GateDecision::Warm;
     }
     GateDecision::Cold
+}
+
+/// Match agent-proposed sink candidates against already-extracted call facts
+/// and produce `Sink` facts for the matching calls (warm re-injection).
+pub fn sink_candidates_to_sink_facts(facts: &[Fact], candidates: &[ModelCandidate]) -> Vec<Fact> {
+    let mut out = Vec::new();
+    for fact in facts {
+        let Fact::Call(call) = fact else { continue };
+        let callee = call.normalized_callee.as_deref().unwrap_or(&call.callee);
+        for c in candidates {
+            if c.kind != "sink" { continue; }
+            let hit = callee == c.name
+                || callee.ends_with(&format!(".{}", c.name))
+                || callee.ends_with(&format!("::{}", c.name));
+            if !hit { continue; }
+            out.push(Fact::Sink(SinkFact {
+                base: FactBase {
+                    id: format!("sink:learned:{}:{}", call.base.id, c.category),
+                    file: call.base.file.clone(),
+                    line: call.base.line,
+                    extractor: "agent_model".to_string(),
+                },
+                call_id: call.base.id.clone(),
+                category: c.category.clone(),
+                rule_id: format!("{}.{}", rule_prefix(&c.language), c.category),
+                sink_name: callee.to_string(),
+                severity_base: Severity::Medium,
+                reason: format!("learned sink from agent (warm re-injection): {}", c.category),
+                conditions: Default::default(),
+                confidence: c.confidence.clone(),
+            }));
+        }
+    }
+    out
+}
+
+/// Convert sink candidates to `SinkModel`s so R4's MaD compiler can turn them
+/// into CodeQL model packs for the warm CodeQL re-run.
+// Deferred until CodeQL CLI ≥ 2.26.3 (R4 RULING 11: --model-packs broken under 2.26.2). Not wired by the pipeline.
+#[allow(dead_code)]
+pub fn candidates_to_mad_sinks(candidates: &[ModelCandidate]) -> Vec<SinkModel> {
+    candidates.iter().filter(|c| c.kind == "sink").map(|c| SinkModel {
+        language: c.language.clone(),
+        category: c.category.clone(),
+        severity: Severity::Medium,
+        confidence: c.confidence.clone(),
+        reason: format!("learned sink (warm): {}", c.category),
+        patterns: vec![c.name.clone()],
+        source: Some("learned".to_string()),
+        learned_from: None,
+    }).collect()
 }
 
 /// Convert a gated sink candidate into a low-confidence `learned` sink model.
@@ -150,6 +201,35 @@ mod tests {
         assert_eq!(m.confidence, Confidence::Low);   // learned enters low
         assert_eq!(m.source.as_deref(), Some("learned"));
         assert_eq!(m.learned_from.as_deref(), Some("scan-1/claude"));
+    }
+
+    fn call_fact(id: &str, callee: &str) -> Fact {
+        use crate::model::{CallArg, CallFact};
+        Fact::Call(CallFact {
+            base: FactBase { id: id.into(), file: "s.py".into(), line: 3, extractor: "t".into() },
+            caller: "f".into(),
+            callee: callee.into(),
+            normalized_callee: Some(callee.into()),
+            column: None, end_line: None, snippet: format!("{callee}(x)"),
+            args: vec![CallArg { index: 0, expr: "x".into(), kind: "positional".into() }],
+            kwargs: Default::default(), resolution: None,
+        })
+    }
+
+    #[test]
+    fn warm_candidates_become_sink_facts_for_matching_calls() {
+        let facts = vec![
+            call_fact("call:1", "openpyxl.load_workbook"),
+            call_fact("call:2", "unrelated.thing"),
+        ];
+        let cands = vec![cand("openpyxl.load_workbook", "file_read")];
+        let new = sink_candidates_to_sink_facts(&facts, &cands);
+        assert_eq!(new.len(), 1);
+        if let Fact::Sink(s) = &new[0] {
+            assert_eq!(s.sink_name, "openpyxl.load_workbook");
+            assert_eq!(s.category, "file_read");
+            assert_eq!(s.confidence, Confidence::Medium);
+        } else { panic!("expected Sink"); }
     }
 
     #[test]
