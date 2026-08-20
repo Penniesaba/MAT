@@ -55,7 +55,7 @@
 
 | 根因 | 修复 |
 |---|---|
-| 标准查询库没装 | 配置 `[static.codeql].binary` 指向含 qlpacks 的 CodeQL（`/home/xiao/codeql-home/codeql/codeql`），内置查询包 `qlpack.yml` 声明 `codeql/python-all` 依赖 |
+| 标准查询库没装 | 配置 `[static.codeql].binary` 指向 CodeQL 2.26.2（`/home/xiao/App/codeql/codeql`，通过 `codeql pack download` 预置标准查询库），内置查询包 `qlpack.yml` 声明 `codeql/python-all` 依赖 |
 | 内置 `.ql` 跑不起来 | 3 个查询改为 `@kind path-problem` + `import <Flow>::PathGraph` + 标准 6 列 select，产出完整路径链（原为 `@kind problem`，不产出 `codeFlows`） |
 | 失败被静默吞掉 | `run_analysis` 检查 `exit_code`（非 0 直接 `bail!`）、把 SARIF 写到临时文件再读取（`--output=-` 在 2.25.6 下不输出 SARIF）、stderr 进入错误信息 |
 

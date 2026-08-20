@@ -11,28 +11,28 @@ enabled = true
 save_facts = true
 
 [static.rule]
-enabled = true
+enabled = false
 rule_paths = ["rules/mcp", "rules/languages"]
 
 [static.taint]
-enabled = true
+enabled = false
 forward = true
 backward = true
 max_depth = 8
 entrypoint_required = true
 
 [static.agent]
-enabled = true
+enabled = false
 # provider = "claude"
 # timeout_seconds = 600
 
 [static.codeql]
 enabled = true
-binary = "/home/xiao/codeql-home/codeql/codeql"
+binary = "/home/xiao/App/codeql/codeql/codeql"
 # timeout_seconds = 1200
 
 [fusion]
-enabled = true
+enabled = false
 require_confirmed_by = 1
 boost_when_multiple_lines_agree = true
 agent_only_as_advisory = true
@@ -43,9 +43,9 @@ agent_weight = 1
 codeql_weight = 4
 
 [report]
-output = "/home/xiao/Project/mcp-sec-audit/rust/docs/<timestamp>"
+output = "/home/xiao/Project/mcp-sec-audit/rust/docs/result/<timestamp>"
 formats = ["markdown"]
-include_fused_results = true
+include_fused_results = false
 include_raw_rule_results = true
 include_raw_taint_results = true
 include_raw_agent_results = true
