@@ -136,6 +136,12 @@ const NAME_PREFIX_CATEGORY: &[(&str, &str)] = &[
     ("rmdir", "file_delete"),
 ];
 
+/// Layer-3 category for a callee's method-name prefix, or `None`.
+pub(crate) fn name_category(callee: &str) -> Option<&'static str> {
+    let method = callee.rsplit(['.', ':']).next().unwrap_or(callee).to_lowercase();
+    NAME_PREFIX_CATEGORY.iter().find(|(p, _)| method.starts_with(p)).map(|(_, c)| *c)
+}
+
 const ARG_PATH_HINTS: &[&str] = &["path", "file", "url", "cmd", "command", "dir", "host"];
 
 /// Layer 3: weak naming-pattern heuristic for calls whose package is unmodeled.

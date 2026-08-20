@@ -6,6 +6,7 @@ mod codeql;
 mod discovery;
 mod fusion;
 pub(crate) mod infer;
+pub(crate) mod learning;
 mod pipeline;
 pub(crate) mod recon;
 mod rule;
