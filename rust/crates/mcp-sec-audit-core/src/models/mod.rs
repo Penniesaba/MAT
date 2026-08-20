@@ -27,12 +27,28 @@ impl SinkModel {
     }
 }
 
-fn rule_prefix(language: &str) -> &'static str {
+pub(crate) fn rule_prefix(language: &str) -> &'static str {
     match language {
         "python" => "python",
         "rust" => "rust",
         _ => "js", // javascript + typescript
     }
+}
+
+/// A package → dangerous-category classification rule for semantic inference.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PackageRule {
+    pub language: String,
+    pub package: String,
+    /// Whole package is this category (e.g. subprocess → command_execution).
+    #[serde(default)]
+    pub category: Option<String>,
+    /// Read methods (load*/read*/open*) are this category (file I/O split).
+    #[serde(default)]
+    pub read_category: Option<String>,
+    /// Write methods (save*/write*/dump*/to_*) are this category (file I/O split).
+    #[serde(default)]
+    pub write_category: Option<String>,
 }
 
 /// All sink models, grouped by language key.
@@ -85,6 +101,24 @@ pub fn parse_sinks(toml_str: &str) -> Result<Vec<SinkModel>> {
     }
     let file: SinkFile = toml::from_str(toml_str).context("parse sink models TOML")?;
     Ok(file.sinks)
+}
+
+/// Parse a TOML document of package classification rules (a `[[packages]]` array).
+pub fn parse_package_rules(toml_str: &str) -> Result<Vec<PackageRule>> {
+    #[derive(Deserialize)]
+    struct PackageFile {
+        packages: Vec<PackageRule>,
+    }
+    let file: PackageFile =
+        toml::from_str(toml_str).context("parse package inference rules TOML")?;
+    Ok(file.packages)
+}
+
+/// Built-in package classification rules, compiled from
+/// `models/package_inference.toml` at build time.
+pub fn default_package_rules() -> Vec<PackageRule> {
+    parse_package_rules(include_str!("../../models/package_inference.toml"))
+        .expect("package inference rules")
 }
 
 /// The default catalog, compiled from `models/sinks/*.toml` at build time.
@@ -194,5 +228,47 @@ patterns = ["subprocess.run", "os.system"]
             .sinks_for_language("javascript")
             .iter()
             .any(|m| m.category == "deserialization_rce" && m.rule_id() == "js.deserialization_rce"));
+    }
+
+    #[test]
+    fn parse_package_rules_reads_category_and_readwrite_split() {
+        let rules = parse_package_rules(
+            r#"
+[[packages]]
+language = "python"
+package = "openpyxl"
+read_category = "file_read"
+write_category = "file_write"
+
+[[packages]]
+language = "python"
+package = "subprocess"
+category = "command_execution"
+"#,
+        )
+        .expect("parse rules");
+
+        assert_eq!(rules.len(), 2);
+        let openpyxl = &rules[0];
+        assert_eq!(openpyxl.language, "python");
+        assert_eq!(openpyxl.package, "openpyxl");
+        assert_eq!(openpyxl.read_category.as_deref(), Some("file_read"));
+        assert_eq!(openpyxl.write_category.as_deref(), Some("file_write"));
+        assert_eq!(openpyxl.category, None);
+
+        let subprocess = &rules[1];
+        assert_eq!(subprocess.category.as_deref(), Some("command_execution"));
+        assert_eq!(subprocess.read_category, None);
+        assert_eq!(subprocess.write_category, None);
+    }
+
+    #[test]
+    fn default_package_rules_include_openpyxl() {
+        let rules = default_package_rules();
+        assert!(!rules.is_empty());
+        assert!(rules.iter().any(|r| r.package == "openpyxl"
+            && r.read_category.as_deref() == Some("file_read")
+            && r.write_category.as_deref() == Some("file_write")));
+        assert!(rules.iter().any(|r| r.package == "sh" && r.category.as_deref() == Some("command_execution")));
     }
 }

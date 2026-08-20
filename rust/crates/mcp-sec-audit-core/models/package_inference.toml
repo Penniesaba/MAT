@@ -1,0 +1,83 @@
+# Package -> dangerous-category classification for semantic inference (layer 2).
+# Exactly one of `category` (whole package) or the `read_category`/`write_category`
+# pair (methods split by read/write naming prefix) must be set.
+
+[[packages]]
+language = "python"
+package = "openpyxl"
+read_category = "file_read"
+write_category = "file_write"
+
+[[packages]]
+language = "python"
+package = "pandas"
+read_category = "file_read"
+write_category = "file_write"
+
+[[packages]]
+language = "python"
+package = "xlrd"
+category = "file_read"
+
+[[packages]]
+language = "python"
+package = "xlsxwriter"
+category = "file_write"
+
+[[packages]]
+language = "python"
+package = "csv"
+read_category = "file_read"
+write_category = "file_write"
+
+[[packages]]
+language = "python"
+package = "sh"
+category = "command_execution"
+
+[[packages]]
+language = "python"
+package = "fabric"
+category = "command_execution"
+
+[[packages]]
+language = "python"
+package = "pexpect"
+category = "command_execution"
+
+[[packages]]
+language = "python"
+package = "aiohttp"
+category = "network_request"
+
+[[packages]]
+language = "python"
+package = "websockets"
+category = "network_request"
+
+[[packages]]
+language = "python"
+package = "joblib"
+category = "deserialization"
+
+[[packages]]
+language = "python"
+package = "dill"
+category = "deserialization"
+
+[[packages]]
+language = "python"
+package = "mako"
+category = "template_injection"
+
+[[packages]]
+language = "javascript"
+package = "xlsx"
+read_category = "file_read"
+write_category = "file_write"
+
+[[packages]]
+language = "javascript"
+package = "exceljs"
+read_category = "file_read"
+write_category = "file_write"
