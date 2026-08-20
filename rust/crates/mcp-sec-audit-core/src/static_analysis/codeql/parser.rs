@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 use crate::model::{CodeqlAnalysisResult, DataFlowPath, DataFlowPathStep, Location, Severity};
+use crate::static_analysis::category::{is_known_category, normalize_category};
 
 /// Metadata attached to every result from this CodeQL run.
 #[derive(Debug, Clone)]
@@ -8,24 +9,6 @@ pub struct CodeqlMetadata {
     pub query_source: String, // "built-in" or custom path
     pub languages: Vec<String>,
 }
-
-/// Categories in the shared vocabulary (snake_case).
-const KNOWN_CATEGORIES: &[&str] = &[
-    "command_execution",
-    "dynamic_execution",
-    "database_injection",
-    "file_read",
-    "file_write",
-    "network_request",
-    "deserialization",
-    "template_injection",
-    "path_traversal",
-    "prompt_injection",
-    "data_exfiltration",
-    "tool_poisoning",
-    "unsafe_block",
-    "env_access",
-];
 
 fn normalize_tag(tag: &str) -> String {
     tag.trim().replace('-', "_").replace(' ', "_").to_lowercase()
@@ -45,7 +28,7 @@ fn category_from_tags(rule: &serde_json::Value) -> Option<String> {
     };
     list.iter().find_map(|t| {
         let n = normalize_tag(t);
-        KNOWN_CATEGORIES.contains(&n.as_str()).then(|| n)
+        is_known_category(&n).then(|| normalize_category(&n))
     })
 }
 
@@ -499,5 +482,16 @@ mod tests {
         );
         // Unknown: uncategorized fallback.
         assert_eq!(resolve_category("rust/unknown-thing", None), "uncategorized");
+    }
+
+    #[test]
+    fn tags_use_shared_alias_normalization() {
+        // A tag using a rule-style alias must normalize to the canonical category.
+        assert_eq!(
+            resolve_category("mcp/python/command-exec", Some(&serde_json::json!({
+                "properties": { "tags": ["mcp", "command_exec"] }
+            }))),
+            "command_execution"
+        );
     }
 }
