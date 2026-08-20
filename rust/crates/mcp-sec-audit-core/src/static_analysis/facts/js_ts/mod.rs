@@ -22,6 +22,7 @@ use swc_core::{
 use crate::model::{
     AssignFact, CallFact, Fact, FactBase, ImportFact, ImportKind, SourceFact,
 };
+use crate::models::SinkModel;
 
 use super::ExtractionDiagnostic;
 
@@ -92,6 +93,7 @@ pub(crate) struct JsTsFactExtractor<'a> {
     root: PathBuf,
     file: PathBuf,
     source: &'a str,
+    sinks: &'a [SinkModel],
     cm: SourceMap,
     facts: Vec<Fact>,
     diagnostics: Vec<JsTsDiagnostic>,
@@ -112,11 +114,12 @@ pub(crate) struct JsTsFactExtractor<'a> {
 }
 
 impl<'a> JsTsFactExtractor<'a> {
-    fn new(root: &Path, file: &Path, source: &'a str, cm: SourceMap) -> Self {
+    fn new(root: &Path, file: &Path, source: &'a str, cm: SourceMap, sinks: &'a [SinkModel]) -> Self {
         Self {
             root: root.to_path_buf(),
             file: file.to_path_buf(),
             source,
+            sinks,
             cm,
             facts: Vec::new(),
             diagnostics: Vec::new(),
@@ -305,6 +308,7 @@ pub fn extract_js_ts_facts(
     root: &Path,
     file: &Path,
     source: &str,
+    sinks: &[SinkModel],
 ) -> JsTsExtractionResult {
     // Skip .d.ts / .d.mts / .d.cts declaration files
     if let Some(name) = file.file_stem() {
@@ -337,7 +341,7 @@ pub fn extract_js_ts_facts(
         }
     };
 
-    let mut extractor = JsTsFactExtractor::new(root, file, source, cm);
+    let mut extractor = JsTsFactExtractor::new(root, file, source, cm, sinks);
     module.visit_with(&mut extractor);
 
     // Post-processing
@@ -641,7 +645,7 @@ impl Visit for JsTsFactExtractor<'_> {
         }));
 
         // Check sinks
-        sinks::check_sink(&normalized_callee, &call_id, line, &file, EXTRACTOR_NAME, &mut self.facts);
+        sinks::check_sink(&normalized_callee, &call_id, line, &file, EXTRACTOR_NAME, &mut self.facts, self.sinks);
 
         n.visit_children_with(self);
     }

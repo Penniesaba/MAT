@@ -15,6 +15,7 @@ use crate::model::{
     EntryPointFact, Fact, FactBase, FunctionFact, ImportFact, ImportKind,
     SinkFact, SourceFact,
 };
+use crate::models::SinkModel;
 
 use super::{
     ExtractionDiagnostic, PythonExtractionResult, display_path,
@@ -25,8 +26,13 @@ use super::{
 
 const EXTRACTOR_NAME: &str = "rust_python_ast_phase7";
 
-pub fn extract_python_facts(root: &Path, file: &Path, source: &str) -> PythonExtractionResult {
-    let mut extractor = PythonFactExtractor::new(root, file, source);
+pub fn extract_python_facts(
+    root: &Path,
+    file: &Path,
+    source: &str,
+    sinks: &[SinkModel],
+) -> PythonExtractionResult {
+    let mut extractor = PythonFactExtractor::new(root, file, source, sinks);
     extractor.extract()
 }
 
@@ -34,6 +40,7 @@ struct PythonFactExtractor<'a> {
     root: PathBuf,
     file: PathBuf,
     source: &'a str,
+    sinks: &'a [SinkModel],
     facts: Vec<Fact>,
     diagnostics: Vec<ExtractionDiagnostic>,
     import_aliases: BTreeMap<String, String>,
@@ -43,11 +50,12 @@ struct PythonFactExtractor<'a> {
 }
 
 impl<'a> PythonFactExtractor<'a> {
-    fn new(root: &Path, file: &Path, source: &'a str) -> Self {
+    fn new(root: &Path, file: &Path, source: &'a str, sinks: &'a [SinkModel]) -> Self {
         Self {
             root: root.to_path_buf(),
             file: file.to_path_buf(),
             source,
+            sinks,
             facts: Vec::new(),
             diagnostics: Vec::new(),
             import_aliases: BTreeMap::new(),
@@ -472,9 +480,12 @@ impl<'a> PythonFactExtractor<'a> {
                 .unwrap_or(call.callee.as_str()),
         );
 
-        let Some(classification) = sinks::classify_sink(&sink_name, call) else {
+        let Some(classification) = sinks::classify_sink(&sink_name, call, self.sinks) else {
             return;
         };
+
+        let category = classification.category.clone();
+        let rule_id = format!("python.{}", category);
 
         let mut conditions = BTreeMap::new();
         conditions.insert(
@@ -492,22 +503,17 @@ impl<'a> PythonFactExtractor<'a> {
 
         self.facts.push(Fact::Sink(SinkFact {
             base: FactBase {
-                id: make_sink_id(
-                    classification.category,
-                    &self.root,
-                    &self.file,
-                    call.base.line,
-                ),
+                id: make_sink_id(&category, &self.root, &self.file, call.base.line),
                 file: call.base.file.clone(),
                 line: call.base.line,
                 extractor: EXTRACTOR_NAME.to_string(),
             },
             call_id: call.base.id.clone(),
-            category: classification.category.to_string(),
-            rule_id: format!("python.{}", classification.category),
+            category,
+            rule_id,
             sink_name,
             severity_base: classification.severity,
-            reason: classification.reason.to_string(),
+            reason: classification.reason,
             conditions,
             confidence: classification.confidence,
         }));
@@ -717,7 +723,12 @@ mod tests {
     use super::*;
 
     fn extract(source: &str) -> PythonExtractionResult {
-        extract_python_facts(Path::new("/repo"), Path::new("/repo/server.py"), source)
+        extract_python_facts(
+            Path::new("/repo"),
+            Path::new("/repo/server.py"),
+            source,
+            crate::models::default_catalog().sinks_for_language("python"),
+        )
     }
 
     fn import_facts(result: &PythonExtractionResult) -> Vec<&ImportFact> {

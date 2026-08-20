@@ -415,8 +415,12 @@ def read_log(filename: str):
     return content
 "#;
 
-        let extracted =
-            extract_python_facts(Path::new("/repo"), Path::new("/repo/server.py"), source);
+        let extracted = extract_python_facts(
+            Path::new("/repo"),
+            Path::new("/repo/server.py"),
+            source,
+            crate::models::default_catalog().sinks_for_language("python"),
+        );
         assert!(extracted.diagnostics.is_empty());
 
         let config = default_config();

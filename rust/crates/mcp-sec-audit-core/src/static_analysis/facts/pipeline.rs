@@ -2,6 +2,7 @@ use std::fs;
 
 use anyhow::{Context, Result, bail};
 
+use crate::models::default_catalog;
 use crate::{Fact, ScanLanguage, static_analysis::pipeline::StaticScanContext};
 
 use super::{extract_js_ts_facts, extract_python_facts, extract_rust_facts, ExtractionDiagnostic};
@@ -9,6 +10,8 @@ use super::{extract_js_ts_facts, extract_python_facts, extract_rust_facts, Extra
 pub fn extract_static_facts(ctx: &StaticScanContext) -> Result<Vec<Fact>> {
     let mut facts = Vec::new();
     let mut diagnostics = Vec::new();
+
+    let catalog = default_catalog();
 
     for file in &ctx.discovered_files {
         match file.language {
@@ -20,7 +23,12 @@ pub fn extract_static_facts(ctx: &StaticScanContext) -> Result<Vec<Fact>> {
                     )
                 })?;
                 let root = file.path.parent().unwrap_or_else(|| file.path.as_path());
-                let result = extract_python_facts(root, &file.path, &source);
+                let result = extract_python_facts(
+                    root,
+                    &file.path,
+                    &source,
+                    catalog.sinks_for_language("python"),
+                );
                 facts.extend(result.facts);
                 diagnostics.extend(result.diagnostics);
             }
@@ -32,7 +40,12 @@ pub fn extract_static_facts(ctx: &StaticScanContext) -> Result<Vec<Fact>> {
                     )
                 })?;
                 let root = file.path.parent().unwrap_or_else(|| file.path.as_path());
-                let result = extract_js_ts_facts(root, &file.path, &source);
+                let result = extract_js_ts_facts(
+                    root,
+                    &file.path,
+                    &source,
+                    catalog.sinks_for_language("javascript"),
+                );
                 if result.has_fatal() {
                     bail!("JS/TS fact extraction produced fatal errors");
                 }
@@ -49,7 +62,12 @@ pub fn extract_static_facts(ctx: &StaticScanContext) -> Result<Vec<Fact>> {
                     )
                 })?;
                 let root = file.path.parent().unwrap_or_else(|| file.path.as_path());
-                let result = extract_rust_facts(root, &file.path, &source);
+                let result = extract_rust_facts(
+                    root,
+                    &file.path,
+                    &source,
+                    catalog.sinks_for_language("rust"),
+                );
                 facts.extend(result.facts);
                 diagnostics.extend(result.diagnostics);
             }
@@ -188,6 +206,29 @@ async fn run_command(command: String) -> Result<String, String> {
         assert!(facts.iter().any(|fact| matches!(fact, Fact::Sink(_))));
 
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn custom_sink_model_is_picked_up_from_models_slice() {
+        let model = crate::models::SinkModel {
+            language: "python".into(),
+            category: "command_execution".into(),
+            severity: crate::Severity::High,
+            confidence: crate::Confidence::High,
+            reason: "custom".into(),
+            patterns: vec!["totally.custom.sink".into()],
+        };
+        let source = "import os\ntotally.custom.sink('x')\n";
+        let result = extract_python_facts(
+            std::path::Path::new("/repo"),
+            std::path::Path::new("/repo/a.py"),
+            source,
+            std::slice::from_ref(&model),
+        );
+        assert!(result
+            .facts
+            .iter()
+            .any(|f| matches!(f, Fact::Sink(s) if s.sink_name == "totally.custom.sink")));
     }
 
     fn temp_dir(name: &str) -> PathBuf {

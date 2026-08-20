@@ -18,6 +18,7 @@ use crate::model::{
     AssignFact, CallFact, Confidence, EntryPointEvidence, EntryPointFact,
     Fact, FactBase, FunctionFact, ImportFact, ImportKind, Severity, SinkFact, SourceFact,
 };
+use crate::models::SinkModel;
 
 use super::{
     ExtractionDiagnostic, display_path, fact_sort_key, line_col_for_offset,
@@ -55,6 +56,7 @@ struct RustFactExtractor<'a> {
     file: PathBuf,
     #[allow(dead_code)]
     source: &'a str,
+    sinks: &'a [SinkModel],
     facts: Vec<Fact>,
     diagnostics: Vec<ExtractionDiagnostic>,
 
@@ -74,11 +76,12 @@ struct RustFactExtractor<'a> {
 }
 
 impl<'a> RustFactExtractor<'a> {
-    fn new(root: &Path, file: &Path, source: &'a str) -> Self {
+    fn new(root: &Path, file: &Path, source: &'a str, sinks: &'a [SinkModel]) -> Self {
         Self {
             root: root.to_path_buf(),
             file: file.to_path_buf(),
             source,
+            sinks,
             facts: Vec::new(),
             diagnostics: Vec::new(),
             use_aliases: BTreeMap::new(),
@@ -132,24 +135,24 @@ impl<'a> RustFactExtractor<'a> {
 
     /// Emit a SinkFact if the callee matches known dangerous APIs.
     fn check_sink(&mut self, normalized_callee: &str, call_id: &str, line: u32) {
-        for rule in sinks::SINK_RULES {
-            if sinks::matches_sink(normalized_callee, rule.patterns) {
+        for model in self.sinks {
+            if sinks::matches_sink(normalized_callee, &model.patterns) {
                 let file = self.rel_path();
                 self.facts.push(Fact::Sink(SinkFact {
                     base: FactBase {
-                        id: make_sink_id(rule.category, &self.root, &self.file, line),
+                        id: make_sink_id(&model.category, &self.root, &self.file, line),
                         file: file.clone(),
                         line,
                         extractor: EXTRACTOR_NAME.to_string(),
                     },
                     call_id: call_id.to_string(),
-                    category: rule.category.to_string(),
-                    rule_id: rule.rule_id.to_string(),
+                    category: model.category.clone(),
+                    rule_id: model.rule_id(),
                     sink_name: normalized_callee.to_string(),
-                    severity_base: rule.severity.clone(),
-                    reason: rule.reason.to_string(),
+                    severity_base: model.severity.clone(),
+                    reason: model.reason.clone(),
                     conditions: BTreeMap::new(),
-                    confidence: rule.confidence.clone(),
+                    confidence: model.confidence.clone(),
                 }));
                 return;
             }
@@ -827,7 +830,12 @@ impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
 // Public entry point
 // ---------------------------------------------------------------------------
 
-pub fn extract_rust_facts(root: &Path, file: &Path, source: &str) -> RustExtractionResult {
+pub fn extract_rust_facts(
+    root: &Path,
+    file: &Path,
+    source: &str,
+    sinks: &[SinkModel],
+) -> RustExtractionResult {
     let ast = match syn::parse_file(source) {
         Ok(file_ast) => file_ast,
         Err(err) => {
@@ -843,7 +851,7 @@ pub fn extract_rust_facts(root: &Path, file: &Path, source: &str) -> RustExtract
         }
     };
 
-    let mut extractor = RustFactExtractor::new(root, file, source);
+    let mut extractor = RustFactExtractor::new(root, file, source, sinks);
     extractor.visit_file(&ast);
 
     // Sort facts by line
@@ -867,7 +875,12 @@ mod tests {
     use super::*;
 
     fn extract(source: &str) -> RustExtractionResult {
-        extract_rust_facts(Path::new("/repo"), Path::new("/repo/src/main.rs"), source)
+        extract_rust_facts(
+            Path::new("/repo"),
+            Path::new("/repo/src/main.rs"),
+            source,
+            crate::models::default_catalog().sinks_for_language("rust"),
+        )
     }
 
     fn import_facts(result: &RustExtractionResult) -> Vec<&ImportFact> {
