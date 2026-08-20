@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 
+use super::models::MadPack;
 use super::queries::QueryPack;
 
 /// Info about a successfully created CodeQL database.
@@ -31,7 +32,7 @@ pub trait CodeqlProvider {
         queries: &QueryPack,
         timeout_seconds: u64,
         extra_args: &[String],
-        model_packs: &[PathBuf],
+        model_packs: &[MadPack],
     ) -> Result<String>;
 }
 
@@ -122,7 +123,7 @@ impl CodeqlProvider for CliCodeqlProvider {
         queries: &QueryPack,
         timeout_seconds: u64,
         extra_args: &[String],
-        model_packs: &[PathBuf],
+        model_packs: &[MadPack],
     ) -> Result<String> {
         // `--output=-` (SARIF to stdout) is unreliable across CodeQL versions,
         // so write to a temp file and read it back instead.
@@ -141,9 +142,12 @@ impl CodeqlProvider for CliCodeqlProvider {
             .arg(&output_path);
 
         // Model packs (MaD) are injected before the query files so standard
-        // queries can resolve the sinkModel extensions.
+        // queries can resolve the sinkModel extensions. `--model-packs` takes a
+        // pack name, so point `--additional-packs` at the pack's directory and
+        // reference the pack by name.
         for mp in model_packs {
-            cmd.arg("--model-packs").arg(mp);
+            cmd.arg("--additional-packs").arg(&mp.search_path);
+            cmd.arg("--model-packs").arg(&mp.name);
         }
 
         // Query files are already language-native (per-language pack).

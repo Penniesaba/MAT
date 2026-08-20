@@ -1,7 +1,12 @@
 //! Compile the shared sink model catalog into CodeQL MaD (Models as Data)
 //! `sinkModel` extensions so standard queries reach third-party wrappers.
 
-use crate::models::SinkModel;
+use std::path::PathBuf;
+
+use anyhow::Result;
+
+use crate::models::{ModelCatalog, SinkModel};
+use crate::static_analysis::pipeline::StaticScanContext;
 
 /// One MaD sink entry in the 3-tuple format `[module, path, kind]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +84,52 @@ pub fn render_mad_pack(models: &[SinkModel], language: &str) -> String {
     body
 }
 
+/// A compiled MaD model pack: a directory (passed via `--additional-packs`)
+/// containing one library extension pack referenced by `name` (passed via
+/// `--model-packs`).
+pub(crate) struct MadPack {
+    pub name: String,
+    pub search_path: PathBuf,
+}
+
+/// Compile the catalog's Python and JavaScript sink models into a CodeQL MaD
+/// model pack under a temp dir: the `.model.yml` files plus a `qlpack.yml`
+/// that declares the extension targets. Languages with no models are skipped
+/// (no empty `.model.yml` is written); `rust` is intentionally not a MaD
+/// target today.
+pub(crate) fn write_model_pack_dir(
+    catalog: &ModelCatalog,
+    _ctx: &StaticScanContext,
+) -> Result<MadPack> {
+    let dir = std::env::temp_dir().join(format!("mcp-sec-audit-mad-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    for language in ["python", "javascript"] {
+        let models = catalog.sinks_for_language(language);
+        if models.is_empty() {
+            continue;
+        }
+        let yaml = render_mad_pack(models, language);
+        let path = dir.join(format!("{language}.model.yml"));
+        std::fs::write(&path, yaml)?;
+    }
+    // The pack must be a dependency-free library extension pack (CodeQL rejects
+    // extension packs that declare `dependencies`). Target versions are pinned.
+    let qlpack = r#"name: mcp-sec-audit-mad
+version: 0.0.1
+library: true
+extensionTargets:
+  codeql/python-all: "7.2.2"
+  codeql/javascript-all: "2.8.2"
+dataExtensions:
+  - "*.model.yml"
+"#;
+    std::fs::write(dir.join("qlpack.yml"), qlpack)?;
+    Ok(MadPack {
+        name: "mcp-sec-audit-mad".into(),
+        search_path: dir,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,5 +183,48 @@ mod tests {
         assert!(yaml.contains("extensible: sinkModel"));
         assert!(yaml.contains("codeql/python-all"));
         assert!(yaml.contains("- [\"os\", \"Member[system].Argument[0]\", \"command-injection\"]"));
+    }
+
+    #[test]
+    fn write_model_pack_dir_writes_python_and_javascript_packs() {
+        let catalog = crate::models::default_catalog();
+        let ctx = StaticScanContext {
+            config: crate::RuntimeConfig::default(),
+            rulebook_paths: Vec::new(),
+            discovered_files: Vec::new(),
+        };
+        let pack = write_model_pack_dir(&catalog, &ctx).expect("write model pack dir");
+        assert_eq!(pack.name, "mcp-sec-audit-mad");
+        let dir = pack.search_path;
+        for language in ["python", "javascript"] {
+            let path = dir.join(format!("{language}.model.yml"));
+            let yaml = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("read {language}.model.yml: {e}"));
+            assert!(
+                yaml.contains("extensible: sinkModel"),
+                "{language}.model.yml missing sinkModel"
+            );
+        }
+        // Only python + javascript are MaD targets; rust must not be emitted.
+        assert!(!dir.join("rust.model.yml").exists());
+        // The model pack must be a dependency-free library extension pack that
+        // declares its extension targets and data extensions.
+        let qlpack = std::fs::read_to_string(dir.join("qlpack.yml")).expect("read qlpack.yml");
+        assert!(qlpack.contains("library: true"), "qlpack.yml missing library: true");
+        assert!(qlpack.contains("extensionTargets:"), "qlpack.yml missing extensionTargets");
+        assert!(
+            qlpack.contains("codeql/python-all: \"7.2.2\""),
+            "qlpack.yml missing python-all target"
+        );
+        assert!(
+            qlpack.contains("codeql/javascript-all: \"2.8.2\""),
+            "qlpack.yml missing javascript-all target"
+        );
+        assert!(qlpack.contains("dataExtensions:"), "qlpack.yml missing dataExtensions");
+        assert!(
+            !qlpack.contains("dependencies:"),
+            "qlpack.yml must not declare dependencies"
+        );
+        std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 }

@@ -4,7 +4,6 @@ mod provider;
 mod queries;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
 
 use anyhow::Result;
 
@@ -12,6 +11,7 @@ use crate::config::StaticCodeqlConfig;
 use crate::model::CodeqlOutput;
 
 use super::pipeline::StaticScanContext;
+use models::MadPack;
 use provider::{CliCodeqlProvider, CodeqlProvider, DatabaseInfo};
 use queries::{QueryPack, resolve_query_pack};
 
@@ -135,7 +135,7 @@ impl CodeqlSession {
     /// and collect results/diagnostics/raw SARIF into a `CodeqlOutput`.
     pub(crate) fn analyze(
         &self,
-        model_packs: &[PathBuf],
+        model_packs: &[MadPack],
         mut progress: impl FnMut(&str),
     ) -> Result<CodeqlOutput> {
         let mut all_results = Vec::new();
@@ -213,9 +213,9 @@ impl CodeqlSession {
 
 /// CodeQL line entry point.
 ///
-/// Builds a session (databases + query packs), runs analysis, and parses SARIF
-/// into structured results. Model packs (MaD) are wired in a later task; pass
-/// `&[]` for now.
+/// Builds a session (databases + query packs), compiles the shared sink model
+/// catalog into a MaD model pack, runs analysis, and parses SARIF into
+/// structured results.
 pub fn run(ctx: &StaticScanContext, mut progress: impl FnMut(&str)) -> Result<CodeqlOutput> {
     let Some(session) = CodeqlSession::create(ctx)? else {
         // `create` returned `None`: either CodeQL is disabled, or no supported
@@ -239,7 +239,22 @@ pub fn run(ctx: &StaticScanContext, mut progress: impl FnMut(&str)) -> Result<Co
         return Ok(output);
     };
 
-    session.analyze(&[], &mut progress)
+    // Compile the shared sink model catalog into a CodeQL MaD model pack and
+    // feed it to every `analyze`. MaD compilation is non-fatal: on error fall
+    // back to built-in queries and warn, so the CodeQL line still runs.
+    let model_packs = match models::write_model_pack_dir(&crate::models::default_catalog(), ctx) {
+        Ok(pack) => vec![pack],
+        Err(e) => {
+            tracing::warn!(
+                target: "mcp_sec_audit::codeql",
+                error = %e,
+                "MaD model pack compilation failed; running with built-in queries only"
+            );
+            Vec::new()
+        }
+    };
+
+    session.analyze(&model_packs, &mut progress)
 }
 
 #[cfg(test)]
