@@ -1,3 +1,4 @@
+mod models;
 mod parser;
 mod provider;
 mod queries;
