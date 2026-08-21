@@ -1,4 +1,4 @@
-mod matcher;
+pub(crate) mod matcher;
 mod scorer;
 mod merger;
 
