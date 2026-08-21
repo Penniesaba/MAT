@@ -13,6 +13,7 @@ mod pipeline;
 pub(crate) mod recon;
 mod rule;
 mod taint;
+mod validate;
 
 pub use discovery::{
     DiscoveredFile, DiscoverySummary, ScanLanguage, detect_language, discover_files,
