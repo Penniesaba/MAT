@@ -8,14 +8,16 @@ use anyhow::{Context, Result, bail};
 
 use crate::model::CodeqlOutput;
 use crate::{
-    AgentOutput, ConfigSnapshot, Fact, FusedFinding, ModelCandidate, ModelCatalog,
-    RuleAnalysisResult, RuleBook, RuntimeConfig, Severity, StaticAnalysisResult,
-    StaticAnalysisSummary, TaintAnalysisResult, load_rulebook,
+    AgentOutput, ConfigSnapshot, Fact, FusedFinding, ModelCandidate, RuleAnalysisResult, RuleBook,
+    RuntimeConfig, Severity, StaticAnalysisResult, StaticAnalysisSummary, TaintAnalysisResult,
+    load_rulebook,
 };
 
+use super::component::Component;
 use super::facts::load_catalog;
 use super::{
-    DiscoveredFile, agent, codeql, diff, discover_files, fusion, learning, rule, taint, validate,
+    DiscoveredFile, agent, codeql, component, diff, discover_files, fusion, learning, rule, taint,
+    validate,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,6 +98,56 @@ pub fn run_static_scan_with_progress(
     };
 
     let base_catalog = load_catalog(&ctx)?;
+
+    // 基线组件指纹：四线路的能力决定性部件统一为 Component 抽象，记录各自
+    // tool + fingerprint 作跨阶段对比的可观测锚点。
+    let baseline_taint = component::TaintComponent {
+        catalog: base_catalog.clone(),
+    };
+    let baseline_codeql = component::CodeqlComponent {
+        mad_sinks: {
+            let mut entries = Vec::new();
+            for lang in ["python", "javascript", "rust"] {
+                for e in codeql::models::sink_models_to_mad(base_catalog.sinks_for_language(lang)) {
+                    entries.push(format!("{}:{} => {}", e.module, e.path, e.kind));
+                }
+            }
+            entries.sort();
+            entries
+        },
+        ..Default::default()
+    };
+    let baseline_rule = component::RuleComponent {
+        capabilities: loaded_rulebook
+            .as_ref()
+            .map(|rb| rb.capabilities.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default(),
+    };
+    let baseline_prompt = component::PromptComponent::default();
+    tracing::info!(
+        target: "mcp_sec_audit::component",
+        tool = ?baseline_taint.tool(),
+        fingerprint = %baseline_taint.fingerprint(),
+        "baseline taint component"
+    );
+    tracing::info!(
+        target: "mcp_sec_audit::component",
+        tool = ?baseline_codeql.tool(),
+        fingerprint = %baseline_codeql.fingerprint(),
+        "baseline codeql component"
+    );
+    tracing::info!(
+        target: "mcp_sec_audit::component",
+        tool = ?baseline_rule.tool(),
+        fingerprint = %baseline_rule.fingerprint(),
+        "baseline rule component"
+    );
+    tracing::info!(
+        target: "mcp_sec_audit::component",
+        tool = ?baseline_prompt.tool(),
+        fingerprint = %baseline_prompt.fingerprint(),
+        "baseline prompt component"
+    );
 
     // ---------- 阶段 1：基线运行 ----------
     let rule_results = {
@@ -267,13 +319,19 @@ pub fn run_static_scan_with_progress(
         ctx.config.fusion.line_proximity,
     );
 
-    // 进化后的 catalog（内存中 base + staged）；写 staging 作可观测/回退锚点。
-    let mut evolved_catalog = base_catalog.clone();
-    evolved_catalog.merge(ModelCatalog::from_models(
-        staged.sinks.clone(),
-        staged.sources.clone(),
-        staged.sanitizers.clone(),
-    ));
+    // 进化统一走 Component trait：TaintComponent 承载三类 catalog，evolve 产出
+    // 阶段 2 用的进化 catalog；写 staging 作可观测/回退锚点。
+    let delta = component::ComponentDelta {
+        sinks: staged.sinks.clone(),
+        sources: staged.sources.clone(),
+        sanitizers: staged.sanitizers.clone(),
+        ..Default::default()
+    };
+    let base_component = component::TaintComponent {
+        catalog: base_catalog.clone(),
+    };
+    let evolved_component = base_component.evolve(&delta);
+    let evolved_catalog = evolved_component.catalog.clone();
     let staging_dir =
         std::env::temp_dir().join(format!("mcp-sec-audit-staging-{}", std::process::id()));
     learning::write_staging(&staging_dir, &staged)?;
@@ -372,7 +430,7 @@ pub fn run_static_scan_with_progress(
     tracing::info!(target: "mcp_sec_audit::validate", ?migration, "cross-stage migration");
 
     let (final_taint, final_agent, final_codeql, final_facts) = if migration.should_rollback() {
-        learning::rollback_staging(&staging_dir)?;
+        base_component.rollback(&staging_dir)?;
         tracing::warn!(
             target: "mcp_sec_audit::evolution",
             "evolution polluted standard line — rolling back staged models"
@@ -380,11 +438,11 @@ pub fn run_static_scan_with_progress(
         (taint_results_1, agent_output_1, codeql_output_1, facts_1)
     } else {
         if let Some(dir) = &ctx.config.static_.learned_dir {
-            learning::write_learned_models(std::path::Path::new(dir), &staged)?;
+            base_component.promote(&delta, std::path::Path::new(dir))?;
         }
         tracing::info!(
             target: "mcp_sec_audit::evolution",
-            learned = staged.sinks.len() + staged.sources.len() + staged.sanitizers.len(),
+            learned = delta.model_count(),
             "promoted staged models to learned"
         );
         (taint_results_2, agent_output_2, codeql_output_2, facts_2)
