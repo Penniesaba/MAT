@@ -18,6 +18,12 @@ const SCOPE_TARGETS: &[(&str, &str)] = &[
     ("codeql", "mcp_sec_audit::codeql"),
     ("fusion", "mcp_sec_audit::fusion"),
     ("learning", "mcp_sec_audit::learning"),
+    ("facts", "mcp_sec_audit::facts"),
+    ("infer", "mcp_sec_audit::infer"),
+    ("diff", "mcp_sec_audit::diff"),
+    ("validate", "mcp_sec_audit::validate"),
+    ("evolution", "mcp_sec_audit::evolution"),
+    ("component", "mcp_sec_audit::component"),
 ];
 
 /// Pure mapping from config to per-target (target, level) directives.
@@ -127,5 +133,24 @@ mod tests {
         let directives = scope_directives(&config);
         assert_eq!(directives.len(), 1);
         assert_eq!(directives[0], ("".to_string(), LevelFilter::INFO));
+    }
+
+    #[test]
+    fn scope_directives_includes_new_v4_targets() {
+        let mut config = LoggingConfig::default();
+        config.scopes.insert("facts".to_string(), LogLevel::Debug);
+        config.scopes.insert("infer".to_string(), LogLevel::Debug);
+        config.scopes.insert("diff".to_string(), LogLevel::Debug);
+        config.scopes.insert("validate".to_string(), LogLevel::Debug);
+        config.scopes.insert("evolution".to_string(), LogLevel::Trace);
+        config.scopes.insert("component".to_string(), LogLevel::Debug);
+
+        let directives = scope_directives(&config);
+        assert!(directives.contains(&("mcp_sec_audit::facts".to_string(), LevelFilter::DEBUG)));
+        assert!(directives.contains(&("mcp_sec_audit::infer".to_string(), LevelFilter::DEBUG)));
+        assert!(directives.contains(&("mcp_sec_audit::diff".to_string(), LevelFilter::DEBUG)));
+        assert!(directives.contains(&("mcp_sec_audit::validate".to_string(), LevelFilter::DEBUG)));
+        assert!(directives.contains(&("mcp_sec_audit::evolution".to_string(), LevelFilter::TRACE)));
+        assert!(directives.contains(&("mcp_sec_audit::component".to_string(), LevelFilter::DEBUG)));
     }
 }
