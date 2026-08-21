@@ -10,6 +10,12 @@ use super::pipeline::StaticScanContext;
 use prompt::FileSummary;
 use provider::{AgentProvider, AgentRunConfig, CliAgentProvider};
 
+// 两阶段编排（M3 Task 4）在 pipeline 里渲染 prompt' 并调用 run_with_prompt；
+// 故把 prompt 的验证提示词原语 re-export 到 agent 模块面。
+// M3 Task 4 接线：pipeline 经 agent::render_verification_prompt / agent::PromptFinding 使用。
+#[allow(unused_imports)]
+pub(crate) use prompt::{PromptFinding, render_verification_prompt};
+
 /// Hardcoded constants (not user-configurable).
 const PROMPT_PROFILE: &str = "mcp_security_audit";
 const MAX_FILES: usize = 80;
@@ -29,12 +35,20 @@ fn absolute_path(path: &std::path::Path) -> std::path::PathBuf {
     })
 }
 
-/// Agent line entry point.
+/// Agent line entry point (阶段 1).
 ///
 /// Prepares file context, renders the prompt template, invokes the
 /// configured CLI agent provider, and parses structured results from
 /// the agent's output.
 pub fn run(ctx: &StaticScanContext) -> Result<AgentOutput> {
+    run_with_prompt(ctx, None)
+}
+
+/// 跑 agent，可选地在渲染好的基础 prompt 之后追加一段验证提示词（阶段 2 的 prompt'）。
+pub(crate) fn run_with_prompt(
+    ctx: &StaticScanContext,
+    prompt_extra: Option<&str>,
+) -> Result<AgentOutput> {
     let agent_config = &ctx.config.static_.agent;
 
     if !agent_config.enabled {
@@ -80,12 +94,15 @@ pub fn run(ctx: &StaticScanContext) -> Result<AgentOutput> {
         .map(|p| absolute_path(p).display().to_string())
         .unwrap_or_else(|| ".".to_string());
 
-    // Render the prompt
-    let prompt = prompt::render(
+    // Render the prompt (base template + optional verification extra)
+    let mut prompt = prompt::render(
         agent_config.prompt_template_path.as_deref(),
         &file_summaries,
         &target_root,
     )?;
+    if let Some(extra) = prompt_extra {
+        prompt.push_str(extra);
+    }
 
     // Build input scope for metadata
     let input_scope: Vec<String> = file_summaries
