@@ -176,7 +176,7 @@ pub fn run_static_scan_with_progress(
             "CodeQL analysis: skipped (disabled)"
         });
         let start = std::time::Instant::now();
-        let output = codeql::run(&ctx, &mut progress)?;
+        let output = codeql::run(&ctx, &crate::models::default_catalog(), &mut progress)?;
         tracing::info!(
             target: "mcp_sec_audit::codeql",
             findings = output.results.len(),

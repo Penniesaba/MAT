@@ -222,7 +222,7 @@ impl CodeqlSession {
 /// Builds a session (databases + query packs), compiles the shared sink model
 /// catalog into a MaD model pack, runs analysis, and parses SARIF into
 /// structured results.
-pub fn run(ctx: &StaticScanContext, mut progress: impl FnMut(&str)) -> Result<CodeqlOutput> {
+pub fn run(ctx: &StaticScanContext, catalog: &crate::models::ModelCatalog, mut progress: impl FnMut(&str)) -> Result<CodeqlOutput> {
     let Some(session) = CodeqlSession::create(ctx)? else {
         // `create` returned `None`: either CodeQL is disabled, or no supported
         // language files were found. Reproduce the skip behavior here (where
@@ -253,7 +253,7 @@ pub fn run(ctx: &StaticScanContext, mut progress: impl FnMut(&str)) -> Result<Co
     // built-in queries and warn, so the CodeQL line still runs.
     let cli_version = session.provider.codeql_version();
     let model_packs: Vec<models::MadPack> = if mad_inject_supported(cli_version) {
-        match models::write_model_pack_dir(&crate::models::default_catalog(), ctx) {
+        match models::write_model_pack_dir(catalog, ctx) {
             Ok(pack) => vec![pack],
             Err(e) => {
                 tracing::warn!(
@@ -288,7 +288,7 @@ mod tests {
             rulebook_paths: Vec::new(),
             discovered_files: Vec::new(),
         };
-        let output = run(&ctx, |_| {}).expect("run disabled codeql");
+        let output = run(&ctx, &crate::models::default_catalog(), |_| {}).expect("run disabled codeql");
         assert!(output.results.is_empty());
         assert!(output.raw_sarif.is_none());
         assert!(output.diagnostics.is_empty());
@@ -304,7 +304,7 @@ mod tests {
             discovered_files: Vec::new(),
         };
         // Safe even without CodeQL CLI: no files → returns before CLI check.
-        let output = run(&ctx, |_| {}).expect("run codeql with no files");
+        let output = run(&ctx, &crate::models::default_catalog(), |_| {}).expect("run codeql with no files");
         assert!(output.results.is_empty());
         assert!(!output.diagnostics.is_empty());
         assert!(output.diagnostics[0].contains("No CodeQL-supported language"));
@@ -324,7 +324,7 @@ mod tests {
             }],
         };
         let mut messages: Vec<String> = Vec::new();
-        let output = run(&ctx, |m| messages.push(m.to_string())).expect("run");
+        let output = run(&ctx, &crate::models::default_catalog(), |m| messages.push(m.to_string())).expect("run");
         assert!(output.results.is_empty());
         assert!(messages.iter().any(|m| m.contains("CodeQL skipped")));
     }
