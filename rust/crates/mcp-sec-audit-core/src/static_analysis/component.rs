@@ -2,6 +2,10 @@
 //! one analysis tool. Evolve/promote/rollback arrive in a later milestone; this
 //! milestone establishes identity (`tool`) and a stable `fingerprint` so a
 //! component can be compared across the two phases.
+//!
+//! Wired into the evolution loop in M2/M3 — until then the types are exercised
+//! only by unit tests, hence the module-level allow.
+#![allow(dead_code)]
 
 /// Which tool a Component determines capability for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

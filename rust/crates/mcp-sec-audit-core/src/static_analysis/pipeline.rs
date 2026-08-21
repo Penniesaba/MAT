@@ -11,7 +11,7 @@ use crate::{
     StaticAnalysisResult, StaticAnalysisSummary, load_rulebook,
 };
 
-use super::{agent, codeql, fusion, learning, rule, taint, DiscoveredFile, discover_files};
+use super::{agent, codeql, diff, fusion, learning, rule, taint, DiscoveredFile, discover_files};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaticScanContext {
@@ -239,6 +239,28 @@ pub fn run_static_scan_with_progress(
         progress(&format!("Fused {} findings", findings.len()));
         findings
     };
+
+    // --- Phase 4b: differential partition (v4.0) ---
+    let line_diff = diff::diff_lines(
+        rule_results.clone(),
+        taint_results.clone(),
+        agent_results.clone(),
+        codeql_output.results.clone(),
+        ctx.config.fusion.line_proximity,
+    );
+    progress(&format!(
+        "Differential: agreed={} standard-only={} agent-only={}",
+        line_diff.agreed.len(),
+        line_diff.a_only.len(),
+        line_diff.b_only.len(),
+    ));
+    tracing::info!(
+        target: "mcp_sec_audit::diff",
+        agreed = line_diff.agreed.len(),
+        a_only = line_diff.a_only.len(),
+        b_only = line_diff.b_only.len(),
+        "differential partition"
+    );
 
     // --- Phase 5: cold persistence ---
     if let Some(dir) = &ctx.config.static_.learned_dir {

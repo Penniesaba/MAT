@@ -51,6 +51,8 @@ pub(crate) fn diff_lines(
 }
 
 /// How an agent model candidate can be encoded into a standard-line component.
+// Wired into the evolution loop in M2/M3.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Representability {
     /// Encodable as a CodeQL MaD sinkModel extension (module.function + sink kind).
@@ -62,6 +64,8 @@ pub(crate) enum Representability {
 }
 
 /// Classify a B-only model candidate by its representability (the G2 gate).
+// Wired into the evolution loop in M2/M3.
+#[allow(dead_code)]
 pub(crate) fn classify_candidate(c: &ModelCandidate) -> Representability {
     match c.kind.as_str() {
         "sink" => {
