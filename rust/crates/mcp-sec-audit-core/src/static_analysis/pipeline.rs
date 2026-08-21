@@ -261,31 +261,49 @@ pub fn run_static_scan_with_progress(
     // ---------- 门控（G1/G2）+ 试探性进化（G3） ----------
     let rules = crate::models::default_package_rules();
     let mut gated: Vec<ModelCandidate> = Vec::new();
+    let mut b0: Vec<ModelCandidate> = Vec::new();
     for c in &agent_output_1.model_candidates {
         let gate = learning::gate_sink_candidate(c, &rules);
         let representability = diff::classify_candidate(c);
-        let g1_pass = c.kind == "sink"
-            && matches!(
+        // G1 信号门控：sink 走 PackageRule（Hot/Warm）；source/sanitizer 无包门控，
+        // 直接放行（可表达为 taint 模型）。
+        let g1_pass = match c.kind.as_str() {
+            "sink" => matches!(
                 gate,
                 learning::GateDecision::Hot | learning::GateDecision::Warm
-            );
+            ),
+            "source" | "sanitizer" => true,
+            _ => false,
+        };
         let g2_pass = matches!(
             representability,
             diff::Representability::MadSink | diff::Representability::TaintModel
         );
+        // b0：语义漏洞（无法编码）+ 无信号的 Cold sink —— 显式筛出，交报告/人工。
+        let is_b0 = matches!(representability, diff::Representability::SemanticOnly)
+            || (c.kind == "sink" && matches!(gate, learning::GateDecision::Cold));
         tracing::info!(
             target: "mcp_sec_audit::evolution",
             candidate = %c.name,
+            kind = %c.kind,
             category = %c.category,
             gate = ?gate,
             representability = ?representability,
             gated = g1_pass && g2_pass,
+            b0 = is_b0,
             "gated agent candidate"
         );
         if g1_pass && g2_pass {
             gated.push(c.clone());
+        } else if is_b0 {
+            b0.push(c.clone());
         }
     }
+    tracing::info!(
+        target: "mcp_sec_audit::evolution",
+        b0 = b0.len(),
+        "semantic-only / cold candidates screened as b0"
+    );
 
     // 无进化可做时，直接以阶段 1 结果走融合+汇总，返回（不重跑阶段 2）。
     let Some(staged) = learning::stage_catalog_evolution(&base_catalog, &gated) else {
@@ -336,12 +354,17 @@ pub fn run_static_scan_with_progress(
         std::env::temp_dir().join(format!("mcp-sec-audit-staging-{}", std::process::id()));
     learning::write_staging(&staging_dir, &staged)?;
 
-    // 验证提示词 prompt'：阶段 1 的 a-only 全量作为「请复核」项（a1/a2 混沌，暂不区分）。
-    let recheck = build_recheck(&diff_1);
-    let prompt_extra = if recheck.is_empty() {
+    // 验证提示词 prompt'：把阶段 1 的 a-only 二分为 a1（高精度标准线命中，请复核）
+    // 与 a2（仅 taint 启发式命中，疑似误报，请勿重复报告）。
+    let (recheck, do_not_report) = build_recheck(&diff_1);
+    let prompt_extra = if recheck.is_empty() && do_not_report.is_empty() {
         None
     } else {
-        Some(agent::render_verification_prompt("", &recheck, &[]))
+        Some(agent::render_verification_prompt(
+            "",
+            &recheck,
+            &do_not_report,
+        ))
     };
 
     // ---------- 阶段 2：进化后重跑（rule 复用） ----------
@@ -426,7 +449,8 @@ pub fn run_static_scan_with_progress(
     );
 
     // ---------- 迁移校验（L1）+ 固化/回退 ----------
-    let migration = validate::migrate(&diff_1, &diff_2);
+    let mut migration = validate::migrate(&diff_1, &diff_2);
+    migration.b0_count = b0.len();
     tracing::info!(target: "mcp_sec_audit::validate", ?migration, "cross-stage migration");
 
     let (final_taint, final_agent, final_codeql, final_facts) = if migration.should_rollback() {
@@ -460,57 +484,71 @@ pub fn run_static_scan_with_progress(
     )
 }
 
-/// 从 a-only 分区构建「请复核」项：取每组首个标准线结果（codeql > rule > taint）
-/// 的 `file:line` + 类别。agent 结果无类别字段，故 a-only 组必有标准线成员。
-fn build_recheck(diff: &diff::LineDiff) -> Vec<agent::PromptFinding> {
-    diff.a_only
-        .iter()
-        .filter_map(|g| {
-            if let Some(c) = g.codeql_results.first()
-                && let Some(loc) = c.locations.first()
-            {
-                let file = Path::new(&loc.file)
+/// 从 a-only 分区把 A 独有项二分为 `(a1 候选, a2 候选)`：
+/// - a1（请复核）= 有 codeql/rule 确定性标准线支撑的（高精度，可能是真阳性）；
+/// - a2（请勿重复报告）= 仅 taint 启发式命中的（低精度，疑似误报）。
+fn build_recheck(diff: &diff::LineDiff) -> (Vec<agent::PromptFinding>, Vec<agent::PromptFinding>) {
+    let mut recheck = Vec::new();
+    let mut do_not_report = Vec::new();
+    for g in &diff.a_only {
+        let Some(finding) = finding_from_group(g) else {
+            continue;
+        };
+        if !g.codeql_results.is_empty() || !g.rule_results.is_empty() {
+            recheck.push(finding);
+        } else {
+            do_not_report.push(finding);
+        }
+    }
+    (recheck, do_not_report)
+}
+
+/// 取 a-only 组首个标准线结果（codeql > rule > taint）的 `file:line` + 类别。
+/// agent 结果无类别字段，故 a-only 组必有标准线成员。
+fn finding_from_group(g: &fusion::matcher::MatchGroup) -> Option<agent::PromptFinding> {
+    if let Some(c) = g.codeql_results.first()
+        && let Some(loc) = c.locations.first()
+    {
+        let file = Path::new(&loc.file)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&loc.file);
+        return Some(agent::PromptFinding {
+            location: format!("{file}:{}", loc.line),
+            category: c.category.clone(),
+            note: String::new(),
+        });
+    }
+    if let Some(r) = g.rule_results.first() {
+        let file = Path::new(&r.file)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&r.file);
+        return Some(agent::PromptFinding {
+            location: format!("{file}:{}", r.line),
+            category: r.category.clone(),
+            note: String::new(),
+        });
+    }
+    if let Some(t) = g.taint_results.first() {
+        let parts: Vec<&str> = t.sink_id.splitn(4, ':').collect();
+        let file = parts
+            .get(2)
+            .map(|s| {
+                Path::new(s)
                     .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or(&loc.file);
-                return Some(agent::PromptFinding {
-                    location: format!("{file}:{}", loc.line),
-                    category: c.category.clone(),
-                    note: String::new(),
-                });
-            }
-            if let Some(r) = g.rule_results.first() {
-                let file = Path::new(&r.file)
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or(&r.file);
-                return Some(agent::PromptFinding {
-                    location: format!("{file}:{}", r.line),
-                    category: r.category.clone(),
-                    note: String::new(),
-                });
-            }
-            if let Some(t) = g.taint_results.first() {
-                let parts: Vec<&str> = t.sink_id.splitn(4, ':').collect();
-                let file = parts
-                    .get(2)
-                    .map(|s| {
-                        Path::new(s)
-                            .file_name()
-                            .and_then(|x| x.to_str())
-                            .unwrap_or(s)
-                    })
-                    .unwrap_or_default();
-                let line = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
-                return Some(agent::PromptFinding {
-                    location: format!("{file}:{line}"),
-                    category: t.sink_kind.clone(),
-                    note: String::new(),
-                });
-            }
-            None
-        })
-        .collect()
+                    .and_then(|x| x.to_str())
+                    .unwrap_or(s)
+            })
+            .unwrap_or_default();
+        let line = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
+        return Some(agent::PromptFinding {
+            location: format!("{file}:{line}"),
+            category: t.sink_kind.clone(),
+            note: String::new(),
+        });
+    }
+    None
 }
 
 /// 两阶段进化的收尾：融合 + 最终分区日志 + 汇总 + 构造结果。
@@ -1192,6 +1230,64 @@ printf '%s\n' '{"findings":[],"model_candidates":[{"kind":"sink","name":"openpyx
         );
 
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn build_recheck_splits_a1_and_a2() {
+        use crate::model::{Confidence, RuleAnalysisResult, Severity, TaintAnalysisResult};
+        use crate::static_analysis::fusion::matcher::MatchGroup;
+
+        let rule_backed = MatchGroup {
+            rule_results: vec![RuleAnalysisResult {
+                result_id: "r".into(),
+                rule_id: "r".into(),
+                category: "command_execution".into(),
+                owasp_mcp: None,
+                file: "a.py".into(),
+                line: 10,
+                matched_text: None,
+                evidence: vec![],
+                severity: Severity::High,
+                confidence: Confidence::High,
+                recommendation: None,
+                related_facts_exist: false,
+            }],
+            taint_results: vec![],
+            agent_results: vec![],
+            codeql_results: vec![],
+        };
+        let taint_only = MatchGroup {
+            rule_results: vec![],
+            taint_results: vec![TaintAnalysisResult {
+                result_id: "t".into(),
+                source_id: "source:x.py:0".into(),
+                source_kind: "mcp_tool_param".into(),
+                entrypoint_id: None,
+                sink_id: "sink:file_read:b.py:5".into(),
+                sink_kind: "file_read".into(),
+                call_chain: vec![],
+                dataflow_path: vec![],
+                evidence: vec![],
+                taint_confidence: Confidence::Medium,
+                entrypoint_is_mcp: false,
+                backward_trace_found_root: false,
+            }],
+            agent_results: vec![],
+            codeql_results: vec![],
+        };
+        let d = diff::LineDiff {
+            agreed: vec![],
+            a_only: vec![rule_backed, taint_only],
+            b_only: vec![],
+        };
+
+        let (recheck, do_not_report) = build_recheck(&d);
+        assert_eq!(recheck.len(), 1, "rule-backed a-only → a1 (recheck)");
+        assert_eq!(
+            do_not_report.len(),
+            1,
+            "taint-only a-only → a2 (do_not_report)"
+        );
     }
 
     fn write_rulebook(root: &Path, name: &str, capability: &str) -> PathBuf {
