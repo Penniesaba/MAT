@@ -102,6 +102,13 @@ pub(crate) fn run_with_prompt(
         prompt.push_str(extra);
     }
 
+    tracing::info!(
+        target: "mcp_sec_audit::agent",
+        prompt_bytes = prompt.len(),
+        files = file_summaries.len(),
+        "agent prompt rendered"
+    );
+
     // Build input scope for metadata
     let input_scope: Vec<String> = file_summaries
         .iter()
@@ -139,6 +146,13 @@ pub(crate) fn run_with_prompt(
             ));
         }
     }
+
+    tracing::info!(
+        target: "mcp_sec_audit::agent",
+        findings = agent_output.findings.len(),
+        model_candidates = agent_output.model_candidates.len(),
+        "agent analysis parsed"
+    );
 
     Ok(agent_output)
 }

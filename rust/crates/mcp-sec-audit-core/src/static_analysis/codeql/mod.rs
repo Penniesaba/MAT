@@ -106,6 +106,13 @@ impl CodeqlSession {
         for language in &languages {
             // Resolve the query pack for this database's language (built-in or custom).
             let query_pack = resolve_query_pack(codeql_config.query_pack_path.as_deref(), language)?;
+            tracing::info!(
+                target: "mcp_sec_audit::codeql",
+                language = %language,
+                query_files = query_pack.query_files.len(),
+                suite_refs = ?query_pack.suite_refs,
+                "query pack resolved"
+            );
 
             // Create database for this language.
             tracing::debug!(
@@ -254,7 +261,14 @@ pub fn run(ctx: &StaticScanContext, catalog: &crate::models::ModelCatalog, mut p
     let cli_version = session.provider.codeql_version();
     let model_packs: Vec<models::MadPack> = if mad_inject_supported(cli_version) {
         match models::write_model_pack_dir(catalog, ctx) {
-            Ok(pack) => vec![pack],
+            Ok(pack) => {
+                tracing::info!(
+                    target: "mcp_sec_audit::codeql",
+                    pack = %pack.name,
+                    "compiled MaD model pack"
+                );
+                vec![pack]
+            }
             Err(e) => {
                 tracing::warn!(
                     target: "mcp_sec_audit::codeql",
