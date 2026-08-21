@@ -194,6 +194,40 @@ pub fn render(
     Ok(prompt)
 }
 
+/// 注入验证提示词的一条 finding 引用。
+// M3 接线：两阶段编排在阶段 2 用 a-only 分区渲染 `prompt'`。接线前仅单测驱动。
+#[allow(dead_code)]
+pub(crate) struct PromptFinding {
+    pub(crate) location: String, // "file:line"
+    pub(crate) category: String,
+    pub(crate) note: String,     // 证据，或「为什么可能是误报」
+}
+
+/// 渲染验证提示词（`prompt'`）：基础 prompt 加上两段标签——a1 项「请复核」（你可能漏了）
+/// 和 a2 项「请勿重复报告」（这些疑似误报）。
+// M3 接线：阶段 2 用阶段 1 的 a-only（a1 复核 / a2 勿重复）填充这两段。
+#[allow(dead_code)]
+pub(crate) fn render_verification_prompt(
+    base: &str,
+    recheck: &[PromptFinding],
+    do_not_report: &[PromptFinding],
+) -> String {
+    let mut out = base.to_string();
+    if !recheck.is_empty() {
+        out.push_str("\n\n## 上一轮标准工具发现、但你可能遗漏的（请重点复核是否真实）\n");
+        for f in recheck {
+            out.push_str(&format!("- {} ({})：{}\n", f.location, f.category, f.note));
+        }
+    }
+    if !do_not_report.is_empty() {
+        out.push_str("\n## 上一轮标准工具报告、但疑似误报的（请勿重复报告）\n");
+        for f in do_not_report {
+            out.push_str(&format!("- {} ({})：{}\n", f.location, f.category, f.note));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,5 +302,26 @@ mod tests {
         let prompt = render(None, &[], "/tmp/test").expect("render");
         assert!(prompt.contains("single positive integer line number"));
         assert!(prompt.contains("model_candidates"));
+    }
+
+    #[test]
+    fn renders_recheck_and_do_not_report_sections() {
+        let base = "Role: auditor\n";
+        let out = render_verification_prompt(
+            base,
+            &[PromptFinding { location: "a.py:10".into(), category: "command_execution".into(), note: "os.system(cmd)".into() }],
+            &[PromptFinding { location: "b.py:20".into(), category: "network_request".into(), note: "get_excel_path is local".into() }],
+        );
+        assert!(out.contains("请重点复核"));
+        assert!(out.contains("a.py:10"));
+        assert!(out.contains("请勿重复报告"));
+        assert!(out.contains("b.py:20"));
+        assert!(out.starts_with(base));
+    }
+
+    #[test]
+    fn empty_inputs_return_base_unchanged() {
+        let base = "just the base\n";
+        assert_eq!(render_verification_prompt(base, &[], &[]), base);
     }
 }
