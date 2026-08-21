@@ -2,32 +2,57 @@ use std::fs;
 
 use anyhow::{Context, Result, bail};
 
-use crate::models::{default_catalog, load_models_dir};
+use crate::models::{default_catalog, load_models_dir, ModelCatalog};
 use crate::static_analysis::{infer, recon};
 use crate::{Fact, ScanLanguage, static_analysis::pipeline::StaticScanContext};
 
 use super::{extract_js_ts_facts, extract_python_facts, extract_rust_facts, ExtractionDiagnostic};
 
 pub fn extract_static_facts(ctx: &StaticScanContext) -> Result<Vec<Fact>> {
-    let mut facts = Vec::new();
-    let mut diagnostics = Vec::new();
+    let catalog = load_catalog(ctx)?;
+    extract_static_facts_with_catalog(ctx, &catalog)
+}
 
+/// 装配完整 sink 模型目录：内置 + `models_dir` + `learned_dir`（学到的模型下次运行载回）。
+pub(crate) fn load_catalog(ctx: &StaticScanContext) -> Result<ModelCatalog> {
     let mut catalog = default_catalog();
     if let Some(dir) = &ctx.config.static_.models_dir {
         let extra = load_models_dir(std::path::Path::new(dir))?;
         tracing::info!(
-            target: "mcp_sec_audit::taint",
+            target: "mcp_sec_audit::facts",
             models_dir = %dir,
             loaded = extra.sink_count(),
             "loaded extra sink models"
         );
         catalog.merge(extra);
     }
+    if let Some(dir) = &ctx.config.static_.learned_dir {
+        let extra = load_models_dir(std::path::Path::new(dir))?;
+        tracing::info!(
+            target: "mcp_sec_audit::facts",
+            learned_dir = %dir,
+            loaded = extra.sink_count(),
+            "loaded learned sink models"
+        );
+        catalog.merge(extra);
+    }
     tracing::info!(
-        target: "mcp_sec_audit::taint",
+        target: "mcp_sec_audit::facts",
         sinks = catalog.sink_count(),
         "sink model catalog ready"
     );
+    Ok(catalog)
+}
+
+/// 用给定的 catalog（而非重新装载）抽取 facts —— 阶段 2 用它喂进化后的 catalog。
+// M3 Task 4 接线：两阶段编排阶段 2 经 taint::run_with_catalog 调用。
+#[allow(dead_code)]
+pub(crate) fn extract_static_facts_with_catalog(
+    ctx: &StaticScanContext,
+    catalog: &ModelCatalog,
+) -> Result<Vec<Fact>> {
+    let mut facts = Vec::new();
+    let mut diagnostics = Vec::new();
 
     for file in &ctx.discovered_files {
         match file.language {
@@ -290,6 +315,33 @@ async fn run_command(command: String) -> Result<String, String> {
     }
 
     #[test]
+    #[test]
+    fn learned_dir_is_merged_into_catalog() {
+        let root = temp_dir("learned-dir-load");
+        let learned_dir = root.join("learned");
+        fs::create_dir_all(&learned_dir).expect("create learned dir");
+        fs::write(
+            learned_dir.join("l.toml"),
+            "[[sinks]]\nlanguage = \"python\"\ncategory = \"file_read\"\nseverity = \"medium\"\nconfidence = \"low\"\nreason = \"learned\"\npatterns = [\"openpyxl.load_workbook\"]\nsource = \"learned\"\n",
+        )
+        .expect("write learned model");
+
+        let mut config = RuntimeConfig::default();
+        config.static_.learned_dir = Some(learned_dir.display().to_string());
+        let ctx = StaticScanContext {
+            config,
+            rulebook_paths: Vec::new(),
+            discovered_files: Vec::new(),
+        };
+        let catalog = load_catalog(&ctx).expect("load catalog");
+        assert!(catalog
+            .sinks_for_language("python")
+            .iter()
+            .any(|m| m.patterns.contains(&"openpyxl.load_workbook".to_string())));
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
     fn semantic_inference_detects_unmodeled_package_sink() {
         let root = temp_dir("infer-pipeline");
         let file = root.join("server.py");

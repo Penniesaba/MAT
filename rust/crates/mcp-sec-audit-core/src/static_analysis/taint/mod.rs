@@ -6,11 +6,12 @@ pub mod result;
 use anyhow::Result;
 use crate::config::StaticTaintConfig;
 use crate::model::{Fact, TaintAnalysisResult};
+use crate::models::ModelCatalog;
 
-use super::facts::extract_static_facts;
+use super::facts::{extract_static_facts, extract_static_facts_with_catalog};
 use super::pipeline::StaticScanContext;
 
-/// Taint line entry point. Extracts facts from source files,
+/// Taint line entry point. Extracts facts from source files (default catalog),
 /// builds program graph, runs BFS propagation, returns results + all facts.
 pub fn run(ctx: &StaticScanContext) -> Result<(Vec<TaintAnalysisResult>, Vec<Fact>)> {
     if !ctx.config.static_.taint.enabled {
@@ -18,10 +19,34 @@ pub fn run(ctx: &StaticScanContext) -> Result<(Vec<TaintAnalysisResult>, Vec<Fac
     }
 
     let facts = extract_static_facts(ctx)?;
-    let (results, dataflow_facts) =
-        run_taint_analysis(&facts, &ctx.config.static_.taint)?;
+    run_taint_with_facts(ctx, &facts)
+}
 
-    let mut all_facts = facts;
+/// 用给定 catalog（阶段 2 喂进化后的）跑 taint：抽取 facts + 跑分析。
+// M3 Task 4 接线：两阶段 pipeline 阶段 2 调用。
+#[allow(dead_code)]
+pub(crate) fn run_with_catalog(
+    ctx: &StaticScanContext,
+    catalog: &ModelCatalog,
+) -> Result<(Vec<TaintAnalysisResult>, Vec<Fact>)> {
+    if !ctx.config.static_.taint.enabled {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    let facts = extract_static_facts_with_catalog(ctx, catalog)?;
+    run_taint_with_facts(ctx, &facts)
+}
+
+/// Shared tail: run the propagation/analysis over already-extracted facts and
+/// fold the dataflow facts back into the fact set.
+fn run_taint_with_facts(
+    ctx: &StaticScanContext,
+    facts: &[Fact],
+) -> Result<(Vec<TaintAnalysisResult>, Vec<Fact>)> {
+    let (results, dataflow_facts) =
+        run_taint_analysis(facts, &ctx.config.static_.taint)?;
+
+    let mut all_facts = facts.to_vec();
     all_facts.extend(dataflow_facts);
 
     Ok((results, all_facts))
