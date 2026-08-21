@@ -19,12 +19,11 @@ use queries::{QueryPack, resolve_query_pack};
 /// Languages CodeQL supports — Rust is supported as of CodeQL 2.26.x.
 const SUPPORTED_LANGUAGES: &[&str] = &["python", "javascript", "typescript", "rust"];
 
-/// MaD model-pack injection is DISABLED under CLI 2.26.2: `--model-packs`
-/// rejects the 3-column `sinkModel` extension ("Expected 4, but was 3")
-/// when the mcp-* query packs (with their lock files) are evaluated in
-/// overlay-eval mode. See SDD ledger RULING 11. Flip to `true` after a
-/// CLI upgrade to 2.26.3+.
-const MAD_INJECT_ENABLED: bool = false;
+/// MaD model-pack injection requires CLI >= 2.26.3 (2.26.2 rejects the 3-column
+/// `sinkModel` extension under overlay-eval mode — see SDD ledger RULING 11).
+fn mad_inject_supported(version: Option<(u32, u32, u32)>) -> bool {
+    matches!(version, Some((major, minor, patch)) if (major, minor, patch) >= (2, 26, 3))
+}
 
 /// A prepared CodeQL scan: provider, config, and per-language databases and
 /// query packs. `create` builds databases (reusing any cached DB); `analyze`
@@ -252,7 +251,8 @@ pub fn run(ctx: &StaticScanContext, mut progress: impl FnMut(&str)) -> Result<Co
     // extension when the lock-file mcp-* query packs are evaluated in
     // overlay-eval mode. MaD compilation is non-fatal: on error fall back to
     // built-in queries and warn, so the CodeQL line still runs.
-    let model_packs: Vec<models::MadPack> = if MAD_INJECT_ENABLED {
+    let cli_version = session.provider.codeql_version();
+    let model_packs: Vec<models::MadPack> = if mad_inject_supported(cli_version) {
         match models::write_model_pack_dir(&crate::models::default_catalog(), ctx) {
             Ok(pack) => vec![pack],
             Err(e) => {
@@ -265,6 +265,11 @@ pub fn run(ctx: &StaticScanContext, mut progress: impl FnMut(&str)) -> Result<Co
             }
         }
     } else {
+        tracing::warn!(
+            target: "mcp_sec_audit::codeql",
+            cli_version = ?cli_version,
+            "CodeQL MaD injection disabled: requires CLI >= 2.26.3. Upgrade to enable sink-model evolution."
+        );
         Vec::new()
     };
 
@@ -322,5 +327,19 @@ mod tests {
         let output = run(&ctx, |m| messages.push(m.to_string())).expect("run");
         assert!(output.results.is_empty());
         assert!(messages.iter().any(|m| m.contains("CodeQL skipped")));
+    }
+
+    #[test]
+    fn mad_gate_accepts_2_26_3_and_newer() {
+        assert!(mad_inject_supported(Some((2, 26, 3))));
+        assert!(mad_inject_supported(Some((2, 27, 0))));
+        assert!(mad_inject_supported(Some((3, 0, 0))));
+    }
+
+    #[test]
+    fn mad_gate_rejects_2_26_2_and_missing() {
+        assert!(!mad_inject_supported(Some((2, 26, 2))));
+        assert!(!mad_inject_supported(Some((2, 26, 0))));
+        assert!(!mad_inject_supported(None));
     }
 }

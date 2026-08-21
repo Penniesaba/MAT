@@ -47,6 +47,33 @@ impl CliCodeqlProvider {
             binary: binary.into(),
         }
     }
+
+    /// Parse the installed CodeQL CLI version from `codeql --version`.
+    pub(crate) fn codeql_version(&self) -> Option<(u32, u32, u32)> {
+        let output = Command::new(&self.binary)
+            .arg("--version")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        parse_codeql_version(&String::from_utf8_lossy(&output.stdout))
+    }
+}
+
+/// Parse a `(major, minor, patch)` tuple from the first line of
+/// `codeql --version` output (e.g. "CodeQL command-line toolchain release 2.26.2.").
+pub(crate) fn parse_codeql_version(stdout: &str) -> Option<(u32, u32, u32)> {
+    let line = stdout.lines().next()?;
+    let after_release = line.split("release ").nth(1)?;
+    let version = after_release.split_whitespace().next()?.trim_end_matches('.');
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next().unwrap_or("0").parse().ok()?;
+    Some((major, minor, patch))
 }
 
 impl CodeqlProvider for CliCodeqlProvider {
@@ -242,5 +269,21 @@ mod tests {
             "unexpected error message: {}",
             err
         );
+    }
+
+    #[test]
+    fn parses_codeql_version_line() {
+        let stdout = "CodeQL command-line toolchain release 2.26.2.\nCopyright (C) ...\n";
+        assert_eq!(parse_codeql_version(stdout), Some((2, 26, 2)));
+    }
+
+    #[test]
+    fn parses_three_component_version_without_trailing_dot() {
+        assert_eq!(parse_codeql_version("CodeQL release 2.26.3"), Some((2, 26, 3)));
+    }
+
+    #[test]
+    fn unparseable_version_returns_none() {
+        assert_eq!(parse_codeql_version("not a version line"), None);
     }
 }
