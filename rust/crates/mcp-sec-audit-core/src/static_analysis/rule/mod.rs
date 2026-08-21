@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, fs};
+use std::{collections::{BTreeMap, BTreeSet}, fs};
 
 use anyhow::{Context, Result, bail};
 use regex::RegexBuilder;
@@ -41,7 +41,18 @@ pub fn run(
         bail!("rule analysis line is enabled but rulebook is empty");
     }
 
-    analyze_rule_line(ctx, rulebook)
+    let results = analyze_rule_line(ctx, rulebook)?;
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for r in &results {
+        *counts.entry(r.category.as_str()).or_default() += 1;
+    }
+    tracing::info!(
+        target: "mcp_sec_audit::rule",
+        findings = results.len(),
+        by_category = ?counts,
+        "rule analysis matched"
+    );
+    Ok(results)
 }
 
 fn analyze_rule_line(

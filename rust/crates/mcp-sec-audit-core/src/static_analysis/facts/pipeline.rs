@@ -68,6 +68,12 @@ pub(crate) fn extract_static_facts_with_catalog(
                     &source,
                     catalog.sinks_for_language("python"),
                 );
+                tracing::debug!(
+                    target: "mcp_sec_audit::facts",
+                    file = %file.path.display(),
+                    facts = result.facts.len(),
+                    "extracted facts"
+                );
                 facts.extend(result.facts);
                 diagnostics.extend(result.diagnostics);
             }
@@ -88,6 +94,12 @@ pub(crate) fn extract_static_facts_with_catalog(
                 if result.has_fatal() {
                     bail!("JS/TS fact extraction produced fatal errors");
                 }
+                tracing::debug!(
+                    target: "mcp_sec_audit::facts",
+                    file = %file.path.display(),
+                    facts = result.facts.len(),
+                    "extracted facts"
+                );
                 facts.extend(result.facts);
                 diagnostics.extend(
                     result.diagnostics.into_iter().map(ExtractionDiagnostic::from),
@@ -106,6 +118,12 @@ pub(crate) fn extract_static_facts_with_catalog(
                     &file.path,
                     &source,
                     catalog.sinks_for_language("rust"),
+                );
+                tracing::debug!(
+                    target: "mcp_sec_audit::facts",
+                    file = %file.path.display(),
+                    facts = result.facts.len(),
+                    "extracted facts"
                 );
                 facts.extend(result.facts);
                 diagnostics.extend(result.diagnostics);
@@ -129,6 +147,12 @@ pub(crate) fn extract_static_facts_with_catalog(
     }
 
     let inferred = infer::assemble(&facts, &crate::models::default_package_rules());
+    tracing::info!(
+        target: "mcp_sec_audit::facts",
+        total_facts = facts.len(),
+        inferred = inferred.len(),
+        "fact extraction complete"
+    );
     tracing::info!(
         target: "mcp_sec_audit::taint",
         inferred_sinks = inferred.len(),
@@ -313,7 +337,6 @@ async fn run_command(command: String) -> Result<String, String> {
     }
 
     #[test]
-    #[test]
     fn learned_dir_is_merged_into_catalog() {
         let root = temp_dir("learned-dir-load");
         let learned_dir = root.join("learned");
@@ -340,6 +363,7 @@ async fn run_command(command: String) -> Result<String, String> {
         fs::remove_dir_all(root).expect("cleanup");
     }
 
+    #[test]
     fn semantic_inference_detects_unmodeled_package_sink() {
         let root = temp_dir("infer-pipeline");
         let file = root.join("server.py");

@@ -192,16 +192,37 @@ pub(crate) fn infer_by_name(
 /// Returns only the additional sink facts to append to the extraction output.
 pub(crate) fn assemble(facts: &[Fact], rules: &[PackageRule]) -> Vec<Fact> {
     let inventory = collect_packages(facts);
-    let mut inferred = infer_by_package(facts, &inventory, rules);
+    let by_package = infer_by_package(facts, &inventory, rules);
     let skip: BTreeSet<String> = facts
         .iter()
-        .chain(inferred.iter())
+        .chain(by_package.iter())
         .filter_map(|f| match f {
             Fact::Sink(s) => Some(s.call_id.clone()),
             _ => None,
         })
         .collect();
-    inferred.extend(infer_by_name(facts, &skip));
+    let by_name = infer_by_name(facts, &skip);
+    tracing::info!(
+        target: "mcp_sec_audit::infer",
+        by_package = by_package.len(),
+        by_name = by_name.len(),
+        "semantic sink inference"
+    );
+
+    let mut inferred = by_package;
+    inferred.extend(by_name);
+    for s in inferred.iter().filter_map(|f| match f {
+        Fact::Sink(s) => Some(s),
+        _ => None,
+    }) {
+        tracing::debug!(
+            target: "mcp_sec_audit::infer",
+            sink = %s.sink_name,
+            category = %s.category,
+            confidence = ?s.confidence,
+            "inferred sink"
+        );
+    }
     inferred
 }
 

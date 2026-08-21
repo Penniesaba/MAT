@@ -72,6 +72,21 @@ pub fn run_taint_analysis(
 
     // Generate results
     let taint_results = result::build_taint_results(&paths, &graph);
+    for r in &taint_results {
+        let chain = if r.call_chain.is_empty() {
+            String::new()
+        } else {
+            format!(" → {}", r.call_chain.join(" → "))
+        };
+        tracing::info!(
+            target: "mcp_sec_audit::taint",
+            source = %r.source_id,
+            sink = %r.sink_id,
+            category = %r.sink_kind,
+            path = %format!("{}{} → {}", r.source_id, chain, r.sink_id),
+            "taint path"
+        );
+    }
     let dataflow_facts = result::build_dataflow_facts(&paths);
 
     Ok((taint_results, dataflow_facts))
