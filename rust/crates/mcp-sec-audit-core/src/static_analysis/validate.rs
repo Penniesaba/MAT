@@ -85,6 +85,31 @@ fn key_set(groups: &[MatchGroup]) -> BTreeSet<FindingKey> {
     groups.iter().filter_map(group_key).collect()
 }
 
+/// b-only(阶段1) 仍是 b-only(阶段2) 的条目（仍混沌，需人工裁决，L3）。
+pub(crate) fn ambiguous_items(
+    phase1: &LineDiff,
+    phase2: &LineDiff,
+) -> Vec<crate::AdjudicationItem> {
+    let p2_keys = key_set(&phase2.b_only);
+    phase1
+        .b_only
+        .iter()
+        .filter_map(|g| {
+            let key = group_key(g)?;
+            if p2_keys.contains(&key) {
+                Some(crate::AdjudicationItem {
+                    file: key.file,
+                    line: key.line,
+                    kind: "b_still_ambiguous".to_string(),
+                    agent_explanation: None,
+                })
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// 比较阶段 1 与阶段 2 的分区，产出 a1/a2/b1/b2 确定性计数（b0 由 pipeline 回填）。
 pub(crate) fn migrate(phase1: &LineDiff, phase2: &LineDiff) -> Migration {
     let p1_b = key_set(&phase1.b_only);
@@ -285,5 +310,24 @@ mod tests {
             b_only: vec![group_agent(agent("b.py", 5))],
         };
         assert_eq!(migrate(&p1, &p2).b_still_ambiguous, 1);
+    }
+
+    #[test]
+    fn ambiguous_items_surfaces_still_b_only() {
+        let p1 = LineDiff {
+            agreed: vec![],
+            a_only: vec![],
+            b_only: vec![group_agent(agent("b.py", 5))],
+        };
+        let p2 = LineDiff {
+            agreed: vec![],
+            a_only: vec![],
+            b_only: vec![group_agent(agent("b.py", 5))],
+        };
+        let items = ambiguous_items(&p1, &p2);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].file, "b.py");
+        assert_eq!(items[0].line, 5);
+        assert_eq!(items[0].kind, "b_still_ambiguous");
     }
 }

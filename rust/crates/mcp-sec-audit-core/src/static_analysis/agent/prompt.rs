@@ -140,8 +140,7 @@ vulnerabilities.
 
 /// Determine the primary language label from a slice of file summaries.
 pub fn primary_language(files: &[FileSummary]) -> String {
-    let mut counts: std::collections::HashMap<&str, usize> =
-        std::collections::HashMap::new();
+    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     for f in files {
         *counts.entry(&f.language).or_insert(0) += 1;
     }
@@ -169,8 +168,7 @@ fn load_template(custom_path: Option<&str>) -> Result<String> {
             if !p.exists() {
                 bail!("prompt template not found: {}", path);
             }
-            fs::read_to_string(p)
-                .with_context(|| format!("read prompt template: {}", path))
+            fs::read_to_string(p).with_context(|| format!("read prompt template: {}", path))
         }
         None => Ok(BUILT_IN_TEMPLATE.to_string()),
     }
@@ -200,7 +198,22 @@ pub fn render(
 pub(crate) struct PromptFinding {
     pub(crate) location: String, // "file:line"
     pub(crate) category: String,
-    pub(crate) note: String,     // 证据，或「为什么可能是误报」
+    pub(crate) note: String, // 证据，或「为什么可能是误报」
+}
+
+/// 渲染 L2 语义解释提示词：让 agent 对仍混沌的 finding 逐一读代码解释
+/// 「为什么是/不是漏洞」，但不要求下最终结论（裁决权在确定性引擎和人工）。
+#[allow(dead_code)]
+pub(crate) fn render_explanation_prompt(items: &[PromptFinding]) -> String {
+    let mut out = String::from(
+        "\n\n## 分层验证 L2 · 语义解释\n\n以下是跨阶段迁移后仍无法确定的候选 finding。\
+         请逐一阅读相关代码，解释「它是否构成真实漏洞、为什么」，但不要下最终结论——\
+         最终裁决由确定性引擎与人工完成。\n\n",
+    );
+    for f in items {
+        out.push_str(&format!("- {} ({})\n", f.location, f.category));
+    }
+    out
 }
 
 /// 渲染验证提示词（`prompt'`）：基础 prompt 加上两段标签——a1 项「请复核」（你可能漏了）
@@ -246,8 +259,7 @@ mod tests {
                 line_count: 50,
             },
         ];
-        let prompt = render(None, &files, "/tmp/test-project")
-            .expect("render template");
+        let prompt = render(None, &files, "/tmp/test-project").expect("render template");
         assert!(prompt.contains("/tmp/test-project"));
         assert!(prompt.contains("rust"));
         assert!(prompt.contains("src/main.rs"));
@@ -262,21 +274,29 @@ mod tests {
 
     #[test]
     fn render_missing_custom_template_fails() {
-        let err = render(
-            Some("/nonexistent/path/template.md"),
-            &[],
-            "/tmp/test",
-        )
-        .expect_err("missing template should fail");
+        let err = render(Some("/nonexistent/path/template.md"), &[], "/tmp/test")
+            .expect_err("missing template should fail");
         assert!(err.to_string().contains("prompt template not found"));
     }
 
     #[test]
     fn primary_language_picks_most_common() {
         let files = vec![
-            FileSummary { path: "a.py".into(), language: "python".into(), line_count: 10 },
-            FileSummary { path: "b.py".into(), language: "python".into(), line_count: 20 },
-            FileSummary { path: "c.js".into(), language: "javascript".into(), line_count: 5 },
+            FileSummary {
+                path: "a.py".into(),
+                language: "python".into(),
+                line_count: 10,
+            },
+            FileSummary {
+                path: "b.py".into(),
+                language: "python".into(),
+                line_count: 20,
+            },
+            FileSummary {
+                path: "c.js".into(),
+                language: "javascript".into(),
+                line_count: 5,
+            },
         ];
         assert_eq!(primary_language(&files), "python");
     }
@@ -309,8 +329,16 @@ mod tests {
         let base = "Role: auditor\n";
         let out = render_verification_prompt(
             base,
-            &[PromptFinding { location: "a.py:10".into(), category: "command_execution".into(), note: "os.system(cmd)".into() }],
-            &[PromptFinding { location: "b.py:20".into(), category: "network_request".into(), note: "get_excel_path is local".into() }],
+            &[PromptFinding {
+                location: "a.py:10".into(),
+                category: "command_execution".into(),
+                note: "os.system(cmd)".into(),
+            }],
+            &[PromptFinding {
+                location: "b.py:20".into(),
+                category: "network_request".into(),
+                note: "get_excel_path is local".into(),
+            }],
         );
         assert!(out.contains("请重点复核"));
         assert!(out.contains("a.py:10"));
@@ -323,5 +351,16 @@ mod tests {
     fn empty_inputs_return_base_unchanged() {
         let base = "just the base\n";
         assert_eq!(render_verification_prompt(base, &[], &[]), base);
+    }
+
+    #[test]
+    fn renders_explanation_prompt() {
+        let out = render_explanation_prompt(&[PromptFinding {
+            location: "b.py:5".into(),
+            category: "auth_bypass".into(),
+            note: String::new(),
+        }]);
+        assert!(out.contains("语义解释"));
+        assert!(out.contains("b.py:5"));
     }
 }

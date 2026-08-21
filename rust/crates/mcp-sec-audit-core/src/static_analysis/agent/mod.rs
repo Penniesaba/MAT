@@ -12,7 +12,7 @@ use provider::{AgentProvider, AgentRunConfig, CliAgentProvider};
 
 // 两阶段编排（M3 Task 4）在 pipeline 里渲染 prompt' 并调用 run_with_prompt；
 // 故把 prompt 的验证提示词原语 re-export 到 agent 模块面。
-pub(crate) use prompt::{PromptFinding, render_verification_prompt};
+pub(crate) use prompt::{PromptFinding, render_explanation_prompt, render_verification_prompt};
 
 /// Hardcoded constants (not user-configurable).
 const PROMPT_PROFILE: &str = "mcp_security_audit";
@@ -110,10 +110,7 @@ pub(crate) fn run_with_prompt(
     );
 
     // Build input scope for metadata
-    let input_scope: Vec<String> = file_summaries
-        .iter()
-        .map(|fs| fs.path.clone())
-        .collect();
+    let input_scope: Vec<String> = file_summaries.iter().map(|fs| fs.path.clone()).collect();
 
     // Invoke the agent provider
     let provider = CliAgentProvider;

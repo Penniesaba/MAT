@@ -8,9 +8,9 @@ use anyhow::{Context, Result, bail};
 
 use crate::model::CodeqlOutput;
 use crate::{
-    AgentOutput, ConfigSnapshot, Fact, FusedFinding, ModelCandidate, RuleAnalysisResult, RuleBook,
-    RuntimeConfig, Severity, StaticAnalysisResult, StaticAnalysisSummary, TaintAnalysisResult,
-    load_rulebook,
+    AgentOutput, ConfigSnapshot, EvolutionReport, Fact, FusedFinding, ModelCandidate,
+    RuleAnalysisResult, RuleBook, RuntimeConfig, Severity, StaticAnalysisResult,
+    StaticAnalysisSummary, TaintAnalysisResult, load_rulebook,
 };
 
 use super::component::Component;
@@ -308,6 +308,11 @@ pub fn run_static_scan_with_progress(
     // 无进化可做时，直接以阶段 1 结果走融合+汇总，返回（不重跑阶段 2）。
     let Some(staged) = learning::stage_catalog_evolution(&base_catalog, &gated) else {
         progress("Differential: no evolution candidates — skipping phase 2");
+        let evolution = EvolutionReport {
+            b0_count: b0.len(),
+            b0_candidates: b0,
+            ..Default::default()
+        };
         return finish(
             &ctx,
             &targets,
@@ -316,6 +321,7 @@ pub fn run_static_scan_with_progress(
             agent_output_1,
             codeql_output_1,
             facts_1,
+            evolution,
             progress,
         );
     };
@@ -339,12 +345,27 @@ pub fn run_static_scan_with_progress(
 
     // 进化统一走 Component trait：TaintComponent 承载三类 catalog，evolve 产出
     // 阶段 2 用的进化 catalog；写 staging 作可观测/回退锚点。
-    let delta = component::ComponentDelta {
+    let mut delta = component::ComponentDelta {
         sinks: staged.sinks.clone(),
         sources: staged.sources.clone(),
         sanitizers: staged.sanitizers.clone(),
         ..Default::default()
     };
+    // 真溯源（C13）：learned_from = {scan_id}/{agent_id}，不再是占位。
+    let provenance = format!(
+        "{}/{}",
+        scan_identifier(&ctx),
+        ctx.config.static_.agent.provider
+    );
+    for m in delta.sinks.iter_mut() {
+        m.learned_from = Some(provenance.clone());
+    }
+    for m in delta.sources.iter_mut() {
+        m.learned_from = Some(provenance.clone());
+    }
+    for m in delta.sanitizers.iter_mut() {
+        m.learned_from = Some(provenance.clone());
+    }
     let base_component = component::TaintComponent {
         catalog: base_catalog.clone(),
     };
@@ -453,7 +474,35 @@ pub fn run_static_scan_with_progress(
     migration.b0_count = b0.len();
     tracing::info!(target: "mcp_sec_audit::validate", ?migration, "cross-stage migration");
 
-    let (final_taint, final_agent, final_codeql, final_facts) = if migration.should_rollback() {
+    // L2：仍混沌的 b-only 条目交 agent 语义解释（只产出解释，不下结论）。
+    let mut ambiguous = validate::ambiguous_items(&diff_1, &diff_2);
+    if !ambiguous.is_empty() && effective_config.static_.agent.enabled {
+        let items: Vec<agent::PromptFinding> = ambiguous
+            .iter()
+            .map(|a| agent::PromptFinding {
+                location: format!("{}:{}", a.file, a.line),
+                category: String::new(),
+                note: String::new(),
+            })
+            .collect();
+        let explanation_extra = agent::render_explanation_prompt(&items);
+        match agent::run_with_prompt(&ctx, Some(&explanation_extra)) {
+            Ok(out) => attach_explanations(&mut ambiguous, &out.findings),
+            Err(e) => tracing::warn!(
+                target: "mcp_sec_audit::agent",
+                error = %e,
+                "L2 explanation pass failed"
+            ),
+        }
+    }
+    tracing::info!(
+        target: "mcp_sec_audit::validate",
+        ambiguous = ambiguous.len(),
+        "L2/L3 residual items"
+    );
+
+    let rolled_back = migration.should_rollback();
+    let (final_taint, final_agent, final_codeql, final_facts) = if rolled_back {
         base_component.rollback(&staging_dir)?;
         tracing::warn!(
             target: "mcp_sec_audit::evolution",
@@ -472,6 +521,19 @@ pub fn run_static_scan_with_progress(
         (taint_results_2, agent_output_2, codeql_output_2, facts_2)
     };
 
+    let evolution = EvolutionReport {
+        b1_confirmed: migration.b1_confirmed,
+        a1_confirmed: migration.a1_confirmed,
+        a2_confirmed: migration.a2_confirmed,
+        b2_confirmed: migration.b2_confirmed,
+        b0_count: migration.b0_count,
+        b_still_ambiguous: migration.b_still_ambiguous,
+        rolled_back,
+        promoted: !rolled_back,
+        b0_candidates: b0,
+        ambiguous_for_review: ambiguous,
+    };
+
     finish(
         &ctx,
         &targets,
@@ -480,8 +542,25 @@ pub fn run_static_scan_with_progress(
         final_agent,
         final_codeql,
         final_facts,
+        evolution,
         progress,
     )
+}
+
+/// L2 语义解释回填：把 agent 对某 file:line 的 reasoning_summary 贴到对应混沌项上。
+fn attach_explanations(
+    items: &mut [crate::AdjudicationItem],
+    findings: &[crate::AgentAnalysisResult],
+) {
+    for item in items {
+        let key = format!("{}:{}", item.file, item.line);
+        if let Some(f) = findings
+            .iter()
+            .find(|f| f.affected_locations.iter().any(|loc| loc.ends_with(&key)))
+        {
+            item.agent_explanation = Some(f.reasoning_summary.clone());
+        }
+    }
 }
 
 /// 从 a-only 分区把 A 独有项二分为 `(a1 候选, a2 候选)`：
@@ -561,6 +640,7 @@ fn finish(
     agent_output: AgentOutput,
     codeql_output: CodeqlOutput,
     facts: Vec<Fact>,
+    evolution: EvolutionReport,
     mut progress: impl FnMut(&str),
 ) -> Result<StaticAnalysisResult> {
     let agent_results = agent_output.findings;
@@ -645,6 +725,7 @@ fn finish(
             runtime: ctx.config.clone(),
             rulebook_paths: ctx.rulebook_paths.clone(),
         },
+        evolution,
     })
 }
 
@@ -739,7 +820,28 @@ fn empty_result(
             runtime,
             rulebook_paths,
         },
+        evolution: Default::default(),
     }
+}
+
+/// 生成本次扫描的稳定标识：`scan-{target}-{unix_secs}`（供 learned_from 溯源）。
+fn scan_identifier(ctx: &StaticScanContext) -> String {
+    let target = ctx
+        .config
+        .scan
+        .targets
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "<none>".to_string());
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!(
+        "scan-{}-{}",
+        target.replace(['/', '\\', ' ', '.'], "_"),
+        secs
+    )
 }
 
 fn target_label(targets: &[PathBuf]) -> String {

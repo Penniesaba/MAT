@@ -209,6 +209,50 @@ pub struct ConfigSnapshot {
     pub rulebook_paths: Vec<String>,
 }
 
+/// Differential evolution + layered-validation report, surfaced in the scan
+/// result so the a1/a2/b0/b1/b2 labels and the residual human-adjudication
+/// items are visible (L1 migration + L2 agent explanation + L3 human review).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct EvolutionReport {
+    /// b1: B-only → agreed (B true positive, A caught up).
+    pub b1_confirmed: usize,
+    /// a1: A-only → agreed (A true positive, B caught up).
+    pub a1_confirmed: usize,
+    /// a2: A-only still A-only (A false positive).
+    pub a2_confirmed: usize,
+    /// b2: new A'-only (B hallucination polluting the standard line).
+    pub b2_confirmed: usize,
+    /// b0: semantic-only candidates (semantic vulnerabilities A cannot express).
+    pub b0_count: usize,
+    /// b-only still b-only: residual ambiguity needing human review.
+    pub b_still_ambiguous: usize,
+    /// Whether the staged evolution was rolled back.
+    #[serde(default)]
+    pub rolled_back: bool,
+    /// Whether the staged evolution was promoted to learned.
+    #[serde(default)]
+    pub promoted: bool,
+    /// The b0 semantic-only candidates themselves (surfaced, not dropped).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub b0_candidates: Vec<ModelCandidate>,
+    /// Residual ambiguous items surfaced for human adjudication (L3).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ambiguous_for_review: Vec<AdjudicationItem>,
+}
+
+/// One residual ambiguous item awaiting human adjudication, with the optional
+/// L2 agent explanation attached.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdjudicationItem {
+    pub file: String,
+    pub line: u32,
+    /// "b_still_ambiguous" (B-only both phases) or "a_unresolved".
+    pub kind: String,
+    /// L2 agent semantic explanation (why it may/may not be a vulnerability).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_explanation: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StaticAnalysisResult {
     pub facts: Vec<Fact>,
@@ -229,6 +273,9 @@ pub struct StaticAnalysisResult {
     pub fused_findings: Vec<FusedFinding>,
     pub summary: StaticAnalysisSummary,
     pub config_snapshot: ConfigSnapshot,
+    /// Differential evolution + layered-validation report (L1/L2/L3).
+    #[serde(default)]
+    pub evolution: EvolutionReport,
 }
 
 #[cfg(test)]
@@ -266,9 +313,6 @@ mod tests {
         let value = serde_json::to_value(&result).expect("serialize static result");
         assert!(value.get("codeql_results").is_some());
         assert!(value["summary"].get("codeql_result_count").is_some());
-        assert_eq!(
-            value["summary"]["codeql_result_count"].as_u64(),
-            Some(1)
-        );
+        assert_eq!(value["summary"]["codeql_result_count"].as_u64(), Some(1));
     }
 }

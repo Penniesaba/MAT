@@ -252,5 +252,6 @@ pub fn synthetic_static_analysis_result() -> StaticAnalysisResult {
             runtime: synthetic_runtime_config(),
             rulebook_paths: vec!["rules/mcp".to_string()],
         },
+        evolution: Default::default(),
     }
 }

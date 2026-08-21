@@ -309,6 +309,48 @@ pub fn render_markdown(result: &StaticAnalysisResult, options: &MarkdownRenderOp
         }
     }
 
+    // Differential evolution + layered validation report (L1/L2/L3).
+    let ev = &result.evolution;
+    if ev.promoted
+        || ev.rolled_back
+        || !ev.b0_candidates.is_empty()
+        || !ev.ambiguous_for_review.is_empty()
+    {
+        lines.push(String::new());
+        lines.push("## Evolution & Verification".to_string());
+        lines.push(format!(
+            "- Migration: b1={} a1={} a2={} b2={} b0={} still_ambiguous={}",
+            ev.b1_confirmed,
+            ev.a1_confirmed,
+            ev.a2_confirmed,
+            ev.b2_confirmed,
+            ev.b0_count,
+            ev.b_still_ambiguous
+        ));
+        if ev.promoted {
+            lines.push("- Decision: promoted staged models to learned".to_string());
+        }
+        if ev.rolled_back {
+            lines.push("- Decision: rolled back staged models".to_string());
+        }
+        if !ev.b0_candidates.is_empty() {
+            lines.push("- b0 (semantic-only, surfaced for human review):".to_string());
+            for c in &ev.b0_candidates {
+                lines.push(format!("  - {} ({})", c.name, c.category));
+            }
+        }
+        if !ev.ambiguous_for_review.is_empty() {
+            lines.push("- L3 residual items awaiting human adjudication:".to_string());
+            for a in &ev.ambiguous_for_review {
+                let explanation = a.agent_explanation.as_deref().unwrap_or("-");
+                lines.push(format!(
+                    "  - {}:{} [{}] — {explanation}",
+                    a.file, a.line, a.kind
+                ));
+            }
+        }
+    }
+
     lines.join("\n")
 }
 

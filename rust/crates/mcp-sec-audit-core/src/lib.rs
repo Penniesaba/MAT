@@ -14,13 +14,14 @@ pub use config::{
     load_runtime_config, parse_runtime_config_toml,
 };
 pub use model::{
-    AgentAnalysisResult, AgentOutput, CapabilityFinding, Confidence, ConfigSnapshot,
-    DetectionResult, EvidenceSource, Fact, FindingFact, FindingStatus, FusedFinding,
-    ModelCandidate, RuleAnalysisResult, SCHEMA_VERSION, Severity, StaticAnalysisResult,
-    StaticAnalysisSummary, TaintAnalysisResult,
+    AdjudicationItem, AgentAnalysisResult, AgentOutput, CapabilityFinding, Confidence,
+    ConfigSnapshot, DetectionResult, EvidenceSource, EvolutionReport, Fact, FindingFact,
+    FindingStatus, FusedFinding, ModelCandidate, RuleAnalysisResult, SCHEMA_VERSION, Severity,
+    StaticAnalysisResult, StaticAnalysisSummary, TaintAnalysisResult,
 };
 pub use models::{
-    ModelCatalog, SinkModel, default_catalog, load_models_dir, parse_sinks,
+    ModelCatalog, SanitizerModel, SinkModel, SourceModel, default_catalog, load_models_dir,
+    parse_sinks,
 };
 pub use reporting::{
     JsonlRenderOptions, MarkdownRenderOptions, ReportFormat, render_json, render_jsonl,
@@ -29,9 +30,9 @@ pub use reporting::{
 pub use rules::{CapabilityRule, IndicatorRule, RuleBook, load_rulebook, parse_rulebook_toml};
 pub use static_analysis::{
     DiscoveredFile, DiscoverySummary, ExtractionDiagnostic, JsTsDiagnostic, JsTsExtractionResult,
-    PythonExtractionResult, RustExtractionResult, ScanLanguage, StaticScanContext,
-    detect_language, discover_files, extract_js_ts_facts, extract_python_facts,
-    extract_rust_facts, extract_static_facts, run_static_scan, run_static_scan_with_progress,
+    PythonExtractionResult, RustExtractionResult, ScanLanguage, StaticScanContext, detect_language,
+    discover_files, extract_js_ts_facts, extract_python_facts, extract_rust_facts,
+    extract_static_facts, run_static_scan, run_static_scan_with_progress,
 };
 
 /// Current Rust rewrite phase implemented by this crate.
