@@ -1,9 +1,11 @@
 //! v4.0 set-partition: split the four analysis lines into the three feedback
 //! sets c / a / b by reusing the fusion matcher's proximity grouping.
 
-use crate::model::{AgentAnalysisResult, CodeqlAnalysisResult, RuleAnalysisResult, TaintAnalysisResult};
+use crate::model::{AgentAnalysisResult, CodeqlAnalysisResult, ModelCandidate, RuleAnalysisResult, TaintAnalysisResult};
 
+use super::codeql::models::mad_sink_kind;
 use super::fusion::matcher::{MatchGroup, match_results};
+use super::infer::name_category;
 
 /// The three-way partition of a scan's findings for differential feedback.
 /// - `agreed` = c: standard line(s) AND agent both found it.
@@ -46,6 +48,77 @@ pub(crate) fn diff_lines(
         }
     }
     diff
+}
+
+/// How an agent model candidate can be encoded into a standard-line component.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Representability {
+    /// Encodable as a CodeQL MaD sinkModel extension (module.function + sink kind).
+    MadSink,
+    /// Encodable as a taint source/sanitizer model (or a non-MaD sink model).
+    TaintModel,
+    /// Not encodable as any standard-line component — b0 (semantic-only).
+    SemanticOnly,
+}
+
+/// Classify a B-only model candidate by its representability (the G2 gate).
+pub(crate) fn classify_candidate(c: &ModelCandidate) -> Representability {
+    match c.kind.as_str() {
+        "sink" => {
+            let has_module = c.name.contains('.') || c.name.contains("::");
+            if has_module && mad_sink_kind(&c.category).is_some() {
+                Representability::MadSink
+            } else if name_category(&c.name).is_some() {
+                Representability::TaintModel
+            } else {
+                Representability::SemanticOnly
+            }
+        }
+        "source" | "sanitizer" => Representability::TaintModel,
+        _ => Representability::SemanticOnly,
+    }
+}
+
+#[cfg(test)]
+mod b0_tests {
+    use super::*;
+    use crate::model::{Confidence, ModelCandidate};
+
+    fn cand(kind: &str, name: &str, category: &str) -> ModelCandidate {
+        ModelCandidate {
+            kind: kind.into(), name: name.into(), category: category.into(),
+            language: "python".into(), argument: Some(0),
+            confidence: Confidence::Medium, evidence_snippets: vec![],
+        }
+    }
+
+    #[test]
+    fn sink_with_mad_kind_and_module_is_mad_sink() {
+        assert_eq!(
+            classify_candidate(&cand("sink", "openpyxl.load_workbook", "file_read")),
+            Representability::MadSink
+        );
+    }
+
+    #[test]
+    fn sink_without_mad_kind_but_named_is_taint_model() {
+        // "deserialization" has no MaD sink kind, but "load_*" has a name prefix.
+        assert_eq!(
+            classify_candidate(&cand("sink", "pickle.loads", "deserialization")),
+            Representability::TaintModel
+        );
+    }
+
+    #[test]
+    fn source_and_sanitizer_are_taint_models() {
+        assert_eq!(classify_candidate(&cand("source", "request.get", "network_request")), Representability::TaintModel);
+        assert_eq!(classify_candidate(&cand("sanitizer", "html.escape", "xss")), Representability::TaintModel);
+    }
+
+    #[test]
+    fn unknown_kind_is_semantic_only() {
+        assert_eq!(classify_candidate(&cand("mystery", "foo.bar", "x")), Representability::SemanticOnly);
+    }
 }
 
 #[cfg(test)]
