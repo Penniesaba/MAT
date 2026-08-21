@@ -3,6 +3,7 @@ pub mod facts;
 mod agent;
 pub(crate) mod category;
 mod codeql;
+mod component;
 mod diff;
 mod discovery;
 mod fusion;
