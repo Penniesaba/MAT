@@ -14,10 +14,7 @@ pub use ids::{
 };
 pub use js_ts::{extract_js_ts_facts, JsTsDiagnostic, JsTsExtractionResult};
 pub use pipeline::extract_static_facts;
-pub(crate) use pipeline::extract_static_facts_with_catalog;
-// M3 Task 4 接线：两阶段 pipeline 阶段 1 用 `super::facts::load_catalog` 装载基线目录。
-#[allow(unused_imports)]
-pub(crate) use pipeline::load_catalog;
+pub(crate) use pipeline::{extract_static_facts_with_catalog, load_catalog};
 pub use python::extract_python_facts;
 pub use rust::{extract_rust_facts, RustExtractionResult};
 

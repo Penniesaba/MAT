@@ -42,6 +42,9 @@ pub fn gate_sink_candidate(candidate: &ModelCandidate, rules: &[PackageRule]) ->
 
 /// Match agent-proposed sink candidates against already-extracted call facts
 /// and produce `Sink` facts for the matching calls (warm re-injection).
+// 被两阶段编排（M3）取代：pipeline 现在把门控后的 sink 暂存进进化 catalog 并在阶段 2
+// 重跑 taint，而不是把 sink 事实回注入 facts。保留供测试。
+#[allow(dead_code)]
 pub fn sink_candidates_to_sink_facts(facts: &[Fact], candidates: &[ModelCandidate]) -> Vec<Fact> {
     let mut out = Vec::new();
     for fact in facts {
@@ -95,6 +98,8 @@ pub fn candidates_to_mad_sinks(candidates: &[ModelCandidate]) -> Vec<SinkModel> 
 }
 
 /// Convert a gated sink candidate into a low-confidence `learned` sink model.
+// 被两阶段编排（M3）取代：promote 分支直接写 `staged.models`。保留供测试。
+#[allow(dead_code)]
 pub fn candidate_to_sink_model(
     c: &ModelCandidate,
     scan_id: &str,

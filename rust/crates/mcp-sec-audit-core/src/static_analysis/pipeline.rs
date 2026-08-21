@@ -7,11 +7,17 @@ use std::{
 use anyhow::{Context, Result, bail};
 
 use crate::{
-    ConfigSnapshot, FusedFinding, ModelCandidate, RuleBook, RuntimeConfig, Severity,
-    StaticAnalysisResult, StaticAnalysisSummary, load_rulebook,
+    AgentOutput, ConfigSnapshot, Fact, FusedFinding, ModelCandidate, ModelCatalog,
+    RuleAnalysisResult, RuleBook, RuntimeConfig, Severity, StaticAnalysisResult,
+    StaticAnalysisSummary, TaintAnalysisResult, load_rulebook,
 };
+use crate::model::CodeqlOutput;
 
-use super::{agent, codeql, diff, fusion, learning, rule, taint, DiscoveredFile, discover_files};
+use super::{
+    agent, codeql, diff, fusion, learning, rule, taint, validate, DiscoveredFile,
+    discover_files,
+};
+use super::facts::load_catalog;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaticScanContext {
@@ -87,6 +93,9 @@ pub fn run_static_scan_with_progress(
         discovered_files: discovery.discovered_files,
     };
 
+    let base_catalog = load_catalog(&ctx)?;
+
+    // ---------- 阶段 1：基线运行 ----------
     let rule_results = {
         let _enter = tracing::info_span!(
             target: "mcp_sec_audit::rule",
@@ -111,7 +120,7 @@ pub fn run_static_scan_with_progress(
         results
     };
 
-    let (taint_results, all_facts) = {
+    let (taint_results_1, facts_1) = {
         let _enter = tracing::info_span!(
             target: "mcp_sec_audit::taint",
             "taint",
@@ -119,24 +128,24 @@ pub fn run_static_scan_with_progress(
         )
         .entered();
         progress(if effective_config.static_.taint.enabled {
-            "Running taint analysis..."
+            "Running taint analysis (phase 1)..."
         } else {
             "Taint analysis: skipped (disabled)"
         });
         let start = std::time::Instant::now();
-        let (results, facts) = taint::run(&ctx)?;
+        let (results, facts) = taint::run_with_catalog(&ctx, &base_catalog)?;
         tracing::info!(
             target: "mcp_sec_audit::taint",
             findings = results.len(),
             facts = facts.len(),
             elapsed_ms = start.elapsed().as_millis() as u64,
-            "taint analysis complete"
+            "taint analysis complete (phase 1)"
         );
         progress(&format!("Taint analysis done: {} findings", results.len()));
         (results, facts)
     };
 
-    let (agent_results, model_candidates) = {
+    let agent_output_1 = {
         let _enter = tracing::info_span!(
             target: "mcp_sec_audit::agent",
             "agent",
@@ -149,21 +158,19 @@ pub fn run_static_scan_with_progress(
             "Agent analysis: skipped (disabled)"
         });
         let start = std::time::Instant::now();
-        let agent_output = agent::run(&ctx)?;
-        let results = agent_output.findings;
-        let model_candidates = agent_output.model_candidates;
+        let output = agent::run(&ctx)?;
         tracing::info!(
             target: "mcp_sec_audit::agent",
-            findings = results.len(),
-            candidates = model_candidates.len(),
+            findings = output.findings.len(),
+            candidates = output.model_candidates.len(),
             elapsed_ms = start.elapsed().as_millis() as u64,
             "agent analysis complete"
         );
-        progress(&format!("Agent analysis done: {} findings", results.len()));
-        (results, model_candidates)
+        progress(&format!("Agent analysis done: {} findings", output.findings.len()));
+        output
     };
 
-    let codeql_output = {
+    let codeql_output_1 = {
         let _enter = tracing::info_span!(
             target: "mcp_sec_audit::codeql",
             "codeql",
@@ -171,18 +178,18 @@ pub fn run_static_scan_with_progress(
         )
         .entered();
         progress(if effective_config.static_.codeql.enabled {
-            "Running CodeQL analysis..."
+            "Running CodeQL analysis (phase 1)..."
         } else {
             "CodeQL analysis: skipped (disabled)"
         });
         let start = std::time::Instant::now();
-        let output = codeql::run(&ctx, &crate::models::default_catalog(), &mut progress)?;
+        let output = codeql::run(&ctx, &base_catalog, &mut progress)?;
         tracing::info!(
             target: "mcp_sec_audit::codeql",
             findings = output.results.len(),
             diagnostics = output.diagnostics.len(),
             elapsed_ms = start.elapsed().as_millis() as u64,
-            "codeql analysis complete"
+            "codeql analysis complete (phase 1)"
         );
         progress(&format!(
             "CodeQL analysis done: {} findings",
@@ -194,31 +201,215 @@ pub fn run_static_scan_with_progress(
         output
     };
 
-    // --- Phase 3: gate + warm re-injection (taint only) ---
+    // ---------- 门控（G1/G2）+ 试探性进化（G3） ----------
     let rules = crate::models::default_package_rules();
-    let hot_warm: Vec<ModelCandidate> = model_candidates.iter()
+    let gated: Vec<ModelCandidate> = agent_output_1.model_candidates.iter()
         .filter(|c| c.kind == "sink"
             && matches!(learning::gate_sink_candidate(c, &rules),
-                        learning::GateDecision::Hot | learning::GateDecision::Warm))
+                        learning::GateDecision::Hot | learning::GateDecision::Warm)
+            && matches!(diff::classify_candidate(c),
+                        diff::Representability::MadSink | diff::Representability::TaintModel))
         .cloned()
         .collect();
 
-    let mut facts = all_facts;
-    let mut taint_results = taint_results;
-    if !hot_warm.is_empty() {
-        tracing::info!(target: "mcp_sec_audit::learning", hot_warm = hot_warm.len(),
-            "warm re-injecting agent sink models");
-        let new_sink_facts = learning::sink_candidates_to_sink_facts(&facts, &hot_warm);
-        facts.extend(new_sink_facts);
-        if ctx.config.static_.taint.enabled {
-            let (t2, df2) = taint::run_taint_analysis(&facts, &ctx.config.static_.taint)?;
-            taint_results = t2;
-            facts.extend(df2);
-        }
-        // CodeQL warm re-run (MaD) is DEFERRED — see RULING R5-A / R4 RULING 11.
-    }
+    // 无进化可做时，直接以阶段 1 结果走融合+汇总，返回（不重跑阶段 2）。
+    let Some(staged) = learning::stage_catalog_evolution(&base_catalog, &gated) else {
+        progress("Differential: no evolution candidates — skipping phase 2");
+        return finish(&ctx, &targets, rule_results, taint_results_1, agent_output_1, codeql_output_1, facts_1, progress);
+    };
 
-    // --- Phase 4: fusion on the post-warm results ---
+    let diff_1 = diff::diff_lines(
+        rule_results.clone(),
+        taint_results_1.clone(),
+        agent_output_1.findings.clone(),
+        codeql_output_1.results.clone(),
+        ctx.config.fusion.line_proximity,
+    );
+
+    // 进化后的 catalog（内存中 base + staged）；写 staging 作可观测/回退锚点。
+    let mut evolved_catalog = base_catalog.clone();
+    evolved_catalog.merge(ModelCatalog::from_sinks(staged.models.clone()));
+    let staging_dir = std::env::temp_dir().join(format!("mcp-sec-audit-staging-{}", std::process::id()));
+    learning::write_staging(&staging_dir, &staged)?;
+
+    // 验证提示词 prompt'：阶段 1 的 a-only 全量作为「请复核」项（a1/a2 混沌，暂不区分）。
+    let recheck = build_recheck(&diff_1);
+    let prompt_extra = if recheck.is_empty() {
+        None
+    } else {
+        Some(agent::render_verification_prompt("", &recheck, &[]))
+    };
+
+    // ---------- 阶段 2：进化后重跑（rule 复用） ----------
+    let (taint_results_2, facts_2) = {
+        let _enter = tracing::info_span!(
+            target: "mcp_sec_audit::taint",
+            "taint2",
+            enabled = effective_config.static_.taint.enabled
+        )
+        .entered();
+        progress("Running taint analysis (phase 2)...");
+        let start = std::time::Instant::now();
+        let (results, facts) = taint::run_with_catalog(&ctx, &evolved_catalog)?;
+        tracing::info!(
+            target: "mcp_sec_audit::taint",
+            findings = results.len(),
+            facts = facts.len(),
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            "taint analysis complete (phase 2)"
+        );
+        progress(&format!("Taint phase 2 done: {} findings", results.len()));
+        (results, facts)
+    };
+
+    let agent_output_2 = {
+        let _enter = tracing::info_span!(
+            target: "mcp_sec_audit::agent",
+            "agent2",
+            enabled = effective_config.static_.agent.enabled
+        )
+        .entered();
+        progress("Running agent analysis (phase 2)...");
+        let start = std::time::Instant::now();
+        let output = agent::run_with_prompt(&ctx, prompt_extra.as_deref())?;
+        tracing::info!(
+            target: "mcp_sec_audit::agent",
+            findings = output.findings.len(),
+            candidates = output.model_candidates.len(),
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            "agent analysis complete (phase 2)"
+        );
+        progress(&format!("Agent phase 2 done: {} findings", output.findings.len()));
+        output
+    };
+
+    let codeql_output_2 = {
+        let _enter = tracing::info_span!(
+            target: "mcp_sec_audit::codeql",
+            "codeql2",
+            enabled = effective_config.static_.codeql.enabled
+        )
+        .entered();
+        progress("Running CodeQL analysis (phase 2)...");
+        let start = std::time::Instant::now();
+        let output = codeql::run(&ctx, &evolved_catalog, &mut progress)?;
+        tracing::info!(
+            target: "mcp_sec_audit::codeql",
+            findings = output.results.len(),
+            diagnostics = output.diagnostics.len(),
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            "codeql analysis complete (phase 2)"
+        );
+        progress(&format!("CodeQL phase 2 done: {} findings", output.results.len()));
+        for diag in &output.diagnostics {
+            tracing::warn!(target: "mcp_sec_audit::codeql", "{diag}");
+        }
+        output
+    };
+
+    let diff_2 = diff::diff_lines(
+        rule_results.clone(),
+        taint_results_2.clone(),
+        agent_output_2.findings.clone(),
+        codeql_output_2.results.clone(),
+        ctx.config.fusion.line_proximity,
+    );
+
+    // ---------- 迁移校验（L1）+ 固化/回退 ----------
+    let migration = validate::migrate(&diff_1, &diff_2);
+    tracing::info!(target: "mcp_sec_audit::validate", ?migration, "cross-stage migration");
+
+    let (final_taint, final_agent, final_codeql, final_facts) =
+        if migration.should_rollback() {
+            learning::rollback_staging(&staging_dir)?;
+            tracing::warn!(
+                target: "mcp_sec_audit::evolution",
+                "evolution polluted standard line — rolling back staged models"
+            );
+            (taint_results_1, agent_output_1, codeql_output_1, facts_1)
+        } else {
+            if let Some(dir) = &ctx.config.static_.learned_dir {
+                learning::write_learned_sinks(std::path::Path::new(dir), &staged.models)?;
+            }
+            tracing::info!(
+                target: "mcp_sec_audit::evolution",
+                learned = staged.models.len(),
+                "promoted staged models to learned"
+            );
+            (taint_results_2, agent_output_2, codeql_output_2, facts_2)
+        };
+
+    finish(&ctx, &targets, rule_results, final_taint, final_agent, final_codeql, final_facts, progress)
+}
+
+/// 从 a-only 分区构建「请复核」项：取每组首个标准线结果（codeql > rule > taint）
+/// 的 `file:line` + 类别。agent 结果无类别字段，故 a-only 组必有标准线成员。
+fn build_recheck(diff: &diff::LineDiff) -> Vec<agent::PromptFinding> {
+    diff.a_only
+        .iter()
+        .filter_map(|g| {
+            if let Some(c) = g.codeql_results.first()
+                && let Some(loc) = c.locations.first()
+            {
+                let file = Path::new(&loc.file)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(&loc.file);
+                return Some(agent::PromptFinding {
+                    location: format!("{file}:{}", loc.line),
+                    category: c.category.clone(),
+                    note: String::new(),
+                });
+            }
+            if let Some(r) = g.rule_results.first() {
+                let file = Path::new(&r.file)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(&r.file);
+                return Some(agent::PromptFinding {
+                    location: format!("{file}:{}", r.line),
+                    category: r.category.clone(),
+                    note: String::new(),
+                });
+            }
+            if let Some(t) = g.taint_results.first() {
+                let parts: Vec<&str> = t.sink_id.splitn(4, ':').collect();
+                let file = parts
+                    .get(2)
+                    .map(|s| {
+                        Path::new(s)
+                            .file_name()
+                            .and_then(|x| x.to_str())
+                            .unwrap_or(s)
+                    })
+                    .unwrap_or_default();
+                let line = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
+                return Some(agent::PromptFinding {
+                    location: format!("{file}:{line}"),
+                    category: t.sink_kind.clone(),
+                    note: String::new(),
+                });
+            }
+            None
+        })
+        .collect()
+}
+
+/// 两阶段进化的收尾：融合 + 最终分区日志 + 汇总 + 构造结果。
+/// 冷持久化由调用方（promote 分支）承担，这里不重复写 learned。
+fn finish(
+    ctx: &StaticScanContext,
+    targets: &[PathBuf],
+    rule_results: Vec<RuleAnalysisResult>,
+    taint_results: Vec<TaintAnalysisResult>,
+    agent_output: AgentOutput,
+    codeql_output: CodeqlOutput,
+    facts: Vec<Fact>,
+    mut progress: impl FnMut(&str),
+) -> Result<StaticAnalysisResult> {
+    let agent_results = agent_output.findings;
+    let model_candidates = agent_output.model_candidates;
+
     let fused_findings = {
         let _enter = tracing::info_span!(target: "mcp_sec_audit::fusion", "fusion").entered();
         progress("Fusing results...");
@@ -240,7 +431,7 @@ pub fn run_static_scan_with_progress(
         findings
     };
 
-    // --- Phase 4b: differential partition (v4.0) ---
+    // 最终报告的分区（对最终选定的阶段结果）。
     let line_diff = diff::diff_lines(
         rule_results.clone(),
         taint_results.clone(),
@@ -262,24 +453,12 @@ pub fn run_static_scan_with_progress(
         "differential partition"
     );
 
-    // --- Phase 5: cold persistence ---
-    if let Some(dir) = &ctx.config.static_.learned_dir {
-        // Only Hot/Warm (gated) sinks are persisted — a Cold/agent-only claim
-        // is never written to learned/, so it can't be re-admitted next run.
-        let models: Vec<_> = hot_warm.iter()
-            .filter_map(|c| learning::candidate_to_sink_model(c, "scan", "agent"))
-            .collect();
-        learning::write_learned_sinks(std::path::Path::new(dir), &models)?;
-        tracing::info!(target: "mcp_sec_audit::learning", learned = models.len(), "persisted learned models");
-    }
-
-    // Count fused findings that involve the codeql line (solo or corroborated).
     let codeql_fused_count = fused_findings.iter()
         .filter(|f| f.supported_by.contains(&"codeql".to_string()))
         .count();
 
     let summary = StaticAnalysisSummary {
-        target: target_label(&targets),
+        target: target_label(targets),
         fact_count: facts.len(),
         rule_result_count: rule_results.len(),
         taint_result_count: taint_results.len(),
@@ -305,8 +484,8 @@ pub fn run_static_scan_with_progress(
         fused_findings,
         summary,
         config_snapshot: ConfigSnapshot {
-            runtime: effective_config,
-            rulebook_paths: ctx.rulebook_paths,
+            runtime: ctx.config.clone(),
+            rulebook_paths: ctx.rulebook_paths.clone(),
         },
     })
 }

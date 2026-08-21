@@ -12,8 +12,6 @@ use provider::{AgentProvider, AgentRunConfig, CliAgentProvider};
 
 // 两阶段编排（M3 Task 4）在 pipeline 里渲染 prompt' 并调用 run_with_prompt；
 // 故把 prompt 的验证提示词原语 re-export 到 agent 模块面。
-// M3 Task 4 接线：pipeline 经 agent::render_verification_prompt / agent::PromptFinding 使用。
-#[allow(unused_imports)]
 pub(crate) use prompt::{PromptFinding, render_verification_prompt};
 
 /// Hardcoded constants (not user-configurable).

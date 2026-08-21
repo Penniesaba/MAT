@@ -13,6 +13,8 @@ use super::pipeline::StaticScanContext;
 
 /// Taint line entry point. Extracts facts from source files (default catalog),
 /// builds program graph, runs BFS propagation, returns results + all facts.
+// 两阶段编排（M3）后 pipeline 阶段 1/2 改用 run_with_catalog；本函数保留为单次入口。
+#[allow(dead_code)]
 pub fn run(ctx: &StaticScanContext) -> Result<(Vec<TaintAnalysisResult>, Vec<Fact>)> {
     if !ctx.config.static_.taint.enabled {
         return Ok((Vec::new(), Vec::new()));
@@ -23,8 +25,6 @@ pub fn run(ctx: &StaticScanContext) -> Result<(Vec<TaintAnalysisResult>, Vec<Fac
 }
 
 /// 用给定 catalog（阶段 2 喂进化后的）跑 taint：抽取 facts + 跑分析。
-// M3 Task 4 接线：两阶段 pipeline 阶段 2 调用。
-#[allow(dead_code)]
 pub(crate) fn run_with_catalog(
     ctx: &StaticScanContext,
     catalog: &ModelCatalog,

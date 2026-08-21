@@ -45,8 +45,6 @@ pub(crate) fn load_catalog(ctx: &StaticScanContext) -> Result<ModelCatalog> {
 }
 
 /// 用给定的 catalog（而非重新装载）抽取 facts —— 阶段 2 用它喂进化后的 catalog。
-// M3 Task 4 接线：两阶段编排阶段 2 经 taint::run_with_catalog 调用。
-#[allow(dead_code)]
 pub(crate) fn extract_static_facts_with_catalog(
     ctx: &StaticScanContext,
     catalog: &ModelCatalog,
