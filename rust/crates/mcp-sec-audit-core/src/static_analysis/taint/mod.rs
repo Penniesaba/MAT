@@ -1,12 +1,12 @@
-pub mod graph;
 pub mod builder;
+pub mod graph;
 pub mod propagation;
 pub mod result;
 
-use anyhow::Result;
 use crate::config::StaticTaintConfig;
 use crate::model::{Fact, TaintAnalysisResult};
 use crate::models::ModelCatalog;
+use anyhow::Result;
 
 use super::facts::{extract_static_facts, extract_static_facts_with_catalog};
 use super::pipeline::StaticScanContext;
@@ -43,8 +43,7 @@ fn run_taint_with_facts(
     ctx: &StaticScanContext,
     facts: &[Fact],
 ) -> Result<(Vec<TaintAnalysisResult>, Vec<Fact>)> {
-    let (results, dataflow_facts) =
-        run_taint_analysis(facts, &ctx.config.static_.taint)?;
+    let (results, dataflow_facts) = run_taint_analysis(facts, &ctx.config.static_.taint)?;
 
     let mut all_facts = facts.to_vec();
     all_facts.extend(dataflow_facts);
@@ -128,40 +127,92 @@ mod tests {
 
         vec![
             Fact::Function(FunctionFact {
-                base: FactBase { id: func_id.clone(), file: file.clone(), line: 1, extractor: "test".into() },
-                language: "python".into(), name: "run_cmd".into(),
-                qualified_name: "run_cmd".into(), end_line: 5,
-                params: vec![ParamInfo { name: "cmd".into(), annotation: Some("str".into()), default: None }],
-                decorators: vec!["@mcp.tool()".into()], docstring: None,
-                return_type: None, enclosing_class: None,
+                base: FactBase {
+                    id: func_id.clone(),
+                    file: file.clone(),
+                    line: 1,
+                    extractor: "test".into(),
+                },
+                language: "python".into(),
+                name: "run_cmd".into(),
+                qualified_name: "run_cmd".into(),
+                end_line: 5,
+                params: vec![ParamInfo {
+                    name: "cmd".into(),
+                    annotation: Some("str".into()),
+                    default: None,
+                }],
+                decorators: vec!["@mcp.tool()".into()],
+                docstring: None,
+                return_type: None,
+                enclosing_class: None,
             }),
             Fact::Entrypoint(EntryPointFact {
-                base: FactBase { id: entry_id, file: file.clone(), line: 1, extractor: "test".into() },
-                kind: EntryPointKind::McpTool, name: "run_cmd".into(),
+                base: FactBase {
+                    id: entry_id,
+                    file: file.clone(),
+                    line: 1,
+                    extractor: "test".into(),
+                },
+                kind: EntryPointKind::McpTool,
+                name: "run_cmd".into(),
                 function_id: func_id.clone(),
-                evidence: Some(EntryPointEvidence { kind: "decorator".into(), text: "@mcp.tool()".into() }),
-                params: vec!["cmd".into()], confidence: Confidence::High,
+                evidence: Some(EntryPointEvidence {
+                    kind: "decorator".into(),
+                    text: "@mcp.tool()".into(),
+                }),
+                params: vec!["cmd".into()],
+                confidence: Confidence::High,
             }),
             Fact::Source(SourceFact {
-                base: FactBase { id: source_id.clone(), file: file.clone(), line: 1, extractor: "test".into() },
-                kind: "mcp_tool_parameter".into(), function_id: func_id.clone(),
-                name: "cmd".into(), confidence: Confidence::High,
+                base: FactBase {
+                    id: source_id.clone(),
+                    file: file.clone(),
+                    line: 1,
+                    extractor: "test".into(),
+                },
+                kind: "mcp_tool_parameter".into(),
+                function_id: func_id.clone(),
+                name: "cmd".into(),
+                call_id: None,
+                confidence: Confidence::High,
             }),
             Fact::Call(CallFact {
-                base: FactBase { id: call_id.clone(), file: file.clone(), line: 3, extractor: "test".into() },
-                caller: func_id, callee: "os.system".into(),
+                base: FactBase {
+                    id: call_id.clone(),
+                    file: file.clone(),
+                    line: 3,
+                    extractor: "test".into(),
+                },
+                caller: func_id,
+                callee: "os.system".into(),
                 normalized_callee: Some("os.system".into()),
-                column: Some(0), end_line: Some(3),
+                column: Some(0),
+                end_line: Some(3),
                 snippet: "os.system(cmd)".into(),
-                args: vec![CallArg { index: 0, expr: "cmd".into(), kind: "positional".into() }],
-                kwargs: std::collections::BTreeMap::new(), resolution: None,
+                args: vec![CallArg {
+                    index: 0,
+                    expr: "cmd".into(),
+                    kind: "positional".into(),
+                }],
+                kwargs: std::collections::BTreeMap::new(),
+                resolution: None,
             }),
             Fact::Sink(SinkFact {
-                base: FactBase { id: sink_id.clone(), file: file.clone(), line: 3, extractor: "test".into() },
-                call_id: call_id.clone(), category: "command_execution".into(),
-                rule_id: "python.command_execution".into(), sink_name: "os.system".into(),
-                severity_base: Severity::Critical, reason: "dangerous".into(),
-                conditions: std::collections::BTreeMap::new(), confidence: Confidence::High,
+                base: FactBase {
+                    id: sink_id.clone(),
+                    file: file.clone(),
+                    line: 3,
+                    extractor: "test".into(),
+                },
+                call_id: call_id.clone(),
+                category: "command_execution".into(),
+                rule_id: "python.command_execution".into(),
+                sink_name: "os.system".into(),
+                severity_base: Severity::Critical,
+                reason: "dangerous".into(),
+                conditions: std::collections::BTreeMap::new(),
+                confidence: Confidence::High,
             }),
         ]
     }
@@ -172,7 +223,10 @@ mod tests {
         let config = default_config();
         let (results, dataflows) = run_taint_analysis(&facts, &config).expect("taint analysis");
 
-        assert!(!results.is_empty(), "Expected taint results for direct source->sink");
+        assert!(
+            !results.is_empty(),
+            "Expected taint results for direct source->sink"
+        );
         let r = &results[0];
         assert!(r.source_id.contains("cmd"));
         assert!(r.sink_id.contains("command_execution"));
@@ -194,61 +248,145 @@ mod tests {
 
         let facts = vec![
             Fact::Function(FunctionFact {
-                base: FactBase { id: func_id.clone(), file: file.clone(), line: 1, extractor: "t".into() },
-                language: "python".into(), name: "handler".into(),
-                qualified_name: "handler".into(), end_line: 6,
-                params: vec![ParamInfo { name: "cmd".into(), annotation: None, default: None }],
-                decorators: vec!["@mcp.tool()".into()], docstring: None, return_type: None, enclosing_class: None,
+                base: FactBase {
+                    id: func_id.clone(),
+                    file: file.clone(),
+                    line: 1,
+                    extractor: "t".into(),
+                },
+                language: "python".into(),
+                name: "handler".into(),
+                qualified_name: "handler".into(),
+                end_line: 6,
+                params: vec![ParamInfo {
+                    name: "cmd".into(),
+                    annotation: None,
+                    default: None,
+                }],
+                decorators: vec!["@mcp.tool()".into()],
+                docstring: None,
+                return_type: None,
+                enclosing_class: None,
             }),
             Fact::Function(FunctionFact {
-                base: FactBase { id: helper_id.clone(), file: file.clone(), line: 7, extractor: "t".into() },
-                language: "python".into(), name: "helper".into(),
-                qualified_name: "helper".into(), end_line: 10,
-                params: vec![ParamInfo { name: "command".into(), annotation: None, default: None }],
-                decorators: vec![], docstring: None, return_type: None, enclosing_class: None,
+                base: FactBase {
+                    id: helper_id.clone(),
+                    file: file.clone(),
+                    line: 7,
+                    extractor: "t".into(),
+                },
+                language: "python".into(),
+                name: "helper".into(),
+                qualified_name: "helper".into(),
+                end_line: 10,
+                params: vec![ParamInfo {
+                    name: "command".into(),
+                    annotation: None,
+                    default: None,
+                }],
+                decorators: vec![],
+                docstring: None,
+                return_type: None,
+                enclosing_class: None,
             }),
             Fact::Entrypoint(EntryPointFact {
-                base: FactBase { id: "entry:s.py:handler".into(), file: file.clone(), line: 1, extractor: "t".into() },
-                kind: EntryPointKind::McpTool, name: "handler".into(),
+                base: FactBase {
+                    id: "entry:s.py:handler".into(),
+                    file: file.clone(),
+                    line: 1,
+                    extractor: "t".into(),
+                },
+                kind: EntryPointKind::McpTool,
+                name: "handler".into(),
                 function_id: func_id.clone(),
-                evidence: Some(EntryPointEvidence { kind: "decorator".into(), text: "@mcp.tool()".into() }),
-                params: vec!["cmd".into()], confidence: Confidence::High,
+                evidence: Some(EntryPointEvidence {
+                    kind: "decorator".into(),
+                    text: "@mcp.tool()".into(),
+                }),
+                params: vec!["cmd".into()],
+                confidence: Confidence::High,
             }),
             Fact::Source(SourceFact {
-                base: FactBase { id: "source:s.py:handler:cmd".into(), file: file.clone(), line: 1, extractor: "t".into() },
-                kind: "mcp_tool_parameter".into(), function_id: func_id.clone(),
-                name: "cmd".into(), confidence: Confidence::High,
+                base: FactBase {
+                    id: "source:s.py:handler:cmd".into(),
+                    file: file.clone(),
+                    line: 1,
+                    extractor: "t".into(),
+                },
+                kind: "mcp_tool_parameter".into(),
+                function_id: func_id.clone(),
+                name: "cmd".into(),
+                call_id: None,
+                confidence: Confidence::High,
             }),
             // handler -> helper(cmd)
             Fact::Call(CallFact {
-                base: FactBase { id: call1_id.clone(), file: file.clone(), line: 4, extractor: "t".into() },
-                caller: func_id.clone(), callee: "helper".into(),
+                base: FactBase {
+                    id: call1_id.clone(),
+                    file: file.clone(),
+                    line: 4,
+                    extractor: "t".into(),
+                },
+                caller: func_id.clone(),
+                callee: "helper".into(),
                 normalized_callee: Some("helper".into()),
-                column: Some(0), end_line: Some(4), snippet: "helper(cmd)".into(),
-                args: vec![CallArg { index: 0, expr: "cmd".into(), kind: "positional".into() }],
-                kwargs: std::collections::BTreeMap::new(), resolution: None,
+                column: Some(0),
+                end_line: Some(4),
+                snippet: "helper(cmd)".into(),
+                args: vec![CallArg {
+                    index: 0,
+                    expr: "cmd".into(),
+                    kind: "positional".into(),
+                }],
+                kwargs: std::collections::BTreeMap::new(),
+                resolution: None,
             }),
             // helper -> os.system(command)
             Fact::Call(CallFact {
-                base: FactBase { id: call2_id.clone(), file: file.clone(), line: 8, extractor: "t".into() },
-                caller: helper_id.clone(), callee: "os.system".into(),
+                base: FactBase {
+                    id: call2_id.clone(),
+                    file: file.clone(),
+                    line: 8,
+                    extractor: "t".into(),
+                },
+                caller: helper_id.clone(),
+                callee: "os.system".into(),
                 normalized_callee: Some("os.system".into()),
-                column: Some(0), end_line: Some(8), snippet: "os.system(command)".into(),
-                args: vec![CallArg { index: 0, expr: "command".into(), kind: "positional".into() }],
-                kwargs: std::collections::BTreeMap::new(), resolution: None,
+                column: Some(0),
+                end_line: Some(8),
+                snippet: "os.system(command)".into(),
+                args: vec![CallArg {
+                    index: 0,
+                    expr: "command".into(),
+                    kind: "positional".into(),
+                }],
+                kwargs: std::collections::BTreeMap::new(),
+                resolution: None,
             }),
             Fact::Sink(SinkFact {
-                base: FactBase { id: sink_id.clone(), file: file.clone(), line: 8, extractor: "t".into() },
-                call_id: call2_id, category: "command_execution".into(),
-                rule_id: "python.command_execution".into(), sink_name: "os.system".into(),
-                severity_base: Severity::Critical, reason: "dangerous".into(),
-                conditions: std::collections::BTreeMap::new(), confidence: Confidence::High,
+                base: FactBase {
+                    id: sink_id.clone(),
+                    file: file.clone(),
+                    line: 8,
+                    extractor: "t".into(),
+                },
+                call_id: call2_id,
+                category: "command_execution".into(),
+                rule_id: "python.command_execution".into(),
+                sink_name: "os.system".into(),
+                severity_base: Severity::Critical,
+                reason: "dangerous".into(),
+                conditions: std::collections::BTreeMap::new(),
+                confidence: Confidence::High,
             }),
         ];
 
         let config = default_config();
         let (results, _) = run_taint_analysis(&facts, &config).expect("taint analysis");
-        assert!(!results.is_empty(), "Expected taint results for one-hop chain");
+        assert!(
+            !results.is_empty(),
+            "Expected taint results for one-hop chain"
+        );
     }
 
     #[test]
@@ -277,49 +415,113 @@ mod tests {
 
         let facts = vec![
             Fact::Function(FunctionFact {
-                base: FactBase { id: func_id.clone(), file: file.clone(), line: 1, extractor: "t".into() },
-                language: "python".into(), name: "handler".into(),
-                qualified_name: "handler".into(), end_line: 6,
-                params: vec![ParamInfo { name: "cmd".into(), annotation: None, default: None }],
-                decorators: vec!["@mcp.tool()".into()], docstring: None, return_type: None, enclosing_class: None,
+                base: FactBase {
+                    id: func_id.clone(),
+                    file: file.clone(),
+                    line: 1,
+                    extractor: "t".into(),
+                },
+                language: "python".into(),
+                name: "handler".into(),
+                qualified_name: "handler".into(),
+                end_line: 6,
+                params: vec![ParamInfo {
+                    name: "cmd".into(),
+                    annotation: None,
+                    default: None,
+                }],
+                decorators: vec!["@mcp.tool()".into()],
+                docstring: None,
+                return_type: None,
+                enclosing_class: None,
             }),
             Fact::Entrypoint(EntryPointFact {
-                base: FactBase { id: "entry:s.py:handler".into(), file: file.clone(), line: 1, extractor: "t".into() },
-                kind: EntryPointKind::McpTool, name: "handler".into(),
+                base: FactBase {
+                    id: "entry:s.py:handler".into(),
+                    file: file.clone(),
+                    line: 1,
+                    extractor: "t".into(),
+                },
+                kind: EntryPointKind::McpTool,
+                name: "handler".into(),
                 function_id: func_id.clone(),
-                evidence: Some(EntryPointEvidence { kind: "decorator".into(), text: "@mcp.tool()".into() }),
-                params: vec!["cmd".into()], confidence: Confidence::High,
+                evidence: Some(EntryPointEvidence {
+                    kind: "decorator".into(),
+                    text: "@mcp.tool()".into(),
+                }),
+                params: vec!["cmd".into()],
+                confidence: Confidence::High,
             }),
             Fact::Source(SourceFact {
-                base: FactBase { id: "source:s.py:handler:cmd".into(), file: file.clone(), line: 1, extractor: "t".into() },
-                kind: "mcp_tool_parameter".into(), function_id: func_id.clone(),
-                name: "cmd".into(), confidence: Confidence::High,
+                base: FactBase {
+                    id: "source:s.py:handler:cmd".into(),
+                    file: file.clone(),
+                    line: 1,
+                    extractor: "t".into(),
+                },
+                kind: "mcp_tool_parameter".into(),
+                function_id: func_id.clone(),
+                name: "cmd".into(),
+                call_id: None,
+                confidence: Confidence::High,
             }),
             Fact::Assign(AssignFact {
-                base: FactBase { id: "assign:s.py:4:command".into(), file: file.clone(), line: 4, extractor: "t".into() },
-                function_id: func_id.clone(), target: "command".into(),
-                value: "cmd".into(), snippet: "command = cmd".into(),
+                base: FactBase {
+                    id: "assign:s.py:4:command".into(),
+                    file: file.clone(),
+                    line: 4,
+                    extractor: "t".into(),
+                },
+                function_id: func_id.clone(),
+                target: "command".into(),
+                value: "cmd".into(),
+                snippet: "command = cmd".into(),
             }),
             Fact::Call(CallFact {
-                base: FactBase { id: call_id.clone(), file: file.clone(), line: 5, extractor: "t".into() },
-                caller: func_id.clone(), callee: "os.system".into(),
+                base: FactBase {
+                    id: call_id.clone(),
+                    file: file.clone(),
+                    line: 5,
+                    extractor: "t".into(),
+                },
+                caller: func_id.clone(),
+                callee: "os.system".into(),
                 normalized_callee: Some("os.system".into()),
-                column: Some(0), end_line: Some(5), snippet: "os.system(command)".into(),
-                args: vec![CallArg { index: 0, expr: "command".into(), kind: "positional".into() }],
-                kwargs: std::collections::BTreeMap::new(), resolution: None,
+                column: Some(0),
+                end_line: Some(5),
+                snippet: "os.system(command)".into(),
+                args: vec![CallArg {
+                    index: 0,
+                    expr: "command".into(),
+                    kind: "positional".into(),
+                }],
+                kwargs: std::collections::BTreeMap::new(),
+                resolution: None,
             }),
             Fact::Sink(SinkFact {
-                base: FactBase { id: sink_id.clone(), file: file.clone(), line: 5, extractor: "t".into() },
-                call_id, category: "command_execution".into(),
-                rule_id: "python.command_execution".into(), sink_name: "os.system".into(),
-                severity_base: Severity::Critical, reason: "dangerous".into(),
-                conditions: std::collections::BTreeMap::new(), confidence: Confidence::High,
+                base: FactBase {
+                    id: sink_id.clone(),
+                    file: file.clone(),
+                    line: 5,
+                    extractor: "t".into(),
+                },
+                call_id,
+                category: "command_execution".into(),
+                rule_id: "python.command_execution".into(),
+                sink_name: "os.system".into(),
+                severity_base: Severity::Critical,
+                reason: "dangerous".into(),
+                conditions: std::collections::BTreeMap::new(),
+                confidence: Confidence::High,
             }),
         ];
 
         let config = default_config();
         let (results, _) = run_taint_analysis(&facts, &config).expect("taint analysis");
-        assert!(!results.is_empty(), "Expected taint results for assignment alias");
+        assert!(
+            !results.is_empty(),
+            "Expected taint results for assignment alias"
+        );
     }
 
     #[test]
@@ -332,44 +534,101 @@ mod tests {
 
         let facts = vec![
             Fact::Function(FunctionFact {
-                base: FactBase { id: func_id.clone(), file: file.clone(), line: 1, extractor: "test".into() },
-                language: "javascript".into(), name: "run_handler".into(),
-                qualified_name: "run_handler".into(), end_line: 5,
-                params: vec![ParamInfo { name: "params".into(), annotation: None, default: None }],
-                decorators: vec![], docstring: None, return_type: None, enclosing_class: None,
+                base: FactBase {
+                    id: func_id.clone(),
+                    file: file.clone(),
+                    line: 1,
+                    extractor: "test".into(),
+                },
+                language: "javascript".into(),
+                name: "run_handler".into(),
+                qualified_name: "run_handler".into(),
+                end_line: 5,
+                params: vec![ParamInfo {
+                    name: "params".into(),
+                    annotation: None,
+                    default: None,
+                }],
+                decorators: vec![],
+                docstring: None,
+                return_type: None,
+                enclosing_class: None,
             }),
             Fact::Entrypoint(EntryPointFact {
-                base: FactBase { id: "entry:server.js:run".into(), file: file.clone(), line: 1, extractor: "test".into() },
-                kind: EntryPointKind::McpTool, name: "run".into(),
+                base: FactBase {
+                    id: "entry:server.js:run".into(),
+                    file: file.clone(),
+                    line: 1,
+                    extractor: "test".into(),
+                },
+                kind: EntryPointKind::McpTool,
+                name: "run".into(),
                 function_id: func_id.clone(),
-                evidence: Some(EntryPointEvidence { kind: "sdk_call".into(), text: "server.tool".into() }),
-                params: vec!["params".into()], confidence: Confidence::High,
+                evidence: Some(EntryPointEvidence {
+                    kind: "sdk_call".into(),
+                    text: "server.tool".into(),
+                }),
+                params: vec!["params".into()],
+                confidence: Confidence::High,
             }),
             Fact::Source(SourceFact {
-                base: FactBase { id: "source:server.js:run_handler:params".into(), file: file.clone(), line: 1, extractor: "test".into() },
-                kind: "mcp_tool_parameter".into(), function_id: func_id.clone(),
-                name: "params".into(), confidence: Confidence::High,
+                base: FactBase {
+                    id: "source:server.js:run_handler:params".into(),
+                    file: file.clone(),
+                    line: 1,
+                    extractor: "test".into(),
+                },
+                kind: "mcp_tool_parameter".into(),
+                function_id: func_id.clone(),
+                name: "params".into(),
+                call_id: None,
+                confidence: Confidence::High,
             }),
             Fact::Call(CallFact {
-                base: FactBase { id: call_id.clone(), file: file.clone(), line: 3, extractor: "test".into() },
-                caller: func_id.clone(), callee: "exec".into(),
+                base: FactBase {
+                    id: call_id.clone(),
+                    file: file.clone(),
+                    line: 3,
+                    extractor: "test".into(),
+                },
+                caller: func_id.clone(),
+                callee: "exec".into(),
                 normalized_callee: Some("exec".into()),
-                column: Some(0), end_line: Some(3), snippet: "exec(params.command)".into(),
-                args: vec![CallArg { index: 0, expr: "params.command".into(), kind: "positional".into() }],
-                kwargs: std::collections::BTreeMap::new(), resolution: None,
+                column: Some(0),
+                end_line: Some(3),
+                snippet: "exec(params.command)".into(),
+                args: vec![CallArg {
+                    index: 0,
+                    expr: "params.command".into(),
+                    kind: "positional".into(),
+                }],
+                kwargs: std::collections::BTreeMap::new(),
+                resolution: None,
             }),
             Fact::Sink(SinkFact {
-                base: FactBase { id: sink_id.clone(), file: file.clone(), line: 3, extractor: "test".into() },
-                call_id, category: "command_execution".into(),
-                rule_id: "javascript.command_execution".into(), sink_name: "exec".into(),
-                severity_base: Severity::Critical, reason: "dangerous".into(),
-                conditions: std::collections::BTreeMap::new(), confidence: Confidence::High,
+                base: FactBase {
+                    id: sink_id.clone(),
+                    file: file.clone(),
+                    line: 3,
+                    extractor: "test".into(),
+                },
+                call_id,
+                category: "command_execution".into(),
+                rule_id: "javascript.command_execution".into(),
+                sink_name: "exec".into(),
+                severity_base: Severity::Critical,
+                reason: "dangerous".into(),
+                conditions: std::collections::BTreeMap::new(),
+                confidence: Confidence::High,
             }),
         ];
 
         let config = default_config();
         let (results, _) = run_taint_analysis(&facts, &config).expect("taint analysis");
-        assert!(!results.is_empty(), "Expected taint results for JS source→sink");
+        assert!(
+            !results.is_empty(),
+            "Expected taint results for JS source→sink"
+        );
     }
 
     #[test]
@@ -382,44 +641,101 @@ mod tests {
 
         let facts = vec![
             Fact::Function(FunctionFact {
-                base: FactBase { id: func_id.clone(), file: file.clone(), line: 1, extractor: "test".into() },
-                language: "rust".into(), name: "my_tool".into(),
-                qualified_name: "my_tool".into(), end_line: 5,
-                params: vec![ParamInfo { name: "params".into(), annotation: Some("Value".into()), default: None }],
-                decorators: vec!["#[tool]".into()], docstring: None, return_type: None, enclosing_class: None,
+                base: FactBase {
+                    id: func_id.clone(),
+                    file: file.clone(),
+                    line: 1,
+                    extractor: "test".into(),
+                },
+                language: "rust".into(),
+                name: "my_tool".into(),
+                qualified_name: "my_tool".into(),
+                end_line: 5,
+                params: vec![ParamInfo {
+                    name: "params".into(),
+                    annotation: Some("Value".into()),
+                    default: None,
+                }],
+                decorators: vec!["#[tool]".into()],
+                docstring: None,
+                return_type: None,
+                enclosing_class: None,
             }),
             Fact::Entrypoint(EntryPointFact {
-                base: FactBase { id: "entry:src/main.rs:my_tool".into(), file: file.clone(), line: 1, extractor: "test".into() },
-                kind: EntryPointKind::McpTool, name: "my_tool".into(),
+                base: FactBase {
+                    id: "entry:src/main.rs:my_tool".into(),
+                    file: file.clone(),
+                    line: 1,
+                    extractor: "test".into(),
+                },
+                kind: EntryPointKind::McpTool,
+                name: "my_tool".into(),
                 function_id: func_id.clone(),
-                evidence: Some(EntryPointEvidence { kind: "attribute_macro".into(), text: "#[tool]".into() }),
-                params: vec!["params".into()], confidence: Confidence::High,
+                evidence: Some(EntryPointEvidence {
+                    kind: "attribute_macro".into(),
+                    text: "#[tool]".into(),
+                }),
+                params: vec!["params".into()],
+                confidence: Confidence::High,
             }),
             Fact::Source(SourceFact {
-                base: FactBase { id: "source:src/main.rs:my_tool:params".into(), file: file.clone(), line: 1, extractor: "test".into() },
-                kind: "mcp_tool_parameter".into(), function_id: func_id.clone(),
-                name: "params".into(), confidence: Confidence::High,
+                base: FactBase {
+                    id: "source:src/main.rs:my_tool:params".into(),
+                    file: file.clone(),
+                    line: 1,
+                    extractor: "test".into(),
+                },
+                kind: "mcp_tool_parameter".into(),
+                function_id: func_id.clone(),
+                name: "params".into(),
+                call_id: None,
+                confidence: Confidence::High,
             }),
             Fact::Call(CallFact {
-                base: FactBase { id: call_id.clone(), file: file.clone(), line: 3, extractor: "test".into() },
-                caller: func_id.clone(), callee: "Command::arg".into(),
+                base: FactBase {
+                    id: call_id.clone(),
+                    file: file.clone(),
+                    line: 3,
+                    extractor: "test".into(),
+                },
+                caller: func_id.clone(),
+                callee: "Command::arg".into(),
                 normalized_callee: Some("std::process::Command::arg".into()),
-                column: Some(0), end_line: Some(3), snippet: "Command::new(\"sh\").arg(params)".into(),
-                args: vec![CallArg { index: 0, expr: "params".into(), kind: "positional".into() }],
-                kwargs: std::collections::BTreeMap::new(), resolution: None,
+                column: Some(0),
+                end_line: Some(3),
+                snippet: "Command::new(\"sh\").arg(params)".into(),
+                args: vec![CallArg {
+                    index: 0,
+                    expr: "params".into(),
+                    kind: "positional".into(),
+                }],
+                kwargs: std::collections::BTreeMap::new(),
+                resolution: None,
             }),
             Fact::Sink(SinkFact {
-                base: FactBase { id: sink_id.clone(), file: file.clone(), line: 3, extractor: "test".into() },
-                call_id, category: "command_execution".into(),
-                rule_id: "rust.command_execution".into(), sink_name: "std::process::Command::new".into(),
-                severity_base: Severity::Critical, reason: "dangerous".into(),
-                conditions: std::collections::BTreeMap::new(), confidence: Confidence::High,
+                base: FactBase {
+                    id: sink_id.clone(),
+                    file: file.clone(),
+                    line: 3,
+                    extractor: "test".into(),
+                },
+                call_id,
+                category: "command_execution".into(),
+                rule_id: "rust.command_execution".into(),
+                sink_name: "std::process::Command::new".into(),
+                severity_base: Severity::Critical,
+                reason: "dangerous".into(),
+                conditions: std::collections::BTreeMap::new(),
+                confidence: Confidence::High,
             }),
         ];
 
         let config = default_config();
         let (results, _) = run_taint_analysis(&facts, &config).expect("taint analysis");
-        assert!(!results.is_empty(), "Expected taint results for Rust source→sink");
+        assert!(
+            !results.is_empty(),
+            "Expected taint results for Rust source→sink"
+        );
     }
 
     #[test]
@@ -428,7 +744,7 @@ mod tests {
         use crate::static_analysis::DiscoveredFile;
 
         let ctx = StaticScanContext {
-            config: RuntimeConfig::default(),  // taint disabled by default
+            config: RuntimeConfig::default(), // taint disabled by default
             rulebook_paths: Vec::new(),
             discovered_files: Vec::<DiscoveredFile>::new(),
         };
@@ -455,11 +771,14 @@ def read_log(filename: str):
     return content
 "#;
 
+        let catalog = crate::models::default_catalog();
         let extracted = extract_python_facts(
             Path::new("/repo"),
             Path::new("/repo/server.py"),
             source,
-            crate::models::default_catalog().sinks_for_language("python"),
+            catalog.sinks_for_language("python"),
+            catalog.sources_for_language("python"),
+            catalog.sanitizers_for_language("python"),
         );
         assert!(extracted.diagnostics.is_empty());
 
@@ -473,6 +792,77 @@ def read_log(filename: str):
         assert!(
             sink_ids.iter().any(|id| id.contains("file_read")),
             "expected a file_read taint result for read_log; got {sink_ids:?}"
+        );
+    }
+
+    #[test]
+    fn sanitizer_truncates_taint_for_neutralized_sink() {
+        use crate::static_analysis::facts::extract_python_facts;
+        use std::path::Path;
+
+        // `safe = shlex.quote(cmd)` sanitizes `cmd`, so the command_execution
+        // sink must NOT fire — this is the "补 sanitizer = 补精度" lever.
+        let source = r#"
+import subprocess
+import shlex
+
+@mcp.tool()
+def run_cmd(cmd: str):
+    safe = shlex.quote(cmd)
+    subprocess.run(safe)
+"#;
+
+        let catalog = crate::models::default_catalog();
+        let extracted = extract_python_facts(
+            Path::new("/repo"),
+            Path::new("/repo/server.py"),
+            source,
+            catalog.sinks_for_language("python"),
+            catalog.sources_for_language("python"),
+            catalog.sanitizers_for_language("python"),
+        );
+        assert!(extracted.diagnostics.is_empty());
+
+        let config = default_config();
+        let (results, _) = run_taint_analysis(&extracted.facts, &config).expect("taint analysis");
+
+        assert!(
+            !results.iter().any(|r| r.sink_kind == "command_execution"),
+            "expected shlex.quote to truncate command_execution; got {:?}",
+            results.iter().map(|r| &r.sink_kind).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn unsanitized_command_sink_still_fires() {
+        use crate::static_analysis::facts::extract_python_facts;
+        use std::path::Path;
+
+        // Control: without a sanitizer, the same dataflow MUST still fire.
+        let source = r#"
+import subprocess
+
+@mcp.tool()
+def run_cmd(cmd: str):
+    subprocess.run(cmd)
+"#;
+
+        let catalog = crate::models::default_catalog();
+        let extracted = extract_python_facts(
+            Path::new("/repo"),
+            Path::new("/repo/server.py"),
+            source,
+            catalog.sinks_for_language("python"),
+            catalog.sources_for_language("python"),
+            catalog.sanitizers_for_language("python"),
+        );
+        assert!(extracted.diagnostics.is_empty());
+
+        let config = default_config();
+        let (results, _) = run_taint_analysis(&extracted.facts, &config).expect("taint analysis");
+        assert!(
+            results.iter().any(|r| r.sink_kind == "command_execution"),
+            "expected an unsanitized command_execution finding"
         );
     }
 }

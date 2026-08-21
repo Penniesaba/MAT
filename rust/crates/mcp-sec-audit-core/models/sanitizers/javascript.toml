@@ -1,0 +1,7 @@
+# JavaScript/TypeScript sanitizer models.
+
+[[sanitizers]]
+language = "javascript"
+patterns = ["escapeHtml", "sanitizeHtml", "escape-html"]
+neutralizes = ["template_injection", "prompt_injection"]
+source = "manual"

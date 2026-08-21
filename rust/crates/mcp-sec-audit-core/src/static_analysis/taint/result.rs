@@ -1,14 +1,24 @@
-use crate::model::{DataFlowFact, Fact, FactBase, TaintAnalysisResult};
 use super::graph::{Graph, Node};
 use super::propagation::PropagationPath;
+use crate::model::{DataFlowFact, Fact, FactBase, TaintAnalysisResult};
+
+/// Whether a path is neutralized: its sink category is covered by a sanitizer
+/// on the path, or a `"*"` wildcard sanitizer neutralizes every category.
+fn path_is_sanitized(path: &PropagationPath, graph: &Graph) -> bool {
+    if path.neutralized.iter().any(|c| c == "*") {
+        return true;
+    }
+    let Some(Node::Sink { category, .. }) = graph.get_node(&path.sink_id) else {
+        return false;
+    };
+    path.neutralized.iter().any(|c| c == category)
+}
 
 /// Convert propagation paths into TaintAnalysisResult values.
-pub fn build_taint_results(
-    paths: &[PropagationPath],
-    graph: &Graph,
-) -> Vec<TaintAnalysisResult> {
+pub fn build_taint_results(paths: &[PropagationPath], graph: &Graph) -> Vec<TaintAnalysisResult> {
     paths
         .iter()
+        .filter(|path| !path_is_sanitized(path, graph))
         .map(|path| {
             let source_kind = graph
                 .get_node(&path.source_id)
@@ -40,7 +50,10 @@ pub fn build_taint_results(
             let call_chain: Vec<String> = path
                 .steps
                 .iter()
-                .filter(|s| s.kind == crate::model::PathStepKind::CallArg || s.kind == crate::model::PathStepKind::Return)
+                .filter(|s| {
+                    s.kind == crate::model::PathStepKind::CallArg
+                        || s.kind == crate::model::PathStepKind::Return
+                })
                 .filter_map(|s| s.function.clone())
                 .collect();
 
@@ -56,12 +69,11 @@ pub fn build_taint_results(
                 .iter()
                 .filter(|s| s.snippet.is_some() || s.name.is_some())
                 .map(|s| {
-                    let loc = format!("{}:{}",
-                        s.call_id.as_deref().unwrap_or("?"),
-                        s.line);
-                    let detail = s.snippet.clone().unwrap_or_else(|| {
-                        s.name.clone().unwrap_or_else(|| "?".to_string())
-                    });
+                    let loc = format!("{}:{}", s.call_id.as_deref().unwrap_or("?"), s.line);
+                    let detail = s
+                        .snippet
+                        .clone()
+                        .unwrap_or_else(|| s.name.clone().unwrap_or_else(|| "?".to_string()));
                     format!("{loc} — {detail}")
                 })
                 .collect();
@@ -100,9 +112,7 @@ fn file_from_sink_id(sink_id: &str) -> String {
 }
 
 /// Convert propagation paths into DataFlowFact values for persistence.
-pub fn build_dataflow_facts(
-    paths: &[PropagationPath],
-) -> Vec<Fact> {
+pub fn build_dataflow_facts(paths: &[PropagationPath]) -> Vec<Fact> {
     paths
         .iter()
         .map(|path| {
@@ -136,17 +146,22 @@ mod tests {
     fn make_test_graph() -> Graph {
         let mut g = Graph::new();
         let func_id = "python:s.py:handler".to_string();
-        g.add_node(func_id.clone(), Node::Function {
-            id: func_id.clone(),
-            name: "handler".into(),
-            qualified_name: "handler".into(),
-            file: "s.py".into(),
-            params: vec!["cmd".into()],
-            language: "python".into(),
-            line: 1,
-        });
-        g.source_to_function.insert("source:s.py:handler:cmd".into(), func_id.clone());
-        g.entrypoint_to_function.insert("entry:s.py:handler".into(), func_id);
+        g.add_node(
+            func_id.clone(),
+            Node::Function {
+                id: func_id.clone(),
+                name: "handler".into(),
+                qualified_name: "handler".into(),
+                file: "s.py".into(),
+                params: vec!["cmd".into()],
+                language: "python".into(),
+                line: 1,
+            },
+        );
+        g.source_to_function
+            .insert("source:s.py:handler:cmd".into(), func_id.clone());
+        g.entrypoint_to_function
+            .insert("entry:s.py:handler".into(), func_id);
         g
     }
 
@@ -157,21 +172,20 @@ mod tests {
             source_id: "source:s.py:handler:cmd".into(),
             sink_id: "sink:cmd:s.py:3".into(),
             entrypoint_id: Some("entry:s.py:handler".into()),
-            steps: vec![
-                PathStep {
-                    kind: PathStepKind::Param,
-                    line: 3,
-                    name: Some("cmd".into()),
-                    function: Some("python:s.py:handler".into()),
-                    from_: None,
-                    to: None,
-                    snippet: Some("os.system(cmd)".into()),
-                    call_id: Some("call:s.py:3:0".into()),
-                    arg_index: Some(0),
-                },
-            ],
+            steps: vec![PathStep {
+                kind: PathStepKind::Param,
+                line: 3,
+                name: Some("cmd".into()),
+                function: Some("python:s.py:handler".into()),
+                from_: None,
+                to: None,
+                snippet: Some("os.system(cmd)".into()),
+                call_id: Some("call:s.py:3:0".into()),
+                arg_index: Some(0),
+            }],
             confidence: Confidence::High,
             has_external_call: true,
+            neutralized: vec![],
         }];
 
         let results = build_taint_results(&paths, &g);
@@ -204,6 +218,7 @@ mod tests {
             }],
             confidence: Confidence::Medium,
             has_external_call: true,
+            neutralized: vec![],
         }];
 
         let facts = build_dataflow_facts(&paths);
@@ -226,21 +241,20 @@ mod tests {
             source_id: "source:s.py:handler:cmd".into(),
             sink_id: "sink:cmd:s.py:3".into(),
             entrypoint_id: Some("entry:s.py:handler".into()),
-            steps: vec![
-                PathStep {
-                    kind: PathStepKind::Param,
-                    line: 3,
-                    name: Some("cmd".into()),
-                    function: Some("python:s.py:handler".into()),
-                    from_: None,
-                    to: None,
-                    snippet: None,
-                    call_id: Some("call:s.py:3:0".into()),
-                    arg_index: Some(0),
-                },
-            ],
+            steps: vec![PathStep {
+                kind: PathStepKind::Param,
+                line: 3,
+                name: Some("cmd".into()),
+                function: Some("python:s.py:handler".into()),
+                from_: None,
+                to: None,
+                snippet: None,
+                call_id: Some("call:s.py:3:0".into()),
+                arg_index: Some(0),
+            }],
             confidence: Confidence::High,
             has_external_call: true,
+            neutralized: vec![],
         }];
 
         let results = build_taint_results(&paths, &g);

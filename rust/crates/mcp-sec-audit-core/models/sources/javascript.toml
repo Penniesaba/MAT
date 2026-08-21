@@ -1,0 +1,19 @@
+# JavaScript/TypeScript source models: external-input entrypoints.
+
+[[sources]]
+language = "javascript"
+category = "env_var"
+patterns = ["process.env"]
+source = "manual"
+
+[[sources]]
+language = "javascript"
+category = "cli_arg"
+patterns = ["process.argv"]
+source = "manual"
+
+[[sources]]
+language = "javascript"
+category = "network_request"
+patterns = ["req.query", "req.body", "req.params", "fetch"]
+source = "manual"

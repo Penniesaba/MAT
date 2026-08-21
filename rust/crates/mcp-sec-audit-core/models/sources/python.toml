@@ -1,0 +1,19 @@
+# Python source models: external-input entrypoints beyond MCP tool parameters.
+
+[[sources]]
+language = "python"
+category = "env_var"
+patterns = ["os.environ", "os.environ.get", "os.getenv", "os.environb"]
+source = "manual"
+
+[[sources]]
+language = "python"
+category = "cli_arg"
+patterns = ["sys.argv"]
+source = "manual"
+
+[[sources]]
+language = "python"
+category = "network_request"
+patterns = ["requests.get", "requests.post", "requests.request", "httpx.get", "httpx.post", "urllib.request.urlopen"]
+source = "manual"

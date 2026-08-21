@@ -33,6 +33,11 @@ pub fn make_sink_id(category: &str, root: &Path, file: &Path, line: u32) -> Stri
     format!("sink:{category}:{}:{line}", rel_posix(root, file))
 }
 
+pub fn make_sanitizer_id(root: &Path, file: &Path, line: u32, callee: &str) -> String {
+    let safe = callee.replace(['.', ':', '/'], "_");
+    format!("sanitizer:{}:{line}:{safe}", rel_posix(root, file))
+}
+
 pub fn make_source_id(root: &Path, file: &Path, function_name: &str, param_name: &str) -> String {
     format!(
         "source:{}:{function_name}:{param_name}",

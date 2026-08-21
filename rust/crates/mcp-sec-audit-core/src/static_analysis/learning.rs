@@ -5,16 +5,23 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::model::{Confidence, Fact, FactBase, ModelCandidate, Severity, SinkFact};
-use crate::models::{ModelCatalog, rule_prefix, PackageRule, SinkModel};
+use crate::models::{
+    ModelCatalog, PackageRule, SanitizerModel, SinkModel, SourceModel, rule_prefix,
+};
 
 use super::infer::{language_from_file, name_category};
 
 /// Gating decision for an agent-proposed sink model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GateDecision { Hot, Warm, Cold }
+pub enum GateDecision {
+    Hot,
+    Warm,
+    Cold,
+}
 
 fn split_module_function(name: &str) -> Option<(&str, &str)> {
-    name.rsplit_once('.').filter(|(m, f)| !m.is_empty() && !f.is_empty())
+    name.rsplit_once('.')
+        .filter(|(m, f)| !m.is_empty() && !f.is_empty())
 }
 
 /// Classify an agent-proposed sink by cross-checking it against the cheap
@@ -51,14 +58,22 @@ pub fn sink_candidates_to_sink_facts(facts: &[Fact], candidates: &[ModelCandidat
         let Fact::Call(call) = fact else { continue };
         let callee = call.normalized_callee.as_deref().unwrap_or(&call.callee);
         for c in candidates {
-            if c.kind != "sink" { continue; }
-            if language_from_file(&call.base.file) != c.language { continue; }
+            if c.kind != "sink" {
+                continue;
+            }
+            if language_from_file(&call.base.file) != c.language {
+                continue;
+            }
             // Unqualified method names are too low-specificity to re-inject.
-            if !c.name.contains('.') && !c.name.contains("::") { continue; }
+            if !c.name.contains('.') && !c.name.contains("::") {
+                continue;
+            }
             let hit = callee == c.name
                 || callee.ends_with(&format!(".{}", c.name))
                 || callee.ends_with(&format!("::{}", c.name));
-            if !hit { continue; }
+            if !hit {
+                continue;
+            }
             out.push(Fact::Sink(SinkFact {
                 base: FactBase {
                     id: format!("sink:learned:{}:{}", call.base.id, c.category),
@@ -71,7 +86,10 @@ pub fn sink_candidates_to_sink_facts(facts: &[Fact], candidates: &[ModelCandidat
                 rule_id: format!("{}.{}", rule_prefix(&c.language), c.category),
                 sink_name: callee.to_string(),
                 severity_base: Severity::Medium,
-                reason: format!("learned sink from agent (warm re-injection): {}", c.category),
+                reason: format!(
+                    "learned sink from agent (warm re-injection): {}",
+                    c.category
+                ),
                 conditions: Default::default(),
                 confidence: c.confidence.clone(),
             }));
@@ -85,16 +103,20 @@ pub fn sink_candidates_to_sink_facts(facts: &[Fact], candidates: &[ModelCandidat
 // Deferred until CodeQL CLI ≥ 2.26.3 (R4 RULING 11: --model-packs broken under 2.26.2). Not wired by the pipeline.
 #[allow(dead_code)]
 pub fn candidates_to_mad_sinks(candidates: &[ModelCandidate]) -> Vec<SinkModel> {
-    candidates.iter().filter(|c| c.kind == "sink").map(|c| SinkModel {
-        language: c.language.clone(),
-        category: c.category.clone(),
-        severity: Severity::Medium,
-        confidence: c.confidence.clone(),
-        reason: format!("learned sink (warm): {}", c.category),
-        patterns: vec![c.name.clone()],
-        source: Some("learned".to_string()),
-        learned_from: None,
-    }).collect()
+    candidates
+        .iter()
+        .filter(|c| c.kind == "sink")
+        .map(|c| SinkModel {
+            language: c.language.clone(),
+            category: c.category.clone(),
+            severity: Severity::Medium,
+            confidence: c.confidence.clone(),
+            reason: format!("learned sink (warm): {}", c.category),
+            patterns: vec![c.name.clone()],
+            source: Some("learned".to_string()),
+            learned_from: None,
+        })
+        .collect()
 }
 
 /// Convert a gated sink candidate into a low-confidence `learned` sink model.
@@ -129,14 +151,75 @@ pub fn candidate_to_sink_model(
 pub fn write_learned_sinks(dir: &Path, models: &[SinkModel]) -> anyhow::Result<()> {
     std::fs::create_dir_all(dir)?;
     for (i, m) in models.iter().enumerate() {
-        let safe = m.patterns.first().map(|p| p.replace(['.', ':', '/'], "_")).unwrap_or_else(|| i.to_string());
+        let safe = m
+            .patterns
+            .first()
+            .map(|p| p.replace(['.', ':', '/'], "_"))
+            .unwrap_or_else(|| i.to_string());
         let text = format!(
             "[[sinks]]\nlanguage = {:?}\ncategory = {:?}\nseverity = {:?}\nconfidence = {:?}\nreason = {:?}\npatterns = {:?}\nsource = \"learned\"\nlearned_from = {:?}\n",
-            m.language, m.category, severity_str(&m.severity), confidence_str(&m.confidence),
-            m.reason, m.patterns, m.learned_from.as_deref().unwrap_or("unknown")
+            m.language,
+            m.category,
+            severity_str(&m.severity),
+            confidence_str(&m.confidence),
+            m.reason,
+            m.patterns,
+            m.learned_from.as_deref().unwrap_or("unknown")
         );
         std::fs::write(dir.join(format!("learned-{safe}.toml")), text)?;
     }
+    Ok(())
+}
+
+/// Append learned source models to a directory as one TOML file per model.
+pub fn write_learned_sources(dir: &Path, models: &[SourceModel]) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    for (i, m) in models.iter().enumerate() {
+        let safe = m
+            .patterns
+            .first()
+            .map(|p| p.replace(['.', ':', '/'], "_"))
+            .unwrap_or_else(|| i.to_string());
+        let text = format!(
+            "[[sources]]\nlanguage = {:?}\ncategory = {:?}\npatterns = {:?}\nsource = \"learned\"\nlearned_from = {:?}\n",
+            m.language,
+            m.category,
+            m.patterns,
+            m.learned_from.as_deref().unwrap_or("unknown")
+        );
+        std::fs::write(dir.join(format!("learned-{safe}.toml")), text)?;
+    }
+    Ok(())
+}
+
+/// Append learned sanitizer models to a directory as one TOML file per model.
+pub fn write_learned_sanitizers(dir: &Path, models: &[SanitizerModel]) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    for (i, m) in models.iter().enumerate() {
+        let safe = m
+            .patterns
+            .first()
+            .map(|p| p.replace(['.', ':', '/'], "_"))
+            .unwrap_or_else(|| i.to_string());
+        let text = format!(
+            "[[sanitizers]]\nlanguage = {:?}\npatterns = {:?}\nneutralizes = {:?}\nsource = \"learned\"\nlearned_from = {:?}\n",
+            m.language,
+            m.patterns,
+            m.neutralizes,
+            m.learned_from.as_deref().unwrap_or("unknown")
+        );
+        std::fs::write(dir.join(format!("learned-{safe}.toml")), text)?;
+    }
+    Ok(())
+}
+
+/// 把校验通过的 delta 固化到 learned 目录（三类模型）。
+#[allow(dead_code)]
+pub(crate) fn write_learned_models(dir: &Path, delta: &StagedDelta) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    write_learned_sinks(dir, &delta.sinks)?;
+    write_learned_sources(dir, &delta.sources)?;
+    write_learned_sanitizers(dir, &delta.sanitizers)?;
     Ok(())
 }
 
@@ -152,18 +235,35 @@ pub fn write_learned_sinks(dir: &Path, models: &[SinkModel]) -> anyhow::Result<(
 #[allow(dead_code)]
 pub(crate) struct StagedDelta {
     pub(crate) base_fingerprint: String,
-    pub(crate) models: Vec<SinkModel>,
+    pub(crate) sinks: Vec<SinkModel>,
+    pub(crate) sources: Vec<SourceModel>,
+    pub(crate) sanitizers: Vec<SanitizerModel>,
     pub(crate) fingerprint: String,
 }
 
 /// `ModelCatalog` 的确定性内容身份：排序后的 `language:category:pattern` 条目用 `|` 连接。
+/// 覆盖三类模型（sink / source / sanitizer），使任何一类进化都会改变指纹。
 #[allow(dead_code)]
 pub(crate) fn catalog_fingerprint(catalog: &ModelCatalog) -> String {
     let mut entries = Vec::new();
     for lang in ["python", "javascript", "rust"] {
         for m in catalog.sinks_for_language(lang) {
             for p in &m.patterns {
-                entries.push(format!("{lang}:{}:{}", m.category, p));
+                entries.push(format!("sink:{lang}:{}:{}", m.category, p));
+            }
+        }
+        for m in catalog.sources_for_language(lang) {
+            for p in &m.patterns {
+                entries.push(format!("source:{lang}:{}:{}", m.category, p));
+            }
+        }
+        for m in catalog.sanitizers_for_language(lang) {
+            for p in &m.patterns {
+                entries.push(format!(
+                    "sanitizer:{lang}:{}:{}",
+                    m.neutralizes.join(","),
+                    p
+                ));
             }
         }
     }
@@ -179,64 +279,164 @@ pub(crate) fn stage_catalog_evolution(
     catalog: &ModelCatalog,
     candidates: &[ModelCandidate],
 ) -> Option<StagedDelta> {
-    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut seen_sinks: BTreeSet<String> = BTreeSet::new();
+    let mut seen_sources: BTreeSet<String> = BTreeSet::new();
+    let mut seen_sanitizers: BTreeSet<String> = BTreeSet::new();
     for lang in ["python", "javascript", "rust"] {
         for m in catalog.sinks_for_language(lang) {
             for p in &m.patterns {
-                seen.insert(format!("{lang}:{}:{}", m.category, p));
+                seen_sinks.insert(format!("{lang}:{}:{}", m.category, p));
+            }
+        }
+        for m in catalog.sources_for_language(lang) {
+            for p in &m.patterns {
+                seen_sources.insert(format!("{lang}:{}:{}", m.category, p));
+            }
+        }
+        for m in catalog.sanitizers_for_language(lang) {
+            for p in &m.patterns {
+                seen_sanitizers.insert(format!("{lang}:{}:{}", m.neutralizes.join(","), p));
             }
         }
     }
 
-    let mut models = Vec::new();
+    let mut sinks = Vec::new();
+    let mut sources = Vec::new();
+    let mut sanitizers = Vec::new();
     for c in candidates {
-        if c.kind != "sink" || c.name.trim().is_empty() || c.category.trim().is_empty() {
+        if c.name.trim().is_empty() || c.category.trim().is_empty() {
             continue;
         }
-        let key = format!("{}:{}:{}", c.language, c.category, c.name);
-        if seen.insert(key) {
-            models.push(SinkModel {
-                language: c.language.clone(),
-                category: c.category.clone(),
-                severity: Severity::Medium,
-                confidence: c.confidence.clone(),
-                reason: format!(
-                    "staged sink: {} (evidence: {})",
-                    c.category,
-                    c.evidence_snippets.first().cloned().unwrap_or_default()
-                ),
-                patterns: vec![c.name.clone()],
-                source: Some("learned-staged".to_string()),
-                learned_from: None,
-            });
+        match c.kind.as_str() {
+            "sink" => {
+                let key = format!("{}:{}:{}", c.language, c.category, c.name);
+                if seen_sinks.insert(key) {
+                    sinks.push(SinkModel {
+                        language: c.language.clone(),
+                        category: c.category.clone(),
+                        severity: Severity::Medium,
+                        confidence: c.confidence.clone(),
+                        reason: format!(
+                            "staged sink: {} (evidence: {})",
+                            c.category,
+                            c.evidence_snippets.first().cloned().unwrap_or_default()
+                        ),
+                        patterns: vec![c.name.clone()],
+                        source: Some("learned-staged".to_string()),
+                        learned_from: None,
+                    });
+                }
+            }
+            "source" => {
+                let key = format!("{}:{}:{}", c.language, c.category, c.name);
+                if seen_sources.insert(key) {
+                    sources.push(SourceModel {
+                        language: c.language.clone(),
+                        category: c.category.clone(),
+                        patterns: vec![c.name.clone()],
+                        source: Some("learned-staged".to_string()),
+                        learned_from: None,
+                    });
+                }
+            }
+            "sanitizer" => {
+                let key = format!("{}:{}:{}", c.language, c.category, c.name);
+                if seen_sanitizers.insert(key) {
+                    sanitizers.push(SanitizerModel {
+                        language: c.language.clone(),
+                        patterns: vec![c.name.clone()],
+                        neutralizes: vec![c.category.clone()],
+                        source: Some("learned-staged".to_string()),
+                        learned_from: None,
+                    });
+                }
+            }
+            _ => continue,
         }
     }
 
-    if models.is_empty() {
+    if sinks.is_empty() && sources.is_empty() && sanitizers.is_empty() {
         return None;
     }
     let base_fingerprint = catalog_fingerprint(catalog);
-    let mut fp = models
+    let mut fp = sinks
         .iter()
-        .flat_map(|m| m.patterns.iter().map(|p| format!("{}:{}:{}", m.language, m.category, p)))
+        .flat_map(|m| {
+            m.patterns
+                .iter()
+                .map(|p| format!("sink:{}:{}:{}", m.language, m.category, p))
+        })
+        .chain(sources.iter().flat_map(|m| {
+            m.patterns
+                .iter()
+                .map(|p| format!("source:{}:{}:{}", m.language, m.category, p))
+        }))
+        .chain(sanitizers.iter().flat_map(|m| {
+            m.patterns
+                .iter()
+                .map(|p| format!("sanitizer:{}:{}:{}", m.language, m.neutralizes.join(","), p))
+        }))
         .collect::<Vec<_>>();
     fp.sort();
     let fingerprint = fp.join("|");
-    Some(StagedDelta { base_fingerprint, models, fingerprint })
+    Some(StagedDelta {
+        base_fingerprint,
+        sinks,
+        sources,
+        sanitizers,
+        fingerprint,
+    })
 }
 
 /// 把暂存 delta 写到 staging 目录（不是 `learned/`），每个模型一个 TOML 文件。
 #[allow(dead_code)]
 pub(crate) fn write_staging(dir: &Path, delta: &StagedDelta) -> anyhow::Result<()> {
     std::fs::create_dir_all(dir)?;
-    for (i, m) in delta.models.iter().enumerate() {
-        let safe = m.patterns.first()
+    for (i, m) in delta.sinks.iter().enumerate() {
+        let safe = m
+            .patterns
+            .first()
             .map(|p| p.replace(['.', ':', '/'], "_"))
             .unwrap_or_else(|| i.to_string());
         let text = format!(
             "[[sinks]]\nlanguage = {:?}\ncategory = {:?}\nseverity = {:?}\nconfidence = {:?}\nreason = {:?}\npatterns = {:?}\nsource = \"learned-staged\"\nlearned_from = {:?}\n",
-            m.language, m.category, severity_str(&m.severity), confidence_str(&m.confidence),
-            m.reason, m.patterns, m.learned_from.as_deref().unwrap_or("staged")
+            m.language,
+            m.category,
+            severity_str(&m.severity),
+            confidence_str(&m.confidence),
+            m.reason,
+            m.patterns,
+            m.learned_from.as_deref().unwrap_or("staged")
+        );
+        std::fs::write(dir.join(format!("staged-{safe}.toml")), text)?;
+    }
+    for (i, m) in delta.sources.iter().enumerate() {
+        let safe = m
+            .patterns
+            .first()
+            .map(|p| p.replace(['.', ':', '/'], "_"))
+            .unwrap_or_else(|| i.to_string());
+        let text = format!(
+            "[[sources]]\nlanguage = {:?}\ncategory = {:?}\npatterns = {:?}\nsource = \"learned-staged\"\nlearned_from = {:?}\n",
+            m.language,
+            m.category,
+            m.patterns,
+            m.learned_from.as_deref().unwrap_or("staged")
+        );
+        std::fs::write(dir.join(format!("staged-{safe}.toml")), text)?;
+    }
+    for (i, m) in delta.sanitizers.iter().enumerate() {
+        let safe = m
+            .patterns
+            .first()
+            .map(|p| p.replace(['.', ':', '/'], "_"))
+            .unwrap_or_else(|| i.to_string());
+        let text = format!(
+            "[[sanitizers]]\nlanguage = {:?}\npatterns = {:?}\nneutralizes = {:?}\nsource = \"learned-staged\"\nlearned_from = {:?}\n",
+            m.language,
+            m.patterns,
+            m.neutralizes,
+            m.learned_from.as_deref().unwrap_or("staged")
         );
         std::fs::write(dir.join(format!("staged-{safe}.toml")), text)?;
     }
@@ -253,10 +453,19 @@ pub(crate) fn rollback_staging(dir: &Path) -> anyhow::Result<()> {
 }
 
 fn severity_str(s: &Severity) -> &'static str {
-    match s { Severity::Critical => "critical", Severity::High => "high", Severity::Medium => "medium", Severity::Low => "low" }
+    match s {
+        Severity::Critical => "critical",
+        Severity::High => "high",
+        Severity::Medium => "medium",
+        Severity::Low => "low",
+    }
 }
 fn confidence_str(c: &Confidence) -> &'static str {
-    match c { Confidence::High => "high", Confidence::Medium => "medium", Confidence::Low => "low" }
+    match c {
+        Confidence::High => "high",
+        Confidence::Medium => "medium",
+        Confidence::Low => "low",
+    }
 }
 
 #[cfg(test)]
@@ -284,7 +493,10 @@ mod tests {
     #[test]
     fn package_agreement_is_hot() {
         // openpyxl is a package rule with read_category=file_read.
-        let d = gate_sink_candidate(&cand("openpyxl.load_workbook", "file_read"), &default_package_rules());
+        let d = gate_sink_candidate(
+            &cand("openpyxl.load_workbook", "file_read"),
+            &default_package_rules(),
+        );
         assert_eq!(d, GateDecision::Hot);
     }
 
@@ -297,14 +509,20 @@ mod tests {
 
     #[test]
     fn no_inference_signal_is_cold() {
-        let d = gate_sink_candidate(&cand("frobnicate_thing", "file_read"), &default_package_rules());
+        let d = gate_sink_candidate(
+            &cand("frobnicate_thing", "file_read"),
+            &default_package_rules(),
+        );
         assert_eq!(d, GateDecision::Cold);
     }
 
     #[test]
     fn category_mismatch_is_not_hot() {
         // openpyxl is file_read, but agent claims command_execution → no agreement.
-        let d = gate_sink_candidate(&cand("openpyxl.load_workbook", "command_execution"), &default_package_rules());
+        let d = gate_sink_candidate(
+            &cand("openpyxl.load_workbook", "command_execution"),
+            &default_package_rules(),
+        );
         assert_ne!(d, GateDecision::Hot);
     }
 
@@ -318,12 +536,14 @@ mod tests {
     fn candidate_converts_to_learned_sink_model() {
         let m = candidate_to_sink_model(
             &cand("openpyxl.load_workbook", "file_read"),
-            "scan-1", "claude",
-        ).expect("sink candidate maps");
+            "scan-1",
+            "claude",
+        )
+        .expect("sink candidate maps");
         assert_eq!(m.language, "python");
         assert_eq!(m.category, "file_read");
         assert_eq!(m.patterns, vec!["openpyxl.load_workbook"]);
-        assert_eq!(m.confidence, Confidence::Low);   // learned enters low
+        assert_eq!(m.confidence, Confidence::Low); // learned enters low
         assert_eq!(m.source.as_deref(), Some("learned"));
         assert_eq!(m.learned_from.as_deref(), Some("scan-1/claude"));
     }
@@ -331,13 +551,25 @@ mod tests {
     fn call_fact(id: &str, callee: &str) -> Fact {
         use crate::model::{CallArg, CallFact};
         Fact::Call(CallFact {
-            base: FactBase { id: id.into(), file: "s.py".into(), line: 3, extractor: "t".into() },
+            base: FactBase {
+                id: id.into(),
+                file: "s.py".into(),
+                line: 3,
+                extractor: "t".into(),
+            },
             caller: "f".into(),
             callee: callee.into(),
             normalized_callee: Some(callee.into()),
-            column: None, end_line: None, snippet: format!("{callee}(x)"),
-            args: vec![CallArg { index: 0, expr: "x".into(), kind: "positional".into() }],
-            kwargs: Default::default(), resolution: None,
+            column: None,
+            end_line: None,
+            snippet: format!("{callee}(x)"),
+            args: vec![CallArg {
+                index: 0,
+                expr: "x".into(),
+                kind: "positional".into(),
+            }],
+            kwargs: Default::default(),
+            resolution: None,
         })
     }
 
@@ -354,7 +586,9 @@ mod tests {
             assert_eq!(s.sink_name, "openpyxl.load_workbook");
             assert_eq!(s.category, "file_read");
             assert_eq!(s.confidence, Confidence::Medium);
-        } else { panic!("expected Sink"); }
+        } else {
+            panic!("expected Sink");
+        }
     }
 
     #[test]
@@ -372,13 +606,21 @@ mod tests {
         let facts = vec![call_fact("call:1", "threading.Thread.run")];
         let cands = vec![cand("run", "command_execution")];
         let new = sink_candidates_to_sink_facts(&facts, &cands);
-        assert!(new.is_empty(), "expected no re-injection for a bare method name");
+        assert!(
+            new.is_empty(),
+            "expected no re-injection for a bare method name"
+        );
     }
 
     #[test]
     fn write_learned_sinks_roundtrips() {
         let dir = tmp_dir("write");
-        let m = candidate_to_sink_model(&cand("openpyxl.load_workbook", "file_read"), "scan-1", "claude").unwrap();
+        let m = candidate_to_sink_model(
+            &cand("openpyxl.load_workbook", "file_read"),
+            "scan-1",
+            "claude",
+        )
+        .unwrap();
         write_learned_sinks(&dir, &[m]).expect("write");
         let loaded = crate::models::load_models_dir(&dir).expect("load");
         assert_eq!(loaded.sink_count(), 1);
@@ -393,10 +635,14 @@ mod tests {
         assert_eq!(catalog_fingerprint(&a), catalog_fingerprint(&b));
         let mut extra = crate::models::default_catalog();
         extra.merge(crate::models::ModelCatalog::from_sinks(vec![SinkModel {
-            language: "python".into(), category: "file_read".into(),
-            severity: Severity::Medium, confidence: Confidence::Low,
-            reason: "x".into(), patterns: vec!["novel.read".into()],
-            source: None, learned_from: None,
+            language: "python".into(),
+            category: "file_read".into(),
+            severity: Severity::Medium,
+            confidence: Confidence::Low,
+            reason: "x".into(),
+            patterns: vec!["novel.read".into()],
+            source: None,
+            learned_from: None,
         }]));
         assert_ne!(catalog_fingerprint(&a), catalog_fingerprint(&extra));
     }
@@ -414,8 +660,8 @@ mod tests {
         let catalog = crate::models::default_catalog();
         let cand = cand_lang("brand_new.lib.read", "file_read", "python");
         let delta = stage_catalog_evolution(&catalog, &[cand]).expect("new sink stages");
-        assert_eq!(delta.models.len(), 1);
-        assert_eq!(delta.models[0].patterns, vec!["brand_new.lib.read"]);
+        assert_eq!(delta.sinks.len(), 1);
+        assert_eq!(delta.sinks[0].patterns, vec!["brand_new.lib.read"]);
         assert_eq!(delta.base_fingerprint, catalog_fingerprint(&catalog));
     }
 

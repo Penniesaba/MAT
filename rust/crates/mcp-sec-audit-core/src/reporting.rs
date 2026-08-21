@@ -288,7 +288,10 @@ pub fn render_markdown(result: &StaticAnalysisResult, options: &MarkdownRenderOp
             lines.push(format!(
                 "- `{}` at {}:{} — {}",
                 item.rule_id,
-                item.locations.first().map(|l| l.file.as_str()).unwrap_or("?"),
+                item.locations
+                    .first()
+                    .map(|l| l.file.as_str())
+                    .unwrap_or("?"),
                 item.locations.first().map(|l| l.line).unwrap_or(0),
                 item.message
             ));
@@ -388,6 +391,7 @@ fn fact_type_name(fact: &crate::Fact) -> &'static str {
         crate::Fact::Entrypoint(_) => "entrypoint",
         crate::Fact::Call(_) => "call",
         crate::Fact::Sink(_) => "sink",
+        crate::Fact::Sanitizer(_) => "sanitizer",
         crate::Fact::Source(_) => "source",
         crate::Fact::Assign(_) => "assign",
         crate::Fact::Dataflow(_) => "dataflow",

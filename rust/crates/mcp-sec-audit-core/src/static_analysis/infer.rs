@@ -46,12 +46,17 @@ pub(crate) fn infer_by_package(
             .and_then(|rest| rest.strip_prefix(['.', ':']));
         let (category, confidence) = classify_method(method, rule);
         let Some(category) = category else { continue };
-        out.push(make_inferred_sink(call, callee, category, confidence, language));
+        out.push(make_inferred_sink(
+            call, callee, category, confidence, language,
+        ));
     }
     out
 }
 
-fn classify_method<'a>(method: Option<&str>, rule: &'a PackageRule) -> (Option<&'a str>, Confidence) {
+fn classify_method<'a>(
+    method: Option<&str>,
+    rule: &'a PackageRule,
+) -> (Option<&'a str>, Confidence) {
     if let Some(category) = rule.category.as_deref() {
         return (Some(category), Confidence::Medium);
     }
@@ -138,8 +143,15 @@ const NAME_PREFIX_CATEGORY: &[(&str, &str)] = &[
 
 /// Layer-3 category for a callee's method-name prefix, or `None`.
 pub(crate) fn name_category(callee: &str) -> Option<&'static str> {
-    let method = callee.rsplit(['.', ':']).next().unwrap_or(callee).to_lowercase();
-    NAME_PREFIX_CATEGORY.iter().find(|(p, _)| method.starts_with(p)).map(|(_, c)| *c)
+    let method = callee
+        .rsplit(['.', ':'])
+        .next()
+        .unwrap_or(callee)
+        .to_lowercase();
+    NAME_PREFIX_CATEGORY
+        .iter()
+        .find(|(p, _)| method.starts_with(p))
+        .map(|(_, c)| *c)
 }
 
 const ARG_PATH_HINTS: &[&str] = &["path", "file", "url", "cmd", "command", "dir", "host"];
@@ -147,10 +159,7 @@ const ARG_PATH_HINTS: &[&str] = &["path", "file", "url", "cmd", "command", "dir"
 /// Layer 3: weak naming-pattern heuristic for calls whose package is unmodeled.
 /// Fires only for calls with a dangerous method-name prefix AND a first argument
 /// that looks like a path/url/command. Low confidence — never reported alone.
-pub(crate) fn infer_by_name(
-    facts: &[Fact],
-    skip_call_ids: &BTreeSet<String>,
-) -> Vec<Fact> {
+pub(crate) fn infer_by_name(facts: &[Fact], skip_call_ids: &BTreeSet<String>) -> Vec<Fact> {
     let mut out = Vec::new();
     for fact in facts {
         let Fact::Call(call) = fact else { continue };
@@ -235,11 +244,14 @@ mod tests {
     use crate::static_analysis::recon::collect_packages;
 
     fn extract(source: &str) -> Vec<Fact> {
+        let catalog = crate::models::default_catalog();
         extract_python_facts(
             Path::new("/repo"),
             Path::new("/repo/server.py"),
             source,
-            crate::models::default_catalog().sinks_for_language("python"),
+            catalog.sinks_for_language("python"),
+            catalog.sources_for_language("python"),
+            catalog.sanitizers_for_language("python"),
         )
         .facts
     }
@@ -273,7 +285,11 @@ def handle(path: str):
         let inferred = infer_pkg(&facts, &crate::models::default_package_rules());
         let names = sink_names(&inferred);
         assert!(names.contains(&("openpyxl.load_workbook", "file_read")));
-        assert!(inferred.iter().all(|f| matches!(f, Fact::Sink(s) if s.confidence == Confidence::Medium)));
+        assert!(
+            inferred
+                .iter()
+                .all(|f| matches!(f, Fact::Sink(s) if s.confidence == Confidence::Medium))
+        );
     }
 
     #[test]
@@ -296,7 +312,8 @@ def handle(f):
 
     #[test]
     fn does_not_reinfer_already_modeled_sinks() {
-        let facts = extract("import subprocess\nsubprocess.run('id')\nsubprocess.getoutput('id')\n");
+        let facts =
+            extract("import subprocess\nsubprocess.run('id')\nsubprocess.getoutput('id')\n");
         let custom_rules = vec![PackageRule {
             language: "python".into(),
             package: "subprocess".into(),
@@ -306,9 +323,11 @@ def handle(f):
         }];
         let inferred = infer_pkg(&facts, &custom_rules);
         // subprocess.run is already a manual sink; subprocess.getoutput is not.
-        assert!(!inferred
-            .iter()
-            .any(|f| matches!(f, Fact::Sink(s) if s.sink_name == "subprocess.run")));
+        assert!(
+            !inferred
+                .iter()
+                .any(|f| matches!(f, Fact::Sink(s) if s.sink_name == "subprocess.run"))
+        );
         assert!(inferred
             .iter()
             .any(|f| matches!(f, Fact::Sink(s) if s.sink_name == "subprocess.getoutput" && s.category == "command_execution")));
@@ -337,7 +356,15 @@ def handle(filepath: str, url: str):
         let names = sink_names(&inferred);
         assert!(names.contains(&("load_config", "file_read")));
         assert!(names.contains(&("fetch_url", "network_request")));
-        assert!(!inferred.iter().any(|f| matches!(f, Fact::Sink(s) if s.sink_name == "compute")));
-        assert!(inferred.iter().all(|f| matches!(f, Fact::Sink(s) if s.confidence == Confidence::Low)));
+        assert!(
+            !inferred
+                .iter()
+                .any(|f| matches!(f, Fact::Sink(s) if s.sink_name == "compute"))
+        );
+        assert!(
+            inferred
+                .iter()
+                .all(|f| matches!(f, Fact::Sink(s) if s.confidence == Confidence::Low))
+        );
     }
 }

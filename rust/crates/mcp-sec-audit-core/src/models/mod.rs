@@ -33,6 +33,48 @@ impl SinkModel {
     }
 }
 
+/// A single source model: an external-input entrypoint that produces taint.
+/// Complements the structurally-detected MCP tool parameters (which need no
+/// model) by covering library/env/CLI inputs (`os.environ`, `sys.argv`,
+/// `requests.get`, …) that the structural extractor cannot see.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceModel {
+    /// Language key: "python" | "javascript" | "rust".
+    pub language: String,
+    /// Input category: "env_var" | "cli_arg" | "network_request" | "http_request" …
+    pub category: String,
+    /// Callee/access patterns matched with the language's separator rules.
+    pub patterns: Vec<String>,
+    /// "manual" | "learned" — `None` treated as manual.
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Provenance for learned models: "scan-id/agent-id".
+    #[serde(default)]
+    pub learned_from: Option<String>,
+}
+
+/// A single sanitizer model: a function that neutralizes taint for one or more
+/// sink categories (`shlex.quote` → command_execution). A tainted value flowing
+/// through such a function no longer reaches sinks of the neutralized
+/// categories — this is the "补 sanitizer = 补精度" lever that suppresses A-line
+/// false positives (a2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SanitizerModel {
+    /// Language key: "python" | "javascript" | "rust".
+    pub language: String,
+    /// Callee patterns matched with the language's separator rules.
+    pub patterns: Vec<String>,
+    /// Sink categories this sanitizer neutralizes (e.g. ["command_execution"]).
+    /// A `"*"` entry neutralizes every category.
+    pub neutralizes: Vec<String>,
+    /// "manual" | "learned" — `None` treated as manual.
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Provenance for learned models: "scan-id/agent-id".
+    #[serde(default)]
+    pub learned_from: Option<String>,
+}
+
 pub(crate) fn rule_prefix(language: &str) -> &'static str {
     match language {
         "python" => "python",
@@ -57,25 +99,91 @@ pub struct PackageRule {
     pub write_category: Option<String>,
 }
 
-/// All sink models, grouped by language key.
+/// All models (sink + source + sanitizer), grouped by language key.
 #[derive(Debug, Clone, Default)]
 pub struct ModelCatalog {
     sinks: BTreeMap<String, Vec<SinkModel>>,
+    sources: BTreeMap<String, Vec<SourceModel>>,
+    sanitizers: BTreeMap<String, Vec<SanitizerModel>>,
 }
 
 impl ModelCatalog {
-    /// Build a catalog by grouping a flat model list by `language`.
+    /// Build a catalog by grouping a flat sink-model list by `language`.
     pub fn from_sinks(models: Vec<SinkModel>) -> Self {
         let mut sinks: BTreeMap<String, Vec<SinkModel>> = BTreeMap::new();
         for model in models {
             sinks.entry(model.language.clone()).or_default().push(model);
         }
-        Self { sinks }
+        Self {
+            sinks,
+            sources: BTreeMap::new(),
+            sanitizers: BTreeMap::new(),
+        }
     }
 
-    /// Models for a language key ("python" | "javascript" | "rust"), or `[]`.
+    /// Build a catalog by grouping a flat source-model list by `language`.
+    pub fn from_sources(models: Vec<SourceModel>) -> Self {
+        let mut sources: BTreeMap<String, Vec<SourceModel>> = BTreeMap::new();
+        for model in models {
+            sources
+                .entry(model.language.clone())
+                .or_default()
+                .push(model);
+        }
+        Self {
+            sinks: BTreeMap::new(),
+            sources,
+            sanitizers: BTreeMap::new(),
+        }
+    }
+
+    /// Build a catalog by grouping a flat sanitizer-model list by `language`.
+    pub fn from_sanitizers(models: Vec<SanitizerModel>) -> Self {
+        let mut sanitizers: BTreeMap<String, Vec<SanitizerModel>> = BTreeMap::new();
+        for model in models {
+            sanitizers
+                .entry(model.language.clone())
+                .or_default()
+                .push(model);
+        }
+        Self {
+            sinks: BTreeMap::new(),
+            sources: BTreeMap::new(),
+            sanitizers,
+        }
+    }
+
+    /// Build a catalog from all three model classes in one call.
+    pub fn from_models(
+        sinks: Vec<SinkModel>,
+        sources: Vec<SourceModel>,
+        sanitizers: Vec<SanitizerModel>,
+    ) -> Self {
+        let mut catalog = Self::from_sinks(sinks);
+        catalog.merge(Self::from_sources(sources));
+        catalog.merge(Self::from_sanitizers(sanitizers));
+        catalog
+    }
+
+    /// Sink models for a language key ("python" | "javascript" | "rust"), or `[]`.
     pub fn sinks_for_language(&self, language: &str) -> &[SinkModel] {
         self.sinks
+            .get(language)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Source models for a language key, or `[]`.
+    pub fn sources_for_language(&self, language: &str) -> &[SourceModel] {
+        self.sources
+            .get(language)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Sanitizer models for a language key, or `[]`.
+    pub fn sanitizers_for_language(&self, language: &str) -> &[SanitizerModel] {
+        self.sanitizers
             .get(language)
             .map(|v| v.as_slice())
             .unwrap_or(&[])
@@ -87,6 +195,12 @@ impl ModelCatalog {
         for (lang, models) in other.sinks {
             self.sinks.entry(lang).or_default().extend(models);
         }
+        for (lang, models) in other.sources {
+            self.sources.entry(lang).or_default().extend(models);
+        }
+        for (lang, models) in other.sanitizers {
+            self.sanitizers.entry(lang).or_default().extend(models);
+        }
     }
 
     /// Total number of sink models across all languages.
@@ -94,8 +208,20 @@ impl ModelCatalog {
         self.sinks.values().map(|v| v.len()).sum()
     }
 
+    /// Total number of source models across all languages.
+    pub fn source_count(&self) -> usize {
+        self.sources.values().map(|v| v.len()).sum()
+    }
+
+    /// Total number of sanitizer models across all languages.
+    pub fn sanitizer_count(&self) -> usize {
+        self.sanitizers.values().map(|v| v.len()).sum()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.sinks.values().all(Vec::is_empty)
+            && self.sources.values().all(Vec::is_empty)
+            && self.sanitizers.values().all(Vec::is_empty)
     }
 }
 
@@ -107,6 +233,47 @@ pub fn parse_sinks(toml_str: &str) -> Result<Vec<SinkModel>> {
     }
     let file: SinkFile = toml::from_str(toml_str).context("parse sink models TOML")?;
     Ok(file.sinks)
+}
+
+/// Parse a TOML document of source models (a `[[sources]]` array of tables).
+pub fn parse_sources(toml_str: &str) -> Result<Vec<SourceModel>> {
+    #[derive(Deserialize)]
+    struct SourceFile {
+        #[serde(default)]
+        sources: Vec<SourceModel>,
+    }
+    let file: SourceFile = toml::from_str(toml_str).context("parse source models TOML")?;
+    Ok(file.sources)
+}
+
+/// Parse a TOML document of sanitizer models (a `[[sanitizers]]` array of tables).
+pub fn parse_sanitizers(toml_str: &str) -> Result<Vec<SanitizerModel>> {
+    #[derive(Deserialize)]
+    struct SanitizerFile {
+        #[serde(default)]
+        sanitizers: Vec<SanitizerModel>,
+    }
+    let file: SanitizerFile = toml::from_str(toml_str).context("parse sanitizer models TOML")?;
+    Ok(file.sanitizers)
+}
+
+/// Parse a TOML document that may carry any subset of `[[sinks]]`, `[[sources]]`,
+/// and `[[sanitizers]]` arrays (used for `models_dir` / `learned/` files, which
+/// can be sink-only, source-only, or mixed). Returns three flat lists.
+pub fn parse_model_file(
+    toml_str: &str,
+) -> Result<(Vec<SinkModel>, Vec<SourceModel>, Vec<SanitizerModel>)> {
+    #[derive(Deserialize, Default)]
+    struct ModelFile {
+        #[serde(default)]
+        sinks: Vec<SinkModel>,
+        #[serde(default)]
+        sources: Vec<SourceModel>,
+        #[serde(default)]
+        sanitizers: Vec<SanitizerModel>,
+    }
+    let file: ModelFile = toml::from_str(toml_str).context("parse model file TOML")?;
+    Ok((file.sinks, file.sources, file.sanitizers))
 }
 
 /// Parse a TOML document of package classification rules (a `[[packages]]` array).
@@ -127,25 +294,55 @@ pub fn default_package_rules() -> Vec<PackageRule> {
         .expect("package inference rules")
 }
 
-/// The default catalog, compiled from `models/sinks/*.toml` at build time.
+/// The default catalog, compiled from `models/{sinks,sources,sanitizers}/*.toml`
+/// at build time.
 pub fn default_catalog() -> ModelCatalog {
-    let mut models = Vec::new();
-    models.extend(
+    let mut sinks = Vec::new();
+    sinks.extend(
         parse_sinks(include_str!("../../models/sinks/python.toml")).expect("python sink models"),
     );
-    models.extend(
+    sinks.extend(
         parse_sinks(include_str!("../../models/sinks/javascript.toml"))
             .expect("javascript sink models"),
     );
-    models.extend(
+    sinks.extend(
         parse_sinks(include_str!("../../models/sinks/rust.toml")).expect("rust sink models"),
     );
-    ModelCatalog::from_sinks(models)
+
+    let mut sources = Vec::new();
+    sources.extend(
+        parse_sources(include_str!("../../models/sources/python.toml"))
+            .expect("python source models"),
+    );
+    sources.extend(
+        parse_sources(include_str!("../../models/sources/javascript.toml"))
+            .expect("javascript source models"),
+    );
+    sources.extend(
+        parse_sources(include_str!("../../models/sources/rust.toml")).expect("rust source models"),
+    );
+
+    let mut sanitizers = Vec::new();
+    sanitizers.extend(
+        parse_sanitizers(include_str!("../../models/sanitizers/python.toml"))
+            .expect("python sanitizer models"),
+    );
+    sanitizers.extend(
+        parse_sanitizers(include_str!("../../models/sanitizers/javascript.toml"))
+            .expect("javascript sanitizer models"),
+    );
+    sanitizers.extend(
+        parse_sanitizers(include_str!("../../models/sanitizers/rust.toml"))
+            .expect("rust sanitizer models"),
+    );
+
+    ModelCatalog::from_models(sinks, sources, sanitizers)
 }
 
 /// Load + merge all `*.toml` files in a directory (used by `models_dir` / `learned/`).
+/// Each file may carry sinks, sources, and/or sanitizers.
 pub fn load_models_dir(dir: &Path) -> Result<ModelCatalog> {
-    let mut models = Vec::new();
+    let mut catalog = ModelCatalog::default();
     let mut entries: Vec<_> = std::fs::read_dir(dir)
         .with_context(|| format!("read models dir {}", dir.display()))?
         .collect::<Result<_, _>>()?;
@@ -157,9 +354,10 @@ pub fn load_models_dir(dir: &Path) -> Result<ModelCatalog> {
         }
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("read model file {}", path.display()))?;
-        models.extend(parse_sinks(&text)?);
+        let (sinks, sources, sanitizers) = parse_model_file(&text)?;
+        catalog.merge(ModelCatalog::from_models(sinks, sources, sanitizers));
     }
-    Ok(ModelCatalog::from_sinks(models))
+    Ok(catalog)
 }
 
 #[cfg(test)]
@@ -184,6 +382,70 @@ patterns = ["subprocess.run", "os.system"]
         assert_eq!(models[0].confidence, Confidence::High);
         assert_eq!(models[0].patterns, vec!["subprocess.run", "os.system"]);
         assert_eq!(models[0].rule_id(), "python.command_execution");
+    }
+
+    #[test]
+    fn parse_sources_reads_a_model_list() {
+        let toml_str = r#"
+[[sources]]
+language = "python"
+category = "env_var"
+patterns = ["os.environ", "os.getenv"]
+source = "manual"
+"#;
+        let models = parse_sources(toml_str).expect("parse sources");
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].language, "python");
+        assert_eq!(models[0].category, "env_var");
+        assert_eq!(models[0].patterns, vec!["os.environ", "os.getenv"]);
+        assert_eq!(models[0].source.as_deref(), Some("manual"));
+    }
+
+    #[test]
+    fn parse_sanitizers_reads_a_model_list() {
+        let toml_str = r#"
+[[sanitizers]]
+language = "python"
+patterns = ["shlex.quote"]
+neutralizes = ["command_execution"]
+"#;
+        let models = parse_sanitizers(toml_str).expect("parse sanitizers");
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].patterns, vec!["shlex.quote"]);
+        assert_eq!(models[0].neutralizes, vec!["command_execution"]);
+    }
+
+    #[test]
+    fn parse_model_file_accepts_mixed_and_single_kinds() {
+        let sink_only = "[[sinks]]\nlanguage = \"python\"\ncategory = \"file_read\"\nseverity = \"medium\"\nconfidence = \"low\"\nreason = \"r\"\npatterns = [\"openpyxl.load_workbook\"]\n";
+        let (s, so, sa) = parse_model_file(sink_only).expect("sink-only file");
+        assert_eq!(s.len(), 1);
+        assert!(so.is_empty());
+        assert!(sa.is_empty());
+
+        let mixed = r#"
+[[sinks]]
+language = "python"
+category = "file_read"
+severity = "medium"
+confidence = "low"
+reason = "r"
+patterns = ["openpyxl.load_workbook"]
+
+[[sources]]
+language = "python"
+category = "env_var"
+patterns = ["os.environ"]
+
+[[sanitizers]]
+language = "python"
+patterns = ["shlex.quote"]
+neutralizes = ["command_execution"]
+"#;
+        let (s, so, sa) = parse_model_file(mixed).expect("mixed file");
+        assert_eq!(s.len(), 1);
+        assert_eq!(so.len(), 1);
+        assert_eq!(sa.len(), 1);
     }
 
     #[test]
@@ -220,6 +482,19 @@ patterns = ["subprocess.run", "os.system"]
     }
 
     #[test]
+    fn catalog_holds_all_three_model_classes() {
+        let cat = default_catalog();
+        assert!(cat.sink_count() >= 34);
+        assert!(cat.source_count() > 0, "built-in source models should load");
+        assert!(
+            cat.sanitizer_count() > 0,
+            "built-in sanitizer models should load"
+        );
+        assert!(cat.sources_for_language("python").len() > 0);
+        assert!(cat.sanitizers_for_language("python").len() > 0);
+    }
+
+    #[test]
     fn default_catalog_matches_legacy_sink_counts() {
         let cat = default_catalog();
         // Legacy counts: python 13, rust 11, javascript 10.
@@ -228,14 +503,17 @@ patterns = ["subprocess.run", "os.system"]
         assert_eq!(cat.sinks_for_language("javascript").len(), 10);
         assert_eq!(cat.sink_count(), 34);
         // Spot-check a few derived rule_ids.
-        assert!(cat
-            .sinks_for_language("rust")
-            .iter()
-            .any(|m| m.category == "dynamic_loading" && m.rule_id() == "rust.dynamic_loading"));
-        assert!(cat
-            .sinks_for_language("javascript")
-            .iter()
-            .any(|m| m.category == "deserialization_rce" && m.rule_id() == "js.deserialization_rce"));
+        assert!(
+            cat.sinks_for_language("rust")
+                .iter()
+                .any(|m| m.category == "dynamic_loading" && m.rule_id() == "rust.dynamic_loading")
+        );
+        assert!(
+            cat.sinks_for_language("javascript")
+                .iter()
+                .any(|m| m.category == "deserialization_rce"
+                    && m.rule_id() == "js.deserialization_rce")
+        );
     }
 
     #[test]
@@ -277,6 +555,10 @@ category = "command_execution"
         assert!(rules.iter().any(|r| r.package == "openpyxl"
             && r.read_category.as_deref() == Some("file_read")
             && r.write_category.as_deref() == Some("file_write")));
-        assert!(rules.iter().any(|r| r.package == "sh" && r.category.as_deref() == Some("command_execution")));
+        assert!(
+            rules
+                .iter()
+                .any(|r| r.package == "sh" && r.category.as_deref() == Some("command_execution"))
+        );
     }
 }

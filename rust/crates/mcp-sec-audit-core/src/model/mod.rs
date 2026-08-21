@@ -10,7 +10,7 @@ pub use enums::{
 pub use facts::{
     AssignFact, CallArg, CallFact, CallKwarg, CallResolution, DataFlowFact, EntryPointEvidence,
     EntryPointFact, Fact, FactBase, FindingFact, FunctionFact, ImportFact, JsonMap, ParamInfo,
-    PathStep, RuntimeEventFact, SCHEMA_VERSION, SinkFact, SourceFact,
+    PathStep, RuntimeEventFact, SCHEMA_VERSION, SanitizerFact, SinkFact, SourceFact,
 };
 pub use report::{CapabilityFinding, DetectionResult};
 pub use static_result::{

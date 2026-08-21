@@ -1,6 +1,6 @@
-mod ids;
 pub(crate) mod calls;
 pub(crate) mod functions;
+mod ids;
 pub(crate) mod imports;
 pub(crate) mod mcp;
 pub(crate) mod sinks;
@@ -20,11 +20,12 @@ use swc_core::{
 };
 
 use crate::model::{
-    AssignFact, CallFact, Fact, FactBase, ImportFact, ImportKind, SourceFact,
+    AssignFact, CallFact, Confidence, Fact, FactBase, ImportFact, ImportKind, SanitizerFact,
+    SourceFact,
 };
-use crate::models::SinkModel;
+use crate::models::{SanitizerModel, SinkModel, SourceModel};
 
-use super::ExtractionDiagnostic;
+use super::{ExtractionDiagnostic, matches_callee_pattern};
 
 // Re-export diagnostics types for external consumers.
 pub use self::types::{JsTsDiagnostic, JsTsExtractionResult};
@@ -36,7 +37,10 @@ mod types {
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum JsTsDiagnostic {
-        Fatal { file: String, message: String },
+        Fatal {
+            file: String,
+            message: String,
+        },
         NonFatal {
             file: String,
             line: u32,
@@ -59,7 +63,12 @@ mod types {
                     line,
                     kind,
                     message,
-                } => ExtractionDiagnostic { file, line, kind, message },
+                } => ExtractionDiagnostic {
+                    file,
+                    line,
+                    kind,
+                    message,
+                },
             }
         }
     }
@@ -94,6 +103,8 @@ pub(crate) struct JsTsFactExtractor<'a> {
     file: PathBuf,
     source: &'a str,
     sinks: &'a [SinkModel],
+    sources: &'a [SourceModel],
+    sanitizers: &'a [SanitizerModel],
     cm: SourceMap,
     facts: Vec<Fact>,
     diagnostics: Vec<JsTsDiagnostic>,
@@ -114,12 +125,22 @@ pub(crate) struct JsTsFactExtractor<'a> {
 }
 
 impl<'a> JsTsFactExtractor<'a> {
-    fn new(root: &Path, file: &Path, source: &'a str, cm: SourceMap, sinks: &'a [SinkModel]) -> Self {
+    fn new(
+        root: &Path,
+        file: &Path,
+        source: &'a str,
+        cm: SourceMap,
+        sinks: &'a [SinkModel],
+        sources: &'a [SourceModel],
+        sanitizers: &'a [SanitizerModel],
+    ) -> Self {
         Self {
             root: root.to_path_buf(),
             file: file.to_path_buf(),
             source,
             sinks,
+            sources,
+            sanitizers,
             cm,
             facts: Vec::new(),
             diagnostics: Vec::new(),
@@ -278,6 +299,7 @@ impl<'a> JsTsFactExtractor<'a> {
                         kind: "mcp_tool_parameter".to_string(),
                         function_id: info.func_id.clone(),
                         name: param.name.clone(),
+                        call_id: None,
                         confidence: crate::model::Confidence::High,
                     }));
                 }
@@ -309,6 +331,8 @@ pub fn extract_js_ts_facts(
     file: &Path,
     source: &str,
     sinks: &[SinkModel],
+    sources: &[SourceModel],
+    sanitizers: &[SanitizerModel],
 ) -> JsTsExtractionResult {
     // Skip .d.ts / .d.mts / .d.cts declaration files
     if let Some(name) = file.file_stem() {
@@ -341,7 +365,7 @@ pub fn extract_js_ts_facts(
         }
     };
 
-    let mut extractor = JsTsFactExtractor::new(root, file, source, cm, sinks);
+    let mut extractor = JsTsFactExtractor::new(root, file, source, cm, sinks, sources, sanitizers);
     module.visit_with(&mut extractor);
 
     // Post-processing
@@ -372,17 +396,20 @@ impl Visit for JsTsFactExtractor<'_> {
         let file = self.rel_path();
         let line = self.line_of(n.span);
         imports::extract_esm_import(
-            n, &file, line, EXTRACTOR_NAME,
-            &mut self.facts, &mut self.import_aliases,
+            n,
+            &file,
+            line,
+            EXTRACTOR_NAME,
+            &mut self.facts,
+            &mut self.import_aliases,
         );
         n.visit_children_with(self);
     }
 
     fn visit_fn_decl(&mut self, n: &FnDecl) {
         let name = n.ident.sym.to_string();
-        let qual_name = functions::build_qualified_name(
-            &self.function_stack, &self.class_stack, &name,
-        );
+        let qual_name =
+            functions::build_qualified_name(&self.function_stack, &self.class_stack, &name);
         self.function_stack.push(qual_name.clone());
 
         let file = self.rel_path();
@@ -390,12 +417,19 @@ impl Visit for JsTsFactExtractor<'_> {
         let func_id = ids::make_js_ts_function_id(&self.root, &self.file, &qual_name);
         let params = functions::params_from_fn(&n.function, self.source);
 
-        self.facts.push(Fact::Function(functions::create_function_fact(
-            func_id, file.clone(), line, EXTRACTOR_NAME.to_string(),
-            "javascript".to_string(), name, qual_name,
-            self.line_of(n.function.span), params,
-            self.class_stack.last().cloned(),
-        )));
+        self.facts
+            .push(Fact::Function(functions::create_function_fact(
+                func_id,
+                file.clone(),
+                line,
+                EXTRACTOR_NAME.to_string(),
+                "javascript".to_string(),
+                name,
+                qual_name,
+                self.line_of(n.function.span),
+                params,
+                self.class_stack.last().cloned(),
+            )));
 
         n.visit_children_with(self);
         self.function_stack.pop();
@@ -425,7 +459,8 @@ impl Visit for JsTsFactExtractor<'_> {
                             if let Some(first_arg) = call.args.first() {
                                 if let Expr::Lit(Lit::Str(s)) = first_arg.expr.as_ref() {
                                     let module = s.value.to_string();
-                                    self.require_aliases.insert(var_name.clone(), module.clone());
+                                    self.require_aliases
+                                        .insert(var_name.clone(), module.clone());
                                     self.facts.push(Fact::Import(ImportFact {
                                         base: FactBase {
                                             id: format!("import:{file}:{line}:{module}"),
@@ -449,8 +484,13 @@ impl Visit for JsTsFactExtractor<'_> {
                                 if let Expr::Lit(Lit::Str(s)) = first_arg.expr.as_ref() {
                                     let module = s.value.to_string();
                                     imports::extract_destructured_require(
-                                        declarator, &module, &file, line, EXTRACTOR_NAME,
-                                        &mut self.facts, &mut self.require_aliases,
+                                        declarator,
+                                        &module,
+                                        &file,
+                                        line,
+                                        EXTRACTOR_NAME,
+                                        &mut self.facts,
+                                        &mut self.require_aliases,
                                     );
                                 }
                             }
@@ -463,19 +503,29 @@ impl Visit for JsTsFactExtractor<'_> {
                     if let Pat::Ident(id) = &declarator.name {
                         let name = id.sym.to_string();
                         let qual_name = functions::build_qualified_name(
-                            &self.function_stack, &self.class_stack, &name,
+                            &self.function_stack,
+                            &self.class_stack,
+                            &name,
                         );
                         let line = self.line_of(declarator.span);
-                        let func_id = ids::make_js_ts_function_id(&self.root, &self.file, &qual_name);
+                        let func_id =
+                            ids::make_js_ts_function_id(&self.root, &self.file, &qual_name);
                         let synthetic_fn = Self::function_from_arrow(arrow);
                         let params = functions::params_from_fn(&synthetic_fn, self.source);
 
-                        self.facts.push(Fact::Function(functions::create_function_fact(
-                            func_id, file.clone(), line, EXTRACTOR_NAME.to_string(),
-                            "javascript".to_string(), name.clone(), qual_name.clone(),
-                            self.line_of(arrow.span), params,
-                            self.class_stack.last().cloned(),
-                        )));
+                        self.facts
+                            .push(Fact::Function(functions::create_function_fact(
+                                func_id,
+                                file.clone(),
+                                line,
+                                EXTRACTOR_NAME.to_string(),
+                                "javascript".to_string(),
+                                name.clone(),
+                                qual_name.clone(),
+                                self.line_of(arrow.span),
+                                params,
+                                self.class_stack.last().cloned(),
+                            )));
                     }
                 }
 
@@ -484,18 +534,28 @@ impl Visit for JsTsFactExtractor<'_> {
                     if let Pat::Ident(id) = &declarator.name {
                         let name = id.sym.to_string();
                         let qual_name = functions::build_qualified_name(
-                            &self.function_stack, &self.class_stack, &name,
+                            &self.function_stack,
+                            &self.class_stack,
+                            &name,
                         );
                         let line = self.line_of(declarator.span);
-                        let func_id = ids::make_js_ts_function_id(&self.root, &self.file, &qual_name);
+                        let func_id =
+                            ids::make_js_ts_function_id(&self.root, &self.file, &qual_name);
                         let params = functions::params_from_fn(&fn_expr.function, self.source);
 
-                        self.facts.push(Fact::Function(functions::create_function_fact(
-                            func_id, file.clone(), line, EXTRACTOR_NAME.to_string(),
-                            "javascript".to_string(), name.clone(), qual_name.clone(),
-                            self.line_of(fn_expr.function.span), params,
-                            self.class_stack.last().cloned(),
-                        )));
+                        self.facts
+                            .push(Fact::Function(functions::create_function_fact(
+                                func_id,
+                                file.clone(),
+                                line,
+                                EXTRACTOR_NAME.to_string(),
+                                "javascript".to_string(),
+                                name.clone(),
+                                qual_name.clone(),
+                                self.line_of(fn_expr.function.span),
+                                params,
+                                self.class_stack.last().cloned(),
+                            )));
                     }
                 }
 
@@ -505,10 +565,7 @@ impl Visit for JsTsFactExtractor<'_> {
                         let value_str = Self::expr_to_string_for_assign(init_expr);
                         if !value_str.is_empty() && value_str != "<call>" {
                             let line = self.line_of(declarator.span);
-                            let assign_id = format!(
-                                "assign:{}:{}:{}",
-                                file, line, id.sym
-                            );
+                            let assign_id = format!("assign:{}:{}:{}", file, line, id.sym);
                             self.facts.push(Fact::Assign(AssignFact {
                                 base: FactBase {
                                     id: assign_id,
@@ -538,7 +595,9 @@ impl Visit for JsTsFactExtractor<'_> {
         if mcp::is_mcp_registration(&callee_str) {
             // MCP registration: server.tool("name", handler)
             if let Some(second_arg) = n.args.get(1) {
-                let tool_name = n.args.first()
+                let tool_name = n
+                    .args
+                    .first()
                     .and_then(|a| match a.expr.as_ref() {
                         Expr::Lit(Lit::Str(s)) => Some(s.value.to_string()),
                         Expr::Ident(id) => Some(id.sym.to_string()),
@@ -551,7 +610,9 @@ impl Visit for JsTsFactExtractor<'_> {
                         // Inline arrow handler
                         let handler_name = format!("{tool_name}_handler");
                         let qual_name = functions::build_qualified_name(
-                            &self.function_stack, &self.class_stack, &handler_name,
+                            &self.function_stack,
+                            &self.class_stack,
+                            &handler_name,
                         );
                         let handler_func_id =
                             ids::make_js_ts_function_id(&self.root, &self.file, &qual_name);
@@ -559,18 +620,19 @@ impl Visit for JsTsFactExtractor<'_> {
                         let params = functions::params_from_fn(&synthetic_fn, self.source);
 
                         // Create FunctionFact for handler
-                        self.facts.push(Fact::Function(functions::create_function_fact(
-                            handler_func_id.clone(),
-                            file.clone(),
-                            line,
-                            EXTRACTOR_NAME.to_string(),
-                            "javascript".to_string(),
-                            handler_name,
-                            qual_name,
-                            self.line_of(arrow.span),
-                            params,
-                            self.class_stack.last().cloned(),
-                        )));
+                        self.facts
+                            .push(Fact::Function(functions::create_function_fact(
+                                handler_func_id.clone(),
+                                file.clone(),
+                                line,
+                                EXTRACTOR_NAME.to_string(),
+                                "javascript".to_string(),
+                                handler_name,
+                                qual_name,
+                                self.line_of(arrow.span),
+                                params,
+                                self.class_stack.last().cloned(),
+                            )));
 
                         // Create EntryPointFact + SourceFacts
                         mcp::process_inline_arrow_handler(
@@ -616,9 +678,8 @@ impl Visit for JsTsFactExtractor<'_> {
         }
 
         // Regular call: create CallFact
-        let (normalized_callee, import_alias) = calls::resolve_callee(
-            &callee_str, &self.import_aliases, &self.require_aliases,
-        );
+        let (normalized_callee, import_alias) =
+            calls::resolve_callee(&callee_str, &self.import_aliases, &self.require_aliases);
         let caller = self.current_caller_id();
         let args = calls::extract_call_args(n);
         let call_id = format!("call:{file}:{line}:0");
@@ -630,7 +691,7 @@ impl Visit for JsTsFactExtractor<'_> {
                 line,
                 extractor: EXTRACTOR_NAME.to_string(),
             },
-            caller,
+            caller: caller.clone(),
             callee: callee_str,
             normalized_callee: Some(normalized_callee.clone()),
             column: None,
@@ -645,7 +706,63 @@ impl Visit for JsTsFactExtractor<'_> {
         }));
 
         // Check sinks
-        sinks::check_sink(&normalized_callee, &call_id, line, &file, EXTRACTOR_NAME, &mut self.facts, self.sinks);
+        sinks::check_sink(
+            &normalized_callee,
+            &call_id,
+            line,
+            &file,
+            EXTRACTOR_NAME,
+            &mut self.facts,
+            self.sinks,
+        );
+
+        // Check model-driven source / sanitizer models (three-model taint).
+        if let Some(src) = self
+            .sources
+            .iter()
+            .find(|m| matches_callee_pattern(&normalized_callee, &m.patterns))
+        {
+            self.facts.push(Fact::Source(SourceFact {
+                base: FactBase {
+                    id: format!("source:model:{}:{}", call_id, src.category),
+                    file: file.clone(),
+                    line,
+                    extractor: EXTRACTOR_NAME.to_string(),
+                },
+                kind: src.category.clone(),
+                function_id: caller.clone(),
+                name: src
+                    .patterns
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| normalized_callee.clone()),
+                confidence: Confidence::Medium,
+                call_id: Some(call_id.clone()),
+            }));
+        }
+        if let Some(san) = self
+            .sanitizers
+            .iter()
+            .find(|m| matches_callee_pattern(&normalized_callee, &m.patterns))
+        {
+            self.facts.push(Fact::Sanitizer(SanitizerFact {
+                base: FactBase {
+                    id: format!(
+                        "sanitizer:{}:{}:{}",
+                        file,
+                        line,
+                        normalized_callee.replace(['.', ':', '/'], "_")
+                    ),
+                    file: file.clone(),
+                    line,
+                    extractor: EXTRACTOR_NAME.to_string(),
+                },
+                call_id: call_id.clone(),
+                sanitizer_name: normalized_callee.clone(),
+                neutralizes: san.neutralizes.clone(),
+                confidence: Confidence::High,
+            }));
+        }
 
         n.visit_children_with(self);
     }
@@ -655,9 +772,8 @@ impl Visit for JsTsFactExtractor<'_> {
             PropName::Ident(id) => id.sym.to_string(),
             _ => "<method>".to_string(),
         };
-        let qual_name = functions::build_qualified_name(
-            &self.function_stack, &self.class_stack, &name,
-        );
+        let qual_name =
+            functions::build_qualified_name(&self.function_stack, &self.class_stack, &name);
         self.function_stack.push(qual_name.clone());
 
         let file = self.rel_path();
@@ -665,12 +781,19 @@ impl Visit for JsTsFactExtractor<'_> {
         let func_id = ids::make_js_ts_function_id(&self.root, &self.file, &qual_name);
         let params = functions::params_from_fn(&n.function, self.source);
 
-        self.facts.push(Fact::Function(functions::create_function_fact(
-            func_id, file, line, EXTRACTOR_NAME.to_string(),
-            "javascript".to_string(), name, qual_name,
-            self.line_of(n.function.span), params,
-            self.class_stack.last().cloned(),
-        )));
+        self.facts
+            .push(Fact::Function(functions::create_function_fact(
+                func_id,
+                file,
+                line,
+                EXTRACTOR_NAME.to_string(),
+                "javascript".to_string(),
+                name,
+                qual_name,
+                self.line_of(n.function.span),
+                params,
+                self.class_stack.last().cloned(),
+            )));
 
         n.visit_children_with(self);
         self.function_stack.pop();

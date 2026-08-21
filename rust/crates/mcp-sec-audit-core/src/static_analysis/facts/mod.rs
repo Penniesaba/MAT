@@ -10,13 +10,13 @@ mod rust;
 
 pub use ids::{
     make_assign_id, make_call_id, make_entrypoint_id, make_fact_id, make_function_id,
-    make_import_id, make_sink_id, make_source_id,
+    make_import_id, make_sanitizer_id, make_sink_id, make_source_id,
 };
-pub use js_ts::{extract_js_ts_facts, JsTsDiagnostic, JsTsExtractionResult};
+pub use js_ts::{JsTsDiagnostic, JsTsExtractionResult, extract_js_ts_facts};
 pub use pipeline::extract_static_facts;
 pub(crate) use pipeline::{extract_static_facts_with_catalog, load_catalog};
 pub use python::extract_python_facts;
-pub use rust::{extract_rust_facts, RustExtractionResult};
+pub use rust::{RustExtractionResult, extract_rust_facts};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtractionDiagnostic {
@@ -78,6 +78,7 @@ pub(crate) fn fact_sort_key(fact: &Fact) -> String {
         Fact::Entrypoint(item) => format!("{:010}:{}", item.base.line, item.base.id),
         Fact::Call(item) => format!("{:010}:{}", item.base.line, item.base.id),
         Fact::Sink(item) => format!("{:010}:{}", item.base.line, item.base.id),
+        Fact::Sanitizer(item) => format!("{:010}:{}", item.base.line, item.base.id),
         Fact::Source(item) => format!("{:010}:{}", item.base.line, item.base.id),
         Fact::Assign(item) => format!("{:010}:{}", item.base.line, item.base.id),
         Fact::Dataflow(item) => format!("{:010}:{}", item.base.line, item.base.id),
@@ -90,3 +91,15 @@ pub(crate) fn display_path(path: &Path) -> String {
     path.display().to_string().replace('\\', "/")
 }
 
+/// Match a normalized callee against a model's patterns using the language's
+/// separator rules (`.` for Python/JS, `::` for Rust): exact, trailing-method,
+/// or leading-module prefix.
+pub(crate) fn matches_callee_pattern(callee: &str, patterns: &[String]) -> bool {
+    patterns.iter().any(|pattern| {
+        callee == pattern
+            || callee.ends_with(&format!(".{pattern}"))
+            || callee.ends_with(&format!("::{pattern}"))
+            || callee.starts_with(&format!("{pattern}."))
+            || callee.starts_with(&format!("{pattern}::"))
+    })
+}

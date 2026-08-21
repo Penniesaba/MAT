@@ -1,0 +1,15 @@
+# Python sanitizer models: functions that neutralize taint for specific sink
+# categories. A tainted value flowing through one of these no longer reaches
+# sinks of the listed categories.
+
+[[sanitizers]]
+language = "python"
+patterns = ["shlex.quote", "shlex.join"]
+neutralizes = ["command_execution"]
+source = "manual"
+
+[[sanitizers]]
+language = "python"
+patterns = ["html.escape", "markupsafe.escape", "markupsafe.Markup"]
+neutralizes = ["template_injection", "prompt_injection"]
+source = "manual"

@@ -6,18 +6,17 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 
+use crate::model::CodeqlOutput;
 use crate::{
     AgentOutput, ConfigSnapshot, Fact, FusedFinding, ModelCandidate, ModelCatalog,
     RuleAnalysisResult, RuleBook, RuntimeConfig, Severity, StaticAnalysisResult,
     StaticAnalysisSummary, TaintAnalysisResult, load_rulebook,
 };
-use crate::model::CodeqlOutput;
 
-use super::{
-    agent, codeql, diff, fusion, learning, rule, taint, validate, DiscoveredFile,
-    discover_files,
-};
 use super::facts::load_catalog;
+use super::{
+    DiscoveredFile, agent, codeql, diff, discover_files, fusion, learning, rule, taint, validate,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaticScanContext {
@@ -67,7 +66,10 @@ pub fn run_static_scan_with_progress(
     }
 
     let discovery = discover_files(&targets, &effective_config.scan)?;
-    progress(&format!("Discovered {} files", discovery.discovered_files.len()));
+    progress(&format!(
+        "Discovered {} files",
+        discovery.discovered_files.len()
+    ));
 
     let effective_rulebook_paths = if rulebook_paths.is_empty() {
         effective_config
@@ -166,7 +168,10 @@ pub fn run_static_scan_with_progress(
             elapsed_ms = start.elapsed().as_millis() as u64,
             "agent analysis complete"
         );
-        progress(&format!("Agent analysis done: {} findings", output.findings.len()));
+        progress(&format!(
+            "Agent analysis done: {} findings",
+            output.findings.len()
+        ));
         output
     };
 
@@ -208,7 +213,10 @@ pub fn run_static_scan_with_progress(
         let gate = learning::gate_sink_candidate(c, &rules);
         let representability = diff::classify_candidate(c);
         let g1_pass = c.kind == "sink"
-            && matches!(gate, learning::GateDecision::Hot | learning::GateDecision::Warm);
+            && matches!(
+                gate,
+                learning::GateDecision::Hot | learning::GateDecision::Warm
+            );
         let g2_pass = matches!(
             representability,
             diff::Representability::MadSink | diff::Representability::TaintModel
@@ -230,12 +238,23 @@ pub fn run_static_scan_with_progress(
     // 无进化可做时，直接以阶段 1 结果走融合+汇总，返回（不重跑阶段 2）。
     let Some(staged) = learning::stage_catalog_evolution(&base_catalog, &gated) else {
         progress("Differential: no evolution candidates — skipping phase 2");
-        return finish(&ctx, &targets, rule_results, taint_results_1, agent_output_1, codeql_output_1, facts_1, progress);
+        return finish(
+            &ctx,
+            &targets,
+            rule_results,
+            taint_results_1,
+            agent_output_1,
+            codeql_output_1,
+            facts_1,
+            progress,
+        );
     };
 
     tracing::info!(
         target: "mcp_sec_audit::evolution",
-        staged = staged.models.len(),
+        sinks = staged.sinks.len(),
+        sources = staged.sources.len(),
+        sanitizers = staged.sanitizers.len(),
         fingerprint = %staged.fingerprint,
         "staged catalog evolution"
     );
@@ -250,8 +269,13 @@ pub fn run_static_scan_with_progress(
 
     // 进化后的 catalog（内存中 base + staged）；写 staging 作可观测/回退锚点。
     let mut evolved_catalog = base_catalog.clone();
-    evolved_catalog.merge(ModelCatalog::from_sinks(staged.models.clone()));
-    let staging_dir = std::env::temp_dir().join(format!("mcp-sec-audit-staging-{}", std::process::id()));
+    evolved_catalog.merge(ModelCatalog::from_models(
+        staged.sinks.clone(),
+        staged.sources.clone(),
+        staged.sanitizers.clone(),
+    ));
+    let staging_dir =
+        std::env::temp_dir().join(format!("mcp-sec-audit-staging-{}", std::process::id()));
     learning::write_staging(&staging_dir, &staged)?;
 
     // 验证提示词 prompt'：阶段 1 的 a-only 全量作为「请复核」项（a1/a2 混沌，暂不区分）。
@@ -301,7 +325,10 @@ pub fn run_static_scan_with_progress(
             elapsed_ms = start.elapsed().as_millis() as u64,
             "agent analysis complete (phase 2)"
         );
-        progress(&format!("Agent phase 2 done: {} findings", output.findings.len()));
+        progress(&format!(
+            "Agent phase 2 done: {} findings",
+            output.findings.len()
+        ));
         output
     };
 
@@ -322,7 +349,10 @@ pub fn run_static_scan_with_progress(
             elapsed_ms = start.elapsed().as_millis() as u64,
             "codeql analysis complete (phase 2)"
         );
-        progress(&format!("CodeQL phase 2 done: {} findings", output.results.len()));
+        progress(&format!(
+            "CodeQL phase 2 done: {} findings",
+            output.results.len()
+        ));
         for diag in &output.diagnostics {
             tracing::warn!(target: "mcp_sec_audit::codeql", "{diag}");
         }
@@ -341,27 +371,35 @@ pub fn run_static_scan_with_progress(
     let migration = validate::migrate(&diff_1, &diff_2);
     tracing::info!(target: "mcp_sec_audit::validate", ?migration, "cross-stage migration");
 
-    let (final_taint, final_agent, final_codeql, final_facts) =
-        if migration.should_rollback() {
-            learning::rollback_staging(&staging_dir)?;
-            tracing::warn!(
-                target: "mcp_sec_audit::evolution",
-                "evolution polluted standard line — rolling back staged models"
-            );
-            (taint_results_1, agent_output_1, codeql_output_1, facts_1)
-        } else {
-            if let Some(dir) = &ctx.config.static_.learned_dir {
-                learning::write_learned_sinks(std::path::Path::new(dir), &staged.models)?;
-            }
-            tracing::info!(
-                target: "mcp_sec_audit::evolution",
-                learned = staged.models.len(),
-                "promoted staged models to learned"
-            );
-            (taint_results_2, agent_output_2, codeql_output_2, facts_2)
-        };
+    let (final_taint, final_agent, final_codeql, final_facts) = if migration.should_rollback() {
+        learning::rollback_staging(&staging_dir)?;
+        tracing::warn!(
+            target: "mcp_sec_audit::evolution",
+            "evolution polluted standard line — rolling back staged models"
+        );
+        (taint_results_1, agent_output_1, codeql_output_1, facts_1)
+    } else {
+        if let Some(dir) = &ctx.config.static_.learned_dir {
+            learning::write_learned_models(std::path::Path::new(dir), &staged)?;
+        }
+        tracing::info!(
+            target: "mcp_sec_audit::evolution",
+            learned = staged.sinks.len() + staged.sources.len() + staged.sanitizers.len(),
+            "promoted staged models to learned"
+        );
+        (taint_results_2, agent_output_2, codeql_output_2, facts_2)
+    };
 
-    finish(&ctx, &targets, rule_results, final_taint, final_agent, final_codeql, final_facts, progress)
+    finish(
+        &ctx,
+        &targets,
+        rule_results,
+        final_taint,
+        final_agent,
+        final_codeql,
+        final_facts,
+        progress,
+    )
 }
 
 /// 从 a-only 分区构建「请复核」项：取每组首个标准线结果（codeql > rule > taint）
@@ -475,7 +513,8 @@ fn finish(
         "differential partition"
     );
 
-    let codeql_fused_count = fused_findings.iter()
+    let codeql_fused_count = fused_findings
+        .iter()
         .filter(|f| f.supported_by.contains(&"codeql".to_string()))
         .count();
 
@@ -488,7 +527,8 @@ fn finish(
         codeql_result_count: codeql_output.results.len(),
         codeql_fused_count,
         fused_finding_count: fused_findings.len(),
-        highest_severity: fused_findings.iter()
+        highest_severity: fused_findings
+            .iter()
             .map(|f| f.severity.clone())
             .max_by(|a, b| scorer_ord(a).cmp(&scorer_ord(b))),
         risk_level: compute_risk_level(&fused_findings),
@@ -628,10 +668,20 @@ fn compute_risk_level(findings: &[FusedFinding]) -> String {
     let has_critical = findings.iter().any(|f| f.severity == Severity::Critical);
     let has_high = findings.iter().any(|f| f.severity == Severity::High);
     let has_medium = findings.iter().any(|f| f.severity == Severity::Medium);
-    if has_critical { return "critical".into(); }
-    if has_high { return "high".into(); }
-    if has_medium { return "medium".into(); }
-    if findings.is_empty() { "none".into() } else { "low".into() }
+    if has_critical {
+        return "critical".into();
+    }
+    if has_high {
+        return "high".into();
+    }
+    if has_medium {
+        return "medium".into();
+    }
+    if findings.is_empty() {
+        "none".into()
+    } else {
+        "low".into()
+    }
 }
 
 fn scorer_ord(s: &Severity) -> u8 {
@@ -676,8 +726,8 @@ mod tests {
 
         let mut config = RuntimeConfig::default();
         config.static_.taint.enabled = true;
-        let result = run_static_scan(&config, &[rules.clone()], Some(&[root.clone()]))
-            .expect("run scan");
+        let result =
+            run_static_scan(&config, &[rules.clone()], Some(&[root.clone()])).expect("run scan");
         assert_eq!(result.summary.rule_result_count, 1);
         assert_eq!(result.rule_results[0].rule_id, "command_exec");
         assert_eq!(result.summary.taint_result_count, 0);
@@ -727,8 +777,7 @@ def run_command(command: str):
 
         let mut config = RuntimeConfig::default();
         config.static_.taint.enabled = true;
-        let result = run_static_scan(&config, &[rules], Some(&[root.clone()]))
-            .expect("run scan");
+        let result = run_static_scan(&config, &[rules], Some(&[root.clone()])).expect("run scan");
 
         assert!(!result.facts.is_empty());
         assert_eq!(result.summary.fact_count, result.facts.len());
@@ -834,14 +883,15 @@ server.tool("run_command", async (params) => {
 
         let mut config = RuntimeConfig::default();
         config.static_.taint.enabled = true;
-        let result =
-            run_static_scan(&config, &[rules], Some(&[root.clone()]))
-                .expect("run scan");
+        let result = run_static_scan(&config, &[rules], Some(&[root.clone()])).expect("run scan");
 
         assert!(!result.facts.is_empty());
         assert_eq!(result.summary.fact_count, result.facts.len());
         assert!(
-            result.facts.iter().any(|fact| matches!(fact, Fact::Import(_)))
+            result
+                .facts
+                .iter()
+                .any(|fact| matches!(fact, Fact::Import(_)))
         );
         assert!(
             result
@@ -907,9 +957,7 @@ server.tool("run_command", async (params: ToolParams) => {
 
         let mut config = RuntimeConfig::default();
         config.static_.taint.enabled = true;
-        let result =
-            run_static_scan(&config, &[rules], Some(&[root.clone()]))
-                .expect("run scan");
+        let result = run_static_scan(&config, &[rules], Some(&[root.clone()])).expect("run scan");
 
         assert!(!result.facts.is_empty());
         assert!(
@@ -947,8 +995,8 @@ def run_command(command: str):
         let mut config = RuntimeConfig::default();
         config.static_.taint.enabled = true;
         // codeql is disabled by default — count should be 0
-        let result = run_static_scan(&config, &[rules.clone()], Some(&[root.clone()]))
-            .expect("run scan");
+        let result =
+            run_static_scan(&config, &[rules.clone()], Some(&[root.clone()])).expect("run scan");
         assert_eq!(result.summary.codeql_result_count, 0);
         assert!(result.codeql_results.is_empty());
         assert!(result.summary.taint_result_count > 0);
@@ -967,10 +1015,12 @@ def run_command(command: str):
         let mut config = RuntimeConfig::default();
         config.static_.codeql.enabled = true;
         let result = run_static_scan(&config, &[rules], Some(&[root.clone()])).expect("run scan");
-        assert!(result
-            .codeql_diagnostics
-            .iter()
-            .any(|d| d.contains("No CodeQL-supported language")));
+        assert!(
+            result
+                .codeql_diagnostics
+                .iter()
+                .any(|d| d.contains("No CodeQL-supported language"))
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -981,18 +1031,20 @@ def run_command(command: str):
         fs::write(
             root.join("server.py"),
             "import subprocess\nsubprocess.run('id')\n",
-        ).expect("write file");
+        )
+        .expect("write file");
 
         let mut config = RuntimeConfig::default();
         config.static_.taint.enabled = true;
         config.fusion.enabled = true;
-        let result = run_static_scan(&config, &[rules], Some(&[root.clone()]))
-            .expect("run scan");
+        let result = run_static_scan(&config, &[rules], Some(&[root.clone()])).expect("run scan");
 
         assert!(result.summary.fused_finding_count > 0);
         assert!(!result.fused_findings.is_empty());
         // Rule line found subprocess.run — at least one fused finding
-        let has_rule_support = result.fused_findings.iter()
+        let has_rule_support = result
+            .fused_findings
+            .iter()
             .any(|f| f.supported_by.contains(&"rule".to_string()));
         assert!(has_rule_support);
 
@@ -1006,13 +1058,13 @@ def run_command(command: str):
         fs::write(
             root.join("server.py"),
             "import subprocess\nsubprocess.run('id')\n",
-        ).expect("write file");
+        )
+        .expect("write file");
 
         let mut config = RuntimeConfig::default();
         config.static_.taint.enabled = true;
         config.fusion.enabled = false;
-        let result = run_static_scan(&config, &[rules], Some(&[root.clone()]))
-            .expect("run scan");
+        let result = run_static_scan(&config, &[rules], Some(&[root.clone()])).expect("run scan");
 
         assert_eq!(result.summary.fused_finding_count, 0);
         assert!(result.fused_findings.is_empty());
@@ -1059,8 +1111,7 @@ printf '%s\n' '{"findings":[],"model_candidates":[{"kind":"sink","name":"openpyx
         config.static_.agent.enabled = true;
         config.static_.agent.provider = stub.display().to_string();
 
-        let result = run_static_scan(&config, &[rules], Some(&[root.clone()]))
-            .expect("run scan");
+        let result = run_static_scan(&config, &[rules], Some(&[root.clone()])).expect("run scan");
 
         // The agent-proposed sink model should be surfaced in the result.
         assert_eq!(

@@ -2,11 +2,11 @@ use std::fs;
 
 use anyhow::{Context, Result, bail};
 
-use crate::models::{default_catalog, load_models_dir, ModelCatalog};
+use crate::models::{ModelCatalog, default_catalog, load_models_dir};
 use crate::static_analysis::{infer, recon};
 use crate::{Fact, ScanLanguage, static_analysis::pipeline::StaticScanContext};
 
-use super::{extract_js_ts_facts, extract_python_facts, extract_rust_facts, ExtractionDiagnostic};
+use super::{ExtractionDiagnostic, extract_js_ts_facts, extract_python_facts, extract_rust_facts};
 
 pub fn extract_static_facts(ctx: &StaticScanContext) -> Result<Vec<Fact>> {
     let catalog = load_catalog(ctx)?;
@@ -67,6 +67,8 @@ pub(crate) fn extract_static_facts_with_catalog(
                     &file.path,
                     &source,
                     catalog.sinks_for_language("python"),
+                    catalog.sources_for_language("python"),
+                    catalog.sanitizers_for_language("python"),
                 );
                 tracing::debug!(
                     target: "mcp_sec_audit::facts",
@@ -90,6 +92,8 @@ pub(crate) fn extract_static_facts_with_catalog(
                     &file.path,
                     &source,
                     catalog.sinks_for_language("javascript"),
+                    catalog.sources_for_language("javascript"),
+                    catalog.sanitizers_for_language("javascript"),
                 );
                 if result.has_fatal() {
                     bail!("JS/TS fact extraction produced fatal errors");
@@ -102,7 +106,10 @@ pub(crate) fn extract_static_facts_with_catalog(
                 );
                 facts.extend(result.facts);
                 diagnostics.extend(
-                    result.diagnostics.into_iter().map(ExtractionDiagnostic::from),
+                    result
+                        .diagnostics
+                        .into_iter()
+                        .map(ExtractionDiagnostic::from),
                 );
             }
             ScanLanguage::Rust => {
@@ -118,6 +125,8 @@ pub(crate) fn extract_static_facts_with_catalog(
                     &file.path,
                     &source,
                     catalog.sinks_for_language("rust"),
+                    catalog.sources_for_language("rust"),
+                    catalog.sanitizers_for_language("rust"),
                 );
                 tracing::debug!(
                     target: "mcp_sec_audit::facts",
@@ -298,11 +307,15 @@ async fn run_command(command: String) -> Result<String, String> {
             std::path::Path::new("/repo/a.py"),
             source,
             std::slice::from_ref(&model),
+            &[],
+            &[],
         );
-        assert!(result
-            .facts
-            .iter()
-            .any(|f| matches!(f, Fact::Sink(s) if s.sink_name == "totally.custom.sink")));
+        assert!(
+            result
+                .facts
+                .iter()
+                .any(|f| matches!(f, Fact::Sink(s) if s.sink_name == "totally.custom.sink"))
+        );
     }
 
     #[test]
@@ -329,9 +342,11 @@ async fn run_command(command: String) -> Result<String, String> {
             }],
         };
         let facts = extract_static_facts(&ctx).expect("extract facts");
-        assert!(facts
-            .iter()
-            .any(|f| matches!(f, Fact::Sink(s) if s.sink_name == "totally.custom.sink")));
+        assert!(
+            facts
+                .iter()
+                .any(|f| matches!(f, Fact::Sink(s) if s.sink_name == "totally.custom.sink"))
+        );
 
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -355,10 +370,12 @@ async fn run_command(command: String) -> Result<String, String> {
             discovered_files: Vec::new(),
         };
         let catalog = load_catalog(&ctx).expect("load catalog");
-        assert!(catalog
-            .sinks_for_language("python")
-            .iter()
-            .any(|m| m.patterns.contains(&"openpyxl.load_workbook".to_string())));
+        assert!(
+            catalog
+                .sinks_for_language("python")
+                .iter()
+                .any(|m| m.patterns.contains(&"openpyxl.load_workbook".to_string()))
+        );
 
         fs::remove_dir_all(root).expect("cleanup");
     }

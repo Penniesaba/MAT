@@ -1,8 +1,8 @@
 use std::collections::{HashSet, VecDeque};
 
+use super::graph::{Edge, Graph, Node};
 use crate::config::StaticTaintConfig;
 use crate::model::{Confidence, PathStep, PathStepKind};
-use super::graph::{Edge, Graph, Node};
 
 /// A discovered path from source to sink (or reverse).
 #[derive(Debug, Clone)]
@@ -15,6 +15,10 @@ pub struct PropagationPath {
     /// Whether the path traverses an external call; informational, not yet consumed.
     #[allow(dead_code)]
     pub has_external_call: bool,
+    /// Sink categories neutralized by sanitizer calls on this path. A path is
+    /// dropped at result-build time when its sink category appears here (or
+    /// `"*"` is present).
+    pub neutralized: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +35,8 @@ struct BfsItem {
     visited: HashSet<String>,
     depth: u32,
     has_external_call: bool,
+    /// Sink categories neutralized by sanitizers seen so far on this path.
+    neutralized: HashSet<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -38,28 +44,19 @@ struct BfsItem {
 // ---------------------------------------------------------------------------
 
 /// Run forward propagation: from Source nodes → Sink nodes.
-pub fn propagate_forward(
-    graph: &Graph,
-    config: &StaticTaintConfig,
-) -> Vec<PropagationPath> {
+pub fn propagate_forward(graph: &Graph, config: &StaticTaintConfig) -> Vec<PropagationPath> {
     let start_ids = find_source_start_nodes(graph, config.entrypoint_required);
     propagate(graph, config, Direction::Forward, &start_ids)
 }
 
 /// Run backward propagation: from Sink nodes → Source nodes.
-pub fn propagate_backward(
-    graph: &Graph,
-    config: &StaticTaintConfig,
-) -> Vec<PropagationPath> {
+pub fn propagate_backward(graph: &Graph, config: &StaticTaintConfig) -> Vec<PropagationPath> {
     let start_ids = find_sink_start_nodes(graph);
     propagate(graph, config, Direction::Backward, &start_ids)
 }
 
 /// Run both forward and backward, merge/return all paths.
-pub fn propagate_both(
-    graph: &Graph,
-    config: &StaticTaintConfig,
-) -> Vec<PropagationPath> {
+pub fn propagate_both(graph: &Graph, config: &StaticTaintConfig) -> Vec<PropagationPath> {
     let mut paths = Vec::new();
     if config.forward {
         paths.extend(propagate_forward(graph, config));
@@ -93,12 +90,20 @@ fn propagate(
             visited,
             depth: 0,
             has_external_call: false,
+            neutralized: HashSet::new(),
         });
     }
 
     while let Some(item) = queue.pop_front() {
         if item.depth >= config.max_depth {
             continue;
+        }
+
+        // A sanitizer call neutralizes taint flowing out of it for the listed
+        // categories. Thread the augmented set through this item's descendants.
+        let mut neutralized = item.neutralized.clone();
+        if let Some(cats) = graph.sanitizer_neutralizes(&item.node_id) {
+            neutralized.extend(cats);
         }
 
         let _current_node = match graph.get_node(&item.node_id) {
@@ -115,7 +120,10 @@ fn propagate(
             // Structural membership edges carry no dataflow: traversing them lets
             // BFS hop source → function → call → sink in zero steps, which
             // deduplicate_paths then keeps over the real (stepped) path.
-            if matches!(edge, Edge::SourceInFunction { .. } | Edge::CallInFunction { .. }) {
+            if matches!(
+                edge,
+                Edge::SourceInFunction { .. } | Edge::CallInFunction { .. }
+            ) {
                 continue;
             }
 
@@ -168,14 +176,23 @@ fn propagate(
                     steps: new_steps.clone(),
                     confidence,
                     has_external_call: next_has_external,
+                    neutralized: neutralized.iter().cloned().collect(),
                 });
             }
 
             // For forward, also stop at external Call with sink
             let external_call_sink = match direction {
                 Direction::Forward => {
-                    matches!(next_node, Node::Call { is_external: true, .. })
-                        && graph.outgoing_edges(next_id).iter().any(|e| matches!(e, Edge::CallToSink { .. }))
+                    matches!(
+                        next_node,
+                        Node::Call {
+                            is_external: true,
+                            ..
+                        }
+                    ) && graph
+                        .outgoing_edges(next_id)
+                        .iter()
+                        .any(|e| matches!(e, Edge::CallToSink { .. }))
                 }
                 Direction::Backward => false,
             };
@@ -193,6 +210,7 @@ fn propagate(
                             steps: new_steps.clone(),
                             confidence: compute_path_confidence(&new_steps, true),
                             has_external_call: true,
+                            neutralized: neutralized.iter().cloned().collect(),
                         });
                     }
                 }
@@ -208,6 +226,7 @@ fn propagate(
                     visited: new_visited,
                     depth: item.depth + 1,
                     has_external_call: next_has_external,
+                    neutralized: neutralized.clone(),
                 });
             }
         }
@@ -233,11 +252,7 @@ fn find_source_start_nodes(graph: &Graph, entrypoint_required: bool) -> Vec<Stri
                         .entrypoint_to_function
                         .values()
                         .any(|ep_func_id| ep_func_id == function_id);
-                    if is_ep {
-                        Some(id.clone())
-                    } else {
-                        None
-                    }
+                    if is_ep { Some(id.clone()) } else { None }
                 } else {
                     Some(id.clone())
                 }
@@ -270,20 +285,33 @@ fn find_sink_start_nodes(graph: &Graph) -> Vec<String> {
 /// Convert an edge to a PathStep for the output.
 fn edge_to_path_step(edge: &Edge, graph: &Graph, _direction: Direction) -> Option<PathStep> {
     match edge {
-        Edge::SourceToArg { source_id, call_id, arg_index } => {
-            let source_name = graph.get_node(source_id)
-                .and_then(|n| if let Node::Source { name, .. } = n { Some(name.clone()) } else { None });
+        Edge::SourceToArg {
+            source_id,
+            call_id,
+            arg_index,
+        } => {
+            let source_name = graph.get_node(source_id).and_then(|n| {
+                if let Node::Source { name, .. } = n {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            });
             let call_node = graph.get_node(call_id);
-            let line = call_node.map(|n| match n {
-                Node::Call { line, .. } => *line,
-                _ => 0,
-            }).unwrap_or(0);
+            let line = call_node
+                .map(|n| match n {
+                    Node::Call { line, .. } => *line,
+                    _ => 0,
+                })
+                .unwrap_or(0);
             let snippet = call_node.map(|n| match n {
                 Node::Call { callee, .. } => format!("{callee}(...)"),
                 _ => String::new(),
             });
             let caller_func = call_node.and_then(|n| match n {
-                Node::Call { caller_function_id, .. } => Some(caller_function_id.clone()),
+                Node::Call {
+                    caller_function_id, ..
+                } => Some(caller_function_id.clone()),
                 _ => None,
             });
             Some(PathStep {
@@ -298,11 +326,25 @@ fn edge_to_path_step(edge: &Edge, graph: &Graph, _direction: Direction) -> Optio
                 arg_index: Some(*arg_index),
             })
         }
-        Edge::VarToArg { var_id, call_id, arg_index } => {
-            let var_name = graph.get_node(var_id)
-                .and_then(|n| if let Node::Variable { name, .. } = n { Some(name.clone()) } else { None });
+        Edge::VarToArg {
+            var_id,
+            call_id,
+            arg_index,
+        } => {
+            let var_name = graph.get_node(var_id).and_then(|n| {
+                if let Node::Variable { name, .. } = n {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            });
             let call_node = graph.get_node(call_id);
-            let line = call_node.and_then(|n| match n { Node::Call { line, .. } => Some(*line), _ => None }).unwrap_or(0);
+            let line = call_node
+                .and_then(|n| match n {
+                    Node::Call { line, .. } => Some(*line),
+                    _ => None,
+                })
+                .unwrap_or(0);
             Some(PathStep {
                 kind: PathStepKind::CallArg,
                 line,
@@ -315,15 +357,35 @@ fn edge_to_path_step(edge: &Edge, graph: &Graph, _direction: Direction) -> Optio
                 arg_index: Some(*arg_index),
             })
         }
-        Edge::ValToVar { from_var_id, to_var_id } => {
-            let from_name = graph.get_node(from_var_id)
-                .and_then(|n| if let Node::Variable { name, .. } = n { Some(name.clone()) } else { None });
-            let to_name = graph.get_node(to_var_id)
-                .and_then(|n| if let Node::Variable { name, .. } = n { Some(name.clone()) } else { None });
-            let func = graph.get_node(to_var_id)
-                .and_then(|n| if let Node::Variable { function_id, .. } = n { Some(function_id.clone()) } else { None });
+        Edge::ValToVar {
+            from_var_id,
+            to_var_id,
+        } => {
+            let from_name = graph.get_node(from_var_id).and_then(|n| {
+                if let Node::Variable { name, .. } = n {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            });
+            let to_name = graph.get_node(to_var_id).and_then(|n| {
+                if let Node::Variable { name, .. } = n {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            });
+            let func = graph.get_node(to_var_id).and_then(|n| {
+                if let Node::Variable { function_id, .. } = n {
+                    Some(function_id.clone())
+                } else {
+                    None
+                }
+            });
             let line = 0; // Variables don't have line info directly
-            let snippet = from_name.as_ref().zip(to_name.as_ref())
+            let snippet = from_name
+                .as_ref()
+                .zip(to_name.as_ref())
                 .map(|(f, t)| format!("{t} = {f}"));
             Some(PathStep {
                 kind: PathStepKind::Assign,
@@ -338,13 +400,30 @@ fn edge_to_path_step(edge: &Edge, graph: &Graph, _direction: Direction) -> Optio
             })
         }
         Edge::SourceToVar { source_id, var_id } => {
-            let source_name = graph.get_node(source_id)
-                .and_then(|n| if let Node::Source { name, .. } = n { Some(name.clone()) } else { None });
-            let to_name = graph.get_node(var_id)
-                .and_then(|n| if let Node::Variable { name, .. } = n { Some(name.clone()) } else { None });
-            let func = graph.get_node(var_id)
-                .and_then(|n| if let Node::Variable { function_id, .. } = n { Some(function_id.clone()) } else { None });
-            let snippet = source_name.as_ref().zip(to_name.as_ref())
+            let source_name = graph.get_node(source_id).and_then(|n| {
+                if let Node::Source { name, .. } = n {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            });
+            let to_name = graph.get_node(var_id).and_then(|n| {
+                if let Node::Variable { name, .. } = n {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            });
+            let func = graph.get_node(var_id).and_then(|n| {
+                if let Node::Variable { function_id, .. } = n {
+                    Some(function_id.clone())
+                } else {
+                    None
+                }
+            });
+            let snippet = source_name
+                .as_ref()
+                .zip(to_name.as_ref())
                 .map(|(s, t)| format!("{t} = {s}"));
             Some(PathStep {
                 kind: PathStepKind::Assign,
@@ -359,10 +438,20 @@ fn edge_to_path_step(edge: &Edge, graph: &Graph, _direction: Direction) -> Optio
             })
         }
         Edge::ReturnToVar { call_id, var_id } => {
-            let var_name = graph.get_node(var_id)
-                .and_then(|n| if let Node::Variable { name, .. } = n { Some(name.clone()) } else { None });
+            let var_name = graph.get_node(var_id).and_then(|n| {
+                if let Node::Variable { name, .. } = n {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            });
             let call_node = graph.get_node(call_id);
-            let line = call_node.and_then(|n| match n { Node::Call { line, .. } => Some(*line), _ => None }).unwrap_or(0);
+            let line = call_node
+                .and_then(|n| match n {
+                    Node::Call { line, .. } => Some(*line),
+                    _ => None,
+                })
+                .unwrap_or(0);
             Some(PathStep {
                 kind: PathStepKind::Return,
                 line,
@@ -375,12 +464,28 @@ fn edge_to_path_step(edge: &Edge, graph: &Graph, _direction: Direction) -> Optio
                 arg_index: None,
             })
         }
-        Edge::CallToFunction { call_id, callee_function_id, .. } => {
-            let caller_func = graph.get_node(call_id)
-                .and_then(|n| match n { Node::Call { caller_function_id, .. } => Some(caller_function_id.clone()), _ => None });
-            let callee_name = graph.functions.get(callee_function_id).map(|m| m.name.clone());
-            let line = graph.get_node(call_id)
-                .and_then(|n| match n { Node::Call { line, .. } => Some(*line), _ => None }).unwrap_or(0);
+        Edge::CallToFunction {
+            call_id,
+            callee_function_id,
+            ..
+        } => {
+            let caller_func = graph.get_node(call_id).and_then(|n| match n {
+                Node::Call {
+                    caller_function_id, ..
+                } => Some(caller_function_id.clone()),
+                _ => None,
+            });
+            let callee_name = graph
+                .functions
+                .get(callee_function_id)
+                .map(|m| m.name.clone());
+            let line = graph
+                .get_node(call_id)
+                .and_then(|n| match n {
+                    Node::Call { line, .. } => Some(*line),
+                    _ => None,
+                })
+                .unwrap_or(0);
             Some(PathStep {
                 kind: PathStepKind::CallArg,
                 line,
@@ -426,7 +531,10 @@ fn deduplicate_paths(paths: Vec<PropagationPath>) -> Vec<PropagationPath> {
     let mut result: Vec<PropagationPath> = Vec::new();
     for path in paths {
         let key = (&path.source_id, &path.sink_id);
-        if let Some(existing) = result.iter_mut().find(|p| &p.source_id == key.0 && &p.sink_id == key.1) {
+        if let Some(existing) = result
+            .iter_mut()
+            .find(|p| &p.source_id == key.0 && &p.sink_id == key.1)
+        {
             if path.steps.len() < existing.steps.len() {
                 *existing = path;
             }
@@ -443,8 +551,8 @@ fn deduplicate_paths(paths: Vec<PropagationPath>) -> Vec<PropagationPath> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::graph::FunctionMeta;
+    use super::*;
     use crate::config::StaticTaintConfig;
 
     fn default_config() -> StaticTaintConfig {
@@ -462,23 +570,29 @@ mod tests {
 
         // Function "handler" with param "cmd"
         let func_id = "python:s.py:handler".to_string();
-        g.add_node(func_id.clone(), Node::Function {
-            id: func_id.clone(),
-            name: "handler".into(),
-            qualified_name: "handler".into(),
-            file: "s.py".into(),
-            params: vec!["cmd".into()],
-            language: "python".into(),
-            line: 1,
-        });
-        g.functions.insert(func_id.clone(), FunctionMeta {
-            name: "handler".into(),
-            qualified_name: "handler".into(),
-            file: "s.py".into(),
-            language: "python".into(),
-            params: vec!["cmd".into()],
-            line: 1,
-        });
+        g.add_node(
+            func_id.clone(),
+            Node::Function {
+                id: func_id.clone(),
+                name: "handler".into(),
+                qualified_name: "handler".into(),
+                file: "s.py".into(),
+                params: vec!["cmd".into()],
+                language: "python".into(),
+                line: 1,
+            },
+        );
+        g.functions.insert(
+            func_id.clone(),
+            FunctionMeta {
+                name: "handler".into(),
+                qualified_name: "handler".into(),
+                file: "s.py".into(),
+                language: "python".into(),
+                params: vec!["cmd".into()],
+                line: 1,
+            },
+        );
 
         // Entrypoint
         let ep_id = "entry:s.py:handler".to_string();
@@ -486,13 +600,16 @@ mod tests {
 
         // Source "cmd"
         let src_id = "source:s.py:handler:cmd".to_string();
-        g.add_node(src_id.clone(), Node::Source {
-            id: src_id.clone(),
-            name: "cmd".into(),
-            kind: "mcp_tool_parameter".into(),
-            function_id: func_id.clone(),
-            confidence: Confidence::High,
-        });
+        g.add_node(
+            src_id.clone(),
+            Node::Source {
+                id: src_id.clone(),
+                name: "cmd".into(),
+                kind: "mcp_tool_parameter".into(),
+                function_id: func_id.clone(),
+                confidence: Confidence::High,
+            },
+        );
         g.source_to_function.insert(src_id.clone(), func_id.clone());
         g.add_edge(Edge::SourceInFunction {
             source_id: src_id.clone(),
@@ -501,15 +618,18 @@ mod tests {
 
         // Call "os.system(cmd)"
         let call_id = "call:s.py:3:0".to_string();
-        g.add_node(call_id.clone(), Node::Call {
-            id: call_id.clone(),
-            callee: "os.system".into(),
-            normalized_callee: "os.system".into(),
-            caller_function_id: func_id.clone(),
-            is_external: true,
-            line: 3,
-            file: "s.py".into(),
-        });
+        g.add_node(
+            call_id.clone(),
+            Node::Call {
+                id: call_id.clone(),
+                callee: "os.system".into(),
+                normalized_callee: "os.system".into(),
+                caller_function_id: func_id.clone(),
+                is_external: true,
+                line: 3,
+                file: "s.py".into(),
+            },
+        );
         g.add_edge(Edge::CallInFunction {
             call_id: call_id.clone(),
             function_id: func_id.clone(),
@@ -522,12 +642,15 @@ mod tests {
 
         // Sink
         let sink_id = "sink:cmd:s.py:3".to_string();
-        g.add_node(sink_id.clone(), Node::Sink {
-            id: sink_id.clone(),
-            category: "command_execution".into(),
-            call_id: call_id.clone(),
-            severity_base: crate::model::Severity::High,
-        });
+        g.add_node(
+            sink_id.clone(),
+            Node::Sink {
+                id: sink_id.clone(),
+                category: "command_execution".into(),
+                call_id: call_id.clone(),
+                severity_base: crate::model::Severity::High,
+            },
+        );
         g.add_edge(Edge::CallToSink {
             call_id: call_id.clone(),
             sink_id,
@@ -543,7 +666,10 @@ mod tests {
         config.backward = false;
         let paths = propagate_forward(&g, &config);
         assert!(!paths.is_empty(), "Expected at least one path");
-        let path = paths.iter().find(|p| p.source_id.contains("cmd")).expect("path for cmd source");
+        let path = paths
+            .iter()
+            .find(|p| p.source_id.contains("cmd"))
+            .expect("path for cmd source");
         assert!(path.sink_id.contains("cmd"), "sink_id should contain 'cmd'");
         assert!(!path.steps.is_empty());
     }
@@ -555,7 +681,10 @@ mod tests {
         config.forward = false;
         let paths = propagate_backward(&g, &config);
         assert!(!paths.is_empty());
-        let path = paths.iter().find(|p| p.sink_id.contains("cmd")).expect("path for sink");
+        let path = paths
+            .iter()
+            .find(|p| p.sink_id.contains("cmd"))
+            .expect("path for sink");
         assert!(path.source_id.contains("cmd"), "should find cmd source");
     }
 
@@ -581,13 +710,16 @@ mod tests {
         let mut g = Graph::new();
         let func_id = "python:s.py:plain".to_string();
         let src_id = "source:s.py:plain:x".to_string();
-        g.add_node(src_id.clone(), Node::Source {
-            id: src_id.clone(),
-            name: "x".into(),
-            kind: "unknown".into(),
-            function_id: func_id.clone(),
-            confidence: Confidence::Low,
-        });
+        g.add_node(
+            src_id.clone(),
+            Node::Source {
+                id: src_id.clone(),
+                name: "x".into(),
+                kind: "unknown".into(),
+                function_id: func_id.clone(),
+                confidence: Confidence::Low,
+            },
+        );
         g.source_to_function.insert(src_id, func_id);
 
         let mut config = default_config();
@@ -595,8 +727,16 @@ mod tests {
         assert!(propagate_forward(&g, &config).is_empty());
 
         // With entrypoint_required=false, source should be a start node
-        let start_ids: Vec<String> = g.nodes.iter()
-            .filter_map(|(id, n)| if matches!(n, Node::Source { .. }) { Some(id.clone()) } else { None })
+        let start_ids: Vec<String> = g
+            .nodes
+            .iter()
+            .filter_map(|(id, n)| {
+                if matches!(n, Node::Source { .. }) {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
             .collect();
         assert!(!start_ids.is_empty());
     }
@@ -610,11 +750,17 @@ mod tests {
         // make_minimal_graph already has SourceToArg (source→call). Remove it so
         // the only remaining route is source→function→call→sink.
         let src_id = "source:s.py:handler:cmd".to_string();
-        g.outgoing.get_mut(&src_id).unwrap().retain(|e| !matches!(e, Edge::SourceToArg { .. }));
+        g.outgoing
+            .get_mut(&src_id)
+            .unwrap()
+            .retain(|e| !matches!(e, Edge::SourceToArg { .. }));
         let mut config = default_config();
         config.backward = false;
         let paths = propagate_forward(&g, &config);
         // Without the SourceToArg dataflow edge, no forward path should survive.
-        assert!(paths.is_empty(), "structural shortcut must not yield a path: {paths:?}");
+        assert!(
+            paths.is_empty(),
+            "structural shortcut must not yield a path: {paths:?}"
+        );
     }
 }

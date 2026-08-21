@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use crate::model::Fact;
 use super::graph::{Edge, FunctionMeta, Graph, Node};
+use crate::model::Fact;
+use std::collections::HashMap;
 
 /// Special separator used in variable IDs to avoid ambiguity with colons/paths.
 const VAR_SEP: char = '\x00';
@@ -29,15 +29,18 @@ pub fn build_graph(facts: &[Fact]) -> Graph {
                 line: f.base.line,
             };
             g.functions.insert(func_id.clone(), meta);
-            g.add_node(func_id.clone(), Node::Function {
-                id: func_id.clone(),
-                name: f.name.clone(),
-                qualified_name: f.qualified_name.clone(),
-                file: f.base.file.clone(),
-                params: f.params.iter().map(|p| p.name.clone()).collect(),
-                language: f.language.clone(),
-                line: f.base.line,
-            });
+            g.add_node(
+                func_id.clone(),
+                Node::Function {
+                    id: func_id.clone(),
+                    name: f.name.clone(),
+                    qualified_name: f.qualified_name.clone(),
+                    file: f.base.file.clone(),
+                    params: f.params.iter().map(|p| p.name.clone()).collect(),
+                    language: f.language.clone(),
+                    line: f.base.line,
+                },
+            );
 
             func_lookup
                 .entry(f.qualified_name.clone())
@@ -69,19 +72,32 @@ pub fn build_graph(facts: &[Fact]) -> Graph {
             let source_id = s.base.id.clone();
             g.source_to_function
                 .insert(source_id.clone(), s.function_id.clone());
-            g.add_node(source_id.clone(), Node::Source {
-                id: source_id.clone(),
-                name: s.name.clone(),
-                kind: s.kind.clone(),
-                function_id: s.function_id.clone(),
-                confidence: s.confidence.clone(),
-            });
+            g.add_node(
+                source_id.clone(),
+                Node::Source {
+                    id: source_id.clone(),
+                    name: s.name.clone(),
+                    kind: s.kind.clone(),
+                    function_id: s.function_id.clone(),
+                    confidence: s.confidence.clone(),
+                },
+            );
 
             // SourceInFunction edge
             g.add_edge(Edge::SourceInFunction {
                 source_id: source_id.clone(),
                 function_id: s.function_id.clone(),
             });
+
+            // Model-driven source: anchor the source to the call whose result is
+            // tainted (e.g. `os.environ.get(...)`). Forward traversal follows
+            // source → call → ReturnToVar → assigned variable.
+            if let Some(call_id) = &s.call_id {
+                g.add_edge(Edge::SourceToCall {
+                    source_id: source_id.clone(),
+                    call_id: call_id.clone(),
+                });
+            }
         }
     }
 
@@ -110,22 +126,28 @@ pub fn build_graph(facts: &[Fact]) -> Graph {
     for fact in facts {
         if let Fact::Call(c) = fact {
             let call_id = c.base.id.clone();
-            let normalized = c.normalized_callee.clone().unwrap_or_else(|| c.callee.clone());
+            let normalized = c
+                .normalized_callee
+                .clone()
+                .unwrap_or_else(|| c.callee.clone());
             let caller_file = c.base.file.clone();
 
             // Resolve callee
             let (resolved_func_id, is_external, confidence) =
                 resolve_callee(&normalized, &caller_file, &func_lookup);
 
-            g.add_node(call_id.clone(), Node::Call {
-                id: call_id.clone(),
-                callee: c.callee.clone(),
-                normalized_callee: normalized.clone(),
-                caller_function_id: c.caller.clone(),
-                is_external,
-                line: c.base.line,
-                file: c.base.file.clone(),
-            });
+            g.add_node(
+                call_id.clone(),
+                Node::Call {
+                    id: call_id.clone(),
+                    callee: c.callee.clone(),
+                    normalized_callee: normalized.clone(),
+                    caller_function_id: c.caller.clone(),
+                    is_external,
+                    line: c.base.line,
+                    file: c.base.file.clone(),
+                },
+            );
 
             // CallInFunction edge (call → function)
             if !c.caller.is_empty() {
@@ -149,7 +171,11 @@ pub fn build_graph(facts: &[Fact]) -> Graph {
                 });
 
                 // ArgToParam edges: map call args to callee params
-                let num_params = g.functions.get(&func_id).map(|m| m.params.len()).unwrap_or(0);
+                let num_params = g
+                    .functions
+                    .get(&func_id)
+                    .map(|m| m.params.len())
+                    .unwrap_or(0);
                 let param_names: Vec<String> = g
                     .functions
                     .get(&func_id)
@@ -183,11 +209,9 @@ pub fn build_graph(facts: &[Fact]) -> Graph {
                     .source_to_function
                     .iter()
                     .filter(|(_, fid)| *fid == &c.caller)
-                    .filter_map(|(sid, _)| {
-                        match g.nodes.get(sid) {
-                            Some(Node::Source { name, .. }) => Some((sid.clone(), name.clone())),
-                            _ => None,
-                        }
+                    .filter_map(|(sid, _)| match g.nodes.get(sid) {
+                        Some(Node::Source { name, .. }) => Some((sid.clone(), name.clone())),
+                        _ => None,
                     })
                     .collect();
                 for (source_id, name) in source_matches {
@@ -213,17 +237,41 @@ pub fn build_graph(facts: &[Fact]) -> Graph {
     for fact in facts {
         if let Fact::Sink(s) = fact {
             let sink_id = s.base.id.clone();
-            g.add_node(sink_id.clone(), Node::Sink {
-                id: sink_id.clone(),
-                category: s.category.clone(),
-                call_id: s.call_id.clone(),
-                severity_base: s.severity_base.clone(),
-            });
+            g.add_node(
+                sink_id.clone(),
+                Node::Sink {
+                    id: sink_id.clone(),
+                    category: s.category.clone(),
+                    call_id: s.call_id.clone(),
+                    severity_base: s.severity_base.clone(),
+                },
+            );
 
             // CallToSink edge
             g.add_edge(Edge::CallToSink {
                 call_id: s.call_id.clone(),
                 sink_id,
+            });
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Step 5.5: Register Sanitizer nodes
+    // -----------------------------------------------------------------------
+    for fact in facts {
+        if let Fact::Sanitizer(san) = fact {
+            let sanitizer_id = san.base.id.clone();
+            g.add_node(
+                sanitizer_id.clone(),
+                Node::Sanitizer {
+                    id: sanitizer_id.clone(),
+                    call_id: san.call_id.clone(),
+                    neutralizes: san.neutralizes.clone(),
+                },
+            );
+            g.add_edge(Edge::CallToSanitizer {
+                call_id: san.call_id.clone(),
+                sanitizer_id,
             });
         }
     }
@@ -237,51 +285,69 @@ pub fn build_graph(facts: &[Fact]) -> Graph {
             let target_id = make_var_id(&a.function_id, &a.target);
             let trimmed = a.value.trim();
 
-            // Link every identifier referenced on the right-hand side to the
-            // target, so compound expressions (`x / y`, `x.strip()`, `x[y]`)
-            // carry taint instead of leaving the variable orphaned.
-            for ident in extract_identifiers(trimmed) {
-                let var_id = make_var_id(&a.function_id, &ident);
-                if g.nodes.contains_key(&var_id) {
-                    g.add_edge(Edge::ValToVar {
-                        from_var_id: var_id,
-                        to_var_id: target_id.clone(),
-                    });
-                } else if let Some(source_id) = source_id_for_name(&g, &a.function_id, &ident) {
-                    g.add_edge(Edge::SourceToVar {
-                        source_id,
-                        var_id: target_id.clone(),
-                    });
-                }
-            }
-
-            // ReturnToVar: if value looks like a function call result
-            if trimmed.contains('(') && trimmed.contains(')') {
-                // Extract the callee from "foo(x, y)" pattern
-                if let Some(paren_idx) = trimmed.find('(') {
-                    let callee_name = trimmed[..paren_idx].trim().to_string();
-                    // Find the most recent CallFact in the same function/line that matches
-                    // We link all matching calls in the same function
-                    for call_fact in facts.iter().filter_map(|f| {
-                        if let Fact::Call(c) = f {
-                            if c.caller == a.function_id && c.base.line <= a.base.line {
-                                let call_callee = &c.callee;
-                                let call_normalized = c.normalized_callee.as_deref().unwrap_or(call_callee);
-                                if call_callee == &callee_name || call_normalized == callee_name {
-                                    return Some(c);
+            // Resolve the right-hand-side call(s), if `value` is a call
+            // expression, and detect whether any of them is a sanitizer. A
+            // sanitizer's result is neutralized, so we must NOT also link the
+            // sanitizer's arguments directly to the target — that would let
+            // taint bypass the sanitizer.
+            let rhs_call_ids: Vec<String> = if trimmed.contains('(') && trimmed.contains(')') {
+                trimmed
+                    .find('(')
+                    .map(|paren_idx| trimmed[..paren_idx].trim().to_string())
+                    .map(|callee_name| {
+                        facts
+                            .iter()
+                            .filter_map(|f| {
+                                if let Fact::Call(c) = f {
+                                    if c.caller == a.function_id && c.base.line <= a.base.line {
+                                        let call_callee = &c.callee;
+                                        let call_normalized =
+                                            c.normalized_callee.as_deref().unwrap_or(call_callee);
+                                        if call_callee == &callee_name
+                                            || call_normalized == callee_name
+                                        {
+                                            return Some(c.base.id.clone());
+                                        }
+                                    }
                                 }
-                            }
-                            None
-                        } else {
-                            None
-                        }
-                    }) {
-                        g.add_edge(Edge::ReturnToVar {
-                            call_id: call_fact.base.id.clone(),
+                                None
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let rhs_is_sanitizer = rhs_call_ids
+                .iter()
+                .any(|id| g.sanitizer_neutralizes(id).is_some());
+
+            if !rhs_is_sanitizer {
+                // Link every identifier referenced on the right-hand side to the
+                // target, so compound expressions (`x / y`, `x.strip()`, `x[y]`)
+                // carry taint instead of leaving the variable orphaned.
+                for ident in extract_identifiers(trimmed) {
+                    let var_id = make_var_id(&a.function_id, &ident);
+                    if g.nodes.contains_key(&var_id) {
+                        g.add_edge(Edge::ValToVar {
+                            from_var_id: var_id,
+                            to_var_id: target_id.clone(),
+                        });
+                    } else if let Some(source_id) = source_id_for_name(&g, &a.function_id, &ident) {
+                        g.add_edge(Edge::SourceToVar {
+                            source_id,
                             var_id: target_id.clone(),
                         });
                     }
                 }
+            }
+
+            // ReturnToVar: link the call result(s) to the target variable.
+            for call_id in rhs_call_ids {
+                g.add_edge(Edge::ReturnToVar {
+                    call_id,
+                    var_id: target_id.clone(),
+                });
             }
         }
     }
@@ -377,10 +443,41 @@ fn extract_identifiers(expr: &str) -> Vec<String> {
 fn is_python_keyword(token: &str) -> bool {
     matches!(
         token,
-        "True" | "False" | "None" | "and" | "or" | "not" | "if" | "else" | "elif" | "for"
-            | "while" | "in" | "is" | "lambda" | "def" | "return" | "import" | "from" | "as"
-            | "with" | "try" | "except" | "finally" | "raise" | "class" | "global" | "nonlocal"
-            | "pass" | "break" | "continue" | "yield" | "del" | "assert" | "async" | "await"
+        "True"
+            | "False"
+            | "None"
+            | "and"
+            | "or"
+            | "not"
+            | "if"
+            | "else"
+            | "elif"
+            | "for"
+            | "while"
+            | "in"
+            | "is"
+            | "lambda"
+            | "def"
+            | "return"
+            | "import"
+            | "from"
+            | "as"
+            | "with"
+            | "try"
+            | "except"
+            | "finally"
+            | "raise"
+            | "class"
+            | "global"
+            | "nonlocal"
+            | "pass"
+            | "break"
+            | "continue"
+            | "yield"
+            | "del"
+            | "assert"
+            | "async"
+            | "await"
     )
 }
 
@@ -390,9 +487,9 @@ fn source_id_for_name(g: &Graph, function_id: &str, name: &str) -> Option<String
         .iter()
         .filter(|(_, fid)| *fid == function_id)
         .filter_map(|(source_id, _)| match g.nodes.get(source_id) {
-            Some(Node::Source { name: source_name, .. }) if source_name == name => {
-                Some(source_id.clone())
-            }
+            Some(Node::Source {
+                name: source_name, ..
+            }) if source_name == name => Some(source_id.clone()),
             _ => None,
         })
         .next()
@@ -414,14 +511,13 @@ fn resolve_callee(
     if let Some(candidates) = lookup.get(normalized_callee) {
         if candidates.len() == 1 {
             let (func_id, _, _, _) = &candidates[0];
-            return (
-                Some(func_id.clone()),
-                false,
-                crate::model::Confidence::High,
-            );
+            return (Some(func_id.clone()), false, crate::model::Confidence::High);
         }
         // Multiple matches — prefer same file
-        if let Some((func_id, _, _, _)) = candidates.iter().find(|(_, file, _, _)| file == caller_file) {
+        if let Some((func_id, _, _, _)) = candidates
+            .iter()
+            .find(|(_, file, _, _)| file == caller_file)
+        {
             return (
                 Some(func_id.clone()),
                 false,
@@ -430,11 +526,7 @@ fn resolve_callee(
         }
         // Fallback: first match from any file
         let (func_id, _, _, _) = &candidates[0];
-        return (
-            Some(func_id.clone()),
-            false,
-            crate::model::Confidence::Low,
-        );
+        return (Some(func_id.clone()), false, crate::model::Confidence::Low);
     }
 
     // Try matching just the last segment.
@@ -469,12 +561,11 @@ fn resolve_callee(
                 );
             }
             // Prefer same-file if multiple
-            if let Some((func_id, _, _, _)) = candidates.iter().find(|(_, file, _, _)| file == caller_file) {
-                return (
-                    Some(func_id.clone()),
-                    false,
-                    crate::model::Confidence::Low,
-                );
+            if let Some((func_id, _, _, _)) = candidates
+                .iter()
+                .find(|(_, file, _, _)| file == caller_file)
+            {
+                return (Some(func_id.clone()), false, crate::model::Confidence::Low);
             }
         }
     }
@@ -491,11 +582,16 @@ fn resolve_callee(
 mod tests {
     use super::*;
     use crate::model::{
-        CallArg, CallFact, Fact, FactBase, FunctionFact, ParamInfo, SinkFact,
-        Confidence, Severity,
+        CallArg, CallFact, Confidence, Fact, FactBase, FunctionFact, ParamInfo, Severity, SinkFact,
     };
 
-    fn make_function(id: &str, name: &str, qualified_name: &str, file: &str, params: Vec<&str>) -> Fact {
+    fn make_function(
+        id: &str,
+        name: &str,
+        qualified_name: &str,
+        file: &str,
+        params: Vec<&str>,
+    ) -> Fact {
         Fact::Function(FunctionFact {
             base: FactBase {
                 id: id.into(),
@@ -522,7 +618,15 @@ mod tests {
         })
     }
 
-    fn make_call(id: &str, caller: &str, callee: &str, normalized: &str, file: &str, line: u32, args: Vec<(u32, &str)>) -> Fact {
+    fn make_call(
+        id: &str,
+        caller: &str,
+        callee: &str,
+        normalized: &str,
+        file: &str,
+        line: u32,
+        args: Vec<(u32, &str)>,
+    ) -> Fact {
         Fact::Call(CallFact {
             base: FactBase {
                 id: id.into(),
@@ -584,18 +688,36 @@ mod tests {
     fn resolves_call_to_function_in_same_file() {
         let facts = vec![
             make_function("python:s.py:main", "main", "main", "s.py", vec![]),
-            make_function("python:s.py:helper", "helper", "helper", "s.py", vec!["arg"]),
+            make_function(
+                "python:s.py:helper",
+                "helper",
+                "helper",
+                "s.py",
+                vec!["arg"],
+            ),
             make_call(
-                "call:s.py:3:0", "python:s.py:main", "helper", "helper", "s.py", 3,
+                "call:s.py:3:0",
+                "python:s.py:main",
+                "helper",
+                "helper",
+                "s.py",
+                3,
                 vec![(0, "x")],
             ),
         ];
         let g = build_graph(&facts);
         // Check CallToFunction edge exists
         let edges = g.outgoing_edges("call:s.py:3:0");
-        let ctf = edges.iter().find(|e| matches!(e, Edge::CallToFunction { .. }));
+        let ctf = edges
+            .iter()
+            .find(|e| matches!(e, Edge::CallToFunction { .. }));
         assert!(ctf.is_some());
-        if let Some(Edge::CallToFunction { callee_function_id, confidence, .. }) = ctf {
+        if let Some(Edge::CallToFunction {
+            callee_function_id,
+            confidence,
+            ..
+        }) = ctf
+        {
             assert_eq!(callee_function_id, "python:s.py:helper");
             assert_eq!(*confidence, Confidence::High);
         }
@@ -606,7 +728,12 @@ mod tests {
         let facts = vec![
             make_function("python:s.py:main", "main", "main", "s.py", vec![]),
             make_call(
-                "call:s.py:5:0", "python:s.py:main", "os.system", "os.system", "s.py", 5,
+                "call:s.py:5:0",
+                "python:s.py:main",
+                "os.system",
+                "os.system",
+                "s.py",
+                5,
                 vec![(0, "cmd")],
             ),
         ];
@@ -622,8 +749,22 @@ mod tests {
     fn builds_sink_nodes_with_edges() {
         let facts = vec![
             make_function("python:s.py:main", "main", "main", "s.py", vec![]),
-            make_call("call:s.py:10:0", "python:s.py:main", "os.system", "os.system", "s.py", 10, vec![(0, "x")]),
-            make_sink("sink:cmd:s.py:10", "call:s.py:10:0", "command_execution", "s.py", 10),
+            make_call(
+                "call:s.py:10:0",
+                "python:s.py:main",
+                "os.system",
+                "os.system",
+                "s.py",
+                10,
+                vec![(0, "x")],
+            ),
+            make_sink(
+                "sink:cmd:s.py:10",
+                "call:s.py:10:0",
+                "command_execution",
+                "s.py",
+                10,
+            ),
         ];
         let g = build_graph(&facts);
         assert!(g.nodes.contains_key("sink:cmd:s.py:10"));
@@ -665,7 +806,11 @@ mod tests {
         let to_id = make_var_id(func_id, "command");
         let from_id = make_var_id(func_id, "cmd");
         let edges = g.incoming_edges(&to_id);
-        assert!(edges.iter().any(|e| matches!(e, Edge::ValToVar { from_var_id, .. } if from_var_id == &from_id)));
+        assert!(
+            edges.iter().any(
+                |e| matches!(e, Edge::ValToVar { from_var_id, .. } if from_var_id == &from_id)
+            )
+        );
     }
 
     fn make_assign(id: &str, func_id: &str, target: &str, value: &str, line: u32) -> Fact {
@@ -714,7 +859,13 @@ mod tests {
         let func_id = "python:s.py:handler".to_string();
         let source_id = "source:s.py:handler:cmd".to_string();
         let facts = vec![
-            make_function("python:s.py:handler", "handler", "handler", "s.py", vec!["cmd"]),
+            make_function(
+                "python:s.py:handler",
+                "handler",
+                "handler",
+                "s.py",
+                vec!["cmd"],
+            ),
             Fact::Source(crate::model::SourceFact {
                 base: FactBase {
                     id: source_id.clone(),
@@ -725,6 +876,7 @@ mod tests {
                 kind: "mcp_tool_parameter".into(),
                 function_id: func_id.clone(),
                 name: "cmd".into(),
+                call_id: None,
                 confidence: Confidence::High,
             }),
             make_assign("assign:s.py:2:command", &func_id, "command", "cmd", 2),
@@ -735,7 +887,10 @@ mod tests {
         let linked = g.incoming_edges(&command_id).iter().any(|e| {
             matches!(e, Edge::SourceToVar { source_id: sid, .. } if sid.as_str() == source_id.as_str())
         });
-        assert!(linked, "expected SourceToVar from source `cmd` to variable `command`");
+        assert!(
+            linked,
+            "expected SourceToVar from source `cmd` to variable `command`"
+        );
     }
 
     #[test]
@@ -743,17 +898,43 @@ mod tests {
         let func_id = "rust:main.rs:exec_shell".to_string();
         let source_id = "source:main.rs:exec_shell:command".to_string();
         let facts = vec![
-            make_function(&func_id, "exec_shell", "exec_shell", "main.rs", vec!["command"]),
+            make_function(
+                &func_id,
+                "exec_shell",
+                "exec_shell",
+                "main.rs",
+                vec!["command"],
+            ),
             Fact::Source(crate::model::SourceFact {
-                base: FactBase { id: source_id.clone(), file: "main.rs".into(), line: 24, extractor: "test".into() },
-                kind: "mcp_tool_parameter".into(), function_id: func_id.clone(),
-                name: "command".into(), confidence: Confidence::High,
+                base: FactBase {
+                    id: source_id.clone(),
+                    file: "main.rs".into(),
+                    line: 24,
+                    extractor: "test".into(),
+                },
+                kind: "mcp_tool_parameter".into(),
+                function_id: func_id.clone(),
+                name: "command".into(),
+                call_id: None,
+                confidence: Confidence::High,
             }),
-            make_call("call:main.rs:32:0", &func_id, "build_shell_command", "helpers::build_shell_command", "main.rs", 32, vec![(0, "&command")]),
+            make_call(
+                "call:main.rs:32:0",
+                &func_id,
+                "build_shell_command",
+                "helpers::build_shell_command",
+                "main.rs",
+                32,
+                vec![(0, "&command")],
+            ),
         ];
         let g = build_graph(&facts);
         let edges = g.outgoing_edges(&source_id);
-        assert!(edges.iter().any(|e| matches!(e, Edge::SourceToArg { call_id, .. } if call_id == "call:main.rs:32:0")),
-            "expected SourceToArg from `command` to the `&command` call");
+        assert!(
+            edges.iter().any(
+                |e| matches!(e, Edge::SourceToArg { call_id, .. } if call_id == "call:main.rs:32:0")
+            ),
+            "expected SourceToArg from `command` to the `&command` call"
+        );
     }
 }

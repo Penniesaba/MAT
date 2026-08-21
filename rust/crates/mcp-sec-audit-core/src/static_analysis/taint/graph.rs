@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::model::{Confidence, Severity};
+use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Node
@@ -29,6 +29,11 @@ pub enum Node {
         call_id: String,
         severity_base: Severity,
     },
+    Sanitizer {
+        id: String,
+        call_id: String,
+        neutralizes: Vec<String>,
+    },
     Call {
         id: String,
         callee: String,
@@ -53,6 +58,7 @@ impl Node {
             Node::Function { id, .. } => id,
             Node::Source { id, .. } => id,
             Node::Sink { id, .. } => id,
+            Node::Sanitizer { id, .. } => id,
             Node::Call { id, .. } => id,
             Node::Variable { id, .. } => id,
         }
@@ -64,6 +70,7 @@ impl Node {
             Node::Function { .. } => "function",
             Node::Source { .. } => "source",
             Node::Sink { .. } => "sink",
+            Node::Sanitizer { .. } => "sanitizer",
             Node::Call { .. } => "call",
             Node::Variable { .. } => "variable",
         }
@@ -108,6 +115,10 @@ pub enum Edge {
         call_id: String,
         sink_id: String,
     },
+    CallToSanitizer {
+        call_id: String,
+        sanitizer_id: String,
+    },
     ReturnToVar {
         call_id: String,
         var_id: String,
@@ -122,6 +133,13 @@ pub enum Edge {
     SourceToVar {
         source_id: String,
         var_id: String,
+    },
+    /// A model-driven source anchored to the call whose result is tainted
+    /// (e.g. `os.environ.get(...)`). Forward traversal goes source → call →
+    /// `ReturnToVar` → assigned variable.
+    SourceToCall {
+        source_id: String,
+        call_id: String,
     },
     /// Reverse of CallInFunction: function → call (for forward traversal).
     FunctionCall {
@@ -141,9 +159,11 @@ impl Edge {
             Edge::VarToArg { .. } => "var_to_arg",
             Edge::ValToVar { .. } => "val_to_var",
             Edge::CallToSink { .. } => "call_to_sink",
+            Edge::CallToSanitizer { .. } => "call_to_sanitizer",
             Edge::ReturnToVar { .. } => "return_to_var",
             Edge::SourceToArg { .. } => "source_to_arg",
             Edge::SourceToVar { .. } => "source_to_var",
+            Edge::SourceToCall { .. } => "source_to_call",
             Edge::FunctionCall { .. } => "function_call",
         }
     }
@@ -157,9 +177,11 @@ impl Edge {
             Edge::VarToArg { var_id, .. } => var_id,
             Edge::ValToVar { from_var_id, .. } => from_var_id,
             Edge::CallToSink { call_id, .. } => call_id,
+            Edge::CallToSanitizer { call_id, .. } => call_id,
             Edge::ReturnToVar { call_id, .. } => call_id,
             Edge::SourceToArg { source_id, .. } => source_id,
             Edge::SourceToVar { source_id, .. } => source_id,
+            Edge::SourceToCall { source_id, .. } => source_id,
             Edge::FunctionCall { function_id, .. } => function_id,
         }
     }
@@ -168,14 +190,20 @@ impl Edge {
         match self {
             Edge::SourceInFunction { function_id, .. } => function_id,
             Edge::CallInFunction { function_id, .. } => function_id,
-            Edge::CallToFunction { callee_function_id, .. } => callee_function_id,
-            Edge::ArgToParam { callee_function_id, .. } => callee_function_id,
+            Edge::CallToFunction {
+                callee_function_id, ..
+            } => callee_function_id,
+            Edge::ArgToParam {
+                callee_function_id, ..
+            } => callee_function_id,
             Edge::VarToArg { call_id, .. } => call_id,
             Edge::ValToVar { to_var_id, .. } => to_var_id,
             Edge::CallToSink { sink_id, .. } => sink_id,
+            Edge::CallToSanitizer { sanitizer_id, .. } => sanitizer_id,
             Edge::ReturnToVar { var_id, .. } => var_id,
             Edge::SourceToArg { call_id, .. } => call_id,
             Edge::SourceToVar { var_id, .. } => var_id,
+            Edge::SourceToCall { call_id, .. } => call_id,
             Edge::FunctionCall { call_id, .. } => call_id,
         }
     }
@@ -233,7 +261,10 @@ impl Graph {
     pub fn add_edge(&mut self, edge: Edge) {
         let from = edge.from_id().to_string();
         let to = edge.to_id().to_string();
-        self.outgoing.entry(from.clone()).or_default().push(edge.clone());
+        self.outgoing
+            .entry(from.clone())
+            .or_default()
+            .push(edge.clone());
         self.incoming.entry(to).or_default().push(edge);
     }
 
@@ -242,11 +273,31 @@ impl Graph {
     }
 
     pub fn outgoing_edges(&self, node_id: &str) -> &[Edge] {
-        self.outgoing.get(node_id).map(|v| v.as_slice()).unwrap_or(&[])
+        self.outgoing
+            .get(node_id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     pub fn incoming_edges(&self, node_id: &str) -> &[Edge] {
-        self.incoming.get(node_id).map(|v| v.as_slice()).unwrap_or(&[])
+        self.incoming
+            .get(node_id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// If `call_id` is a sanitizer call, return the sink categories it
+    /// neutralizes (`Some`) — a `"*"` entry neutralizes every category.
+    /// `None` means the call is not a sanitizer.
+    pub fn sanitizer_neutralizes(&self, call_id: &str) -> Option<Vec<String>> {
+        for edge in self.outgoing_edges(call_id) {
+            if let Edge::CallToSanitizer { sanitizer_id, .. } = edge {
+                if let Some(Node::Sanitizer { neutralizes, .. }) = self.nodes.get(sanitizer_id) {
+                    return Some(neutralizes.clone());
+                }
+            }
+        }
+        None
     }
 }
 
@@ -292,26 +343,32 @@ mod tests {
     fn graph_add_node_and_edge() {
         let mut g = Graph::new();
         let func_id: String = "python:server.py:main".into();
-        g.add_node(func_id.clone(), Node::Function {
-            id: func_id.clone(),
-            name: "main".into(),
-            qualified_name: "main".into(),
-            file: "server.py".into(),
-            params: vec![],
-            language: "python".into(),
-            line: 1,
-        });
+        g.add_node(
+            func_id.clone(),
+            Node::Function {
+                id: func_id.clone(),
+                name: "main".into(),
+                qualified_name: "main".into(),
+                file: "server.py".into(),
+                params: vec![],
+                language: "python".into(),
+                line: 1,
+            },
+        );
 
         let call_id: String = "call:server.py:5:0".into();
-        g.add_node(call_id.clone(), Node::Call {
-            id: call_id.clone(),
-            callee: "helper".into(),
-            normalized_callee: "helper".into(),
-            caller_function_id: func_id.clone(),
-            is_external: false,
-            line: 5,
-            file: "server.py".into(),
-        });
+        g.add_node(
+            call_id.clone(),
+            Node::Call {
+                id: call_id.clone(),
+                callee: "helper".into(),
+                normalized_callee: "helper".into(),
+                caller_function_id: func_id.clone(),
+                is_external: false,
+                line: 5,
+                file: "server.py".into(),
+            },
+        );
 
         let edge = Edge::CallInFunction {
             call_id: call_id.clone(),

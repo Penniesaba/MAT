@@ -70,6 +70,7 @@ pub fn synthetic_source_fact() -> Fact {
         kind: "mcp_tool_parameter".to_string(),
         function_id: "python:server.py:tool_handler".to_string(),
         name: "command".to_string(),
+        call_id: None,
         confidence: Confidence::High,
     })
 }

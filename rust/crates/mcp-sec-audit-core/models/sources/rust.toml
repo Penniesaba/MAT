@@ -1,0 +1,13 @@
+# Rust source models: external-input entrypoints.
+
+[[sources]]
+language = "rust"
+category = "env_var"
+patterns = ["std::env::var", "std::env::var_os"]
+source = "manual"
+
+[[sources]]
+language = "rust"
+category = "cli_arg"
+patterns = ["std::env::args", "std::env::args_os"]
+source = "manual"

@@ -8,22 +8,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use syn::{
-    spanned::Spanned,
-    visit::Visit,
-    *,
-};
+use syn::{spanned::Spanned, visit::Visit, *};
 
 use crate::model::{
-    AssignFact, CallFact, Confidence, EntryPointEvidence, EntryPointFact,
-    Fact, FactBase, FunctionFact, ImportFact, ImportKind, Severity, SinkFact, SourceFact,
+    AssignFact, CallFact, Confidence, EntryPointEvidence, EntryPointFact, Fact, FactBase,
+    FunctionFact, ImportFact, ImportKind, SanitizerFact, Severity, SinkFact, SourceFact,
 };
-use crate::models::SinkModel;
+use crate::models::{SanitizerModel, SinkModel, SourceModel};
 
 use super::{
-    ExtractionDiagnostic, display_path, fact_sort_key, line_col_for_offset,
-    make_assign_id, make_call_id, make_entrypoint_id,
-    make_function_id, make_import_id, make_sink_id, make_source_id,
+    ExtractionDiagnostic, display_path, fact_sort_key, line_col_for_offset, make_assign_id,
+    make_call_id, make_entrypoint_id, make_function_id, make_import_id, make_sanitizer_id,
+    make_sink_id, make_source_id, matches_callee_pattern,
 };
 
 const EXTRACTOR_NAME: &str = "rust_syn_phase9";
@@ -57,6 +53,8 @@ struct RustFactExtractor<'a> {
     #[allow(dead_code)]
     source: &'a str,
     sinks: &'a [SinkModel],
+    sources: &'a [SourceModel],
+    sanitizers: &'a [SanitizerModel],
     facts: Vec<Fact>,
     diagnostics: Vec<ExtractionDiagnostic>,
 
@@ -76,12 +74,21 @@ struct RustFactExtractor<'a> {
 }
 
 impl<'a> RustFactExtractor<'a> {
-    fn new(root: &Path, file: &Path, source: &'a str, sinks: &'a [SinkModel]) -> Self {
+    fn new(
+        root: &Path,
+        file: &Path,
+        source: &'a str,
+        sinks: &'a [SinkModel],
+        sources: &'a [SourceModel],
+        sanitizers: &'a [SanitizerModel],
+    ) -> Self {
         Self {
             root: root.to_path_buf(),
             file: file.to_path_buf(),
             source,
             sinks,
+            sources,
+            sanitizers,
             facts: Vec::new(),
             diagnostics: Vec::new(),
             use_aliases: BTreeMap::new(),
@@ -159,6 +166,56 @@ impl<'a> RustFactExtractor<'a> {
         }
     }
 
+    /// Emit a model-driven `SourceFact` when the callee matches a source model.
+    fn check_source(&mut self, normalized_callee: &str, call_id: &str, line: u32) {
+        for model in self.sources {
+            if matches_callee_pattern(normalized_callee, &model.patterns) {
+                let file = self.rel_path();
+                let name = model
+                    .patterns
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| normalized_callee.to_string());
+                self.facts.push(Fact::Source(SourceFact {
+                    base: FactBase {
+                        id: format!("source:model:{}:{}", call_id, model.category),
+                        file: file.clone(),
+                        line,
+                        extractor: EXTRACTOR_NAME.to_string(),
+                    },
+                    kind: model.category.clone(),
+                    function_id: self.caller_function_id().unwrap_or_default(),
+                    name,
+                    confidence: Confidence::Medium,
+                    call_id: Some(call_id.to_string()),
+                }));
+                return;
+            }
+        }
+    }
+
+    /// Emit a `SanitizerFact` when the callee matches a sanitizer model.
+    fn check_sanitizer(&mut self, normalized_callee: &str, call_id: &str, line: u32) {
+        for model in self.sanitizers {
+            if matches_callee_pattern(normalized_callee, &model.patterns) {
+                let file = self.rel_path();
+                self.facts.push(Fact::Sanitizer(SanitizerFact {
+                    base: FactBase {
+                        id: make_sanitizer_id(&self.root, &self.file, line, normalized_callee),
+                        file: file.clone(),
+                        line,
+                        extractor: EXTRACTOR_NAME.to_string(),
+                    },
+                    call_id: call_id.to_string(),
+                    sanitizer_name: normalized_callee.to_string(),
+                    neutralizes: model.neutralizes.clone(),
+                    confidence: Confidence::High,
+                }));
+                return;
+            }
+        }
+    }
+
     fn build_qualified_name(impl_stack: &[String], name: &str) -> String {
         let mut parts: Vec<&str> = Vec::new();
         if let Some(impl_name) = impl_stack.last() {
@@ -169,13 +226,7 @@ impl<'a> RustFactExtractor<'a> {
     }
 
     /// Recursively extract `use` tree into ImportFacts and populate use_aliases.
-    fn extract_use_tree(
-        &mut self,
-        tree: &UseTree,
-        file: &str,
-        line: u32,
-        prefix: &mut String,
-    ) {
+    fn extract_use_tree(&mut self, tree: &UseTree, file: &str, line: u32, prefix: &mut String) {
         match tree {
             UseTree::Path(path) => {
                 let seg = path.ident.to_string();
@@ -368,6 +419,7 @@ impl<'a> RustFactExtractor<'a> {
                     kind: "mcp_tool_parameter".to_string(),
                     function_id: func_id.clone(),
                     name: param_name,
+                    call_id: None,
                     confidence: Confidence::High,
                 }));
             }
@@ -387,11 +439,7 @@ impl<'a> RustFactExtractor<'a> {
     ) {
         let file = self.rel_path();
         let kind = mcp::entrypoint_kind_from_callee(callee);
-        let entry_id = make_entrypoint_id(
-            &self.root,
-            &self.file,
-            &format!("{callee}.{tool_name}"),
-        );
+        let entry_id = make_entrypoint_id(&self.root, &self.file, &format!("{callee}.{tool_name}"));
 
         let mut param_names: Vec<String> = Vec::new();
 
@@ -420,6 +468,7 @@ impl<'a> RustFactExtractor<'a> {
                     kind: "mcp_tool_parameter".to_string(),
                     function_id: caller_func_id.to_string(),
                     name: param_name.clone(),
+                    call_id: None,
                     confidence: Confidence::Medium,
                 }));
             }
@@ -509,9 +558,8 @@ impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
         let name = node.sig.ident.to_string();
         let line = self.line_of(node);
         let end_line = 1; // FIXME: end span not reliable
-        self.scope.push(
-            Self::build_qualified_name(&self.impl_stack, &name)
-        );
+        self.scope
+            .push(Self::build_qualified_name(&self.impl_stack, &name));
         self.emit_function_fact(&name, &node.sig, &node.attrs, line, end_line);
         syn::visit::visit_item_fn(self, node);
         self.scope.pop();
@@ -533,9 +581,8 @@ impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
         let name = node.sig.ident.to_string();
         let line = self.line_of(node);
         let end_line = 1; // FIXME: end span not reliable
-        self.scope.push(
-            Self::build_qualified_name(&self.impl_stack, &name)
-        );
+        self.scope
+            .push(Self::build_qualified_name(&self.impl_stack, &name));
         self.emit_function_fact(&name, &node.sig, &node.attrs, line, end_line);
         syn::visit::visit_impl_item_fn(self, node);
         self.scope.pop();
@@ -552,7 +599,9 @@ impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
         // a method chain, so chained registrations are not lost.
         if mcp::is_mcp_registration(&callee) {
             if let Some(first_arg) = node.args.first() {
-                let tool_name = display::expr_to_string(first_arg).trim_matches('"').to_string();
+                let tool_name = display::expr_to_string(first_arg)
+                    .trim_matches('"')
+                    .to_string();
                 if !tool_name.is_empty() {
                     // Check if second argument is a closure for inline SourceFact extraction
                     let closure_sig = node.args.iter().nth(1).and_then(|arg| {
@@ -573,7 +622,10 @@ impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
                                     unsafety: None,
                                     abi: None,
                                     fn_token: Token![fn](proc_macro2::Span::call_site()),
-                                    ident: proc_macro2::Ident::new("handler", proc_macro2::Span::call_site()),
+                                    ident: proc_macro2::Ident::new(
+                                        "handler",
+                                        proc_macro2::Span::call_site(),
+                                    ),
                                     generics: Generics::default(),
                                     paren_token: syn::token::Paren::default(),
                                     inputs: closure
@@ -583,7 +635,9 @@ impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
                                             FnArg::Typed(PatType {
                                                 attrs: Vec::new(),
                                                 pat: Box::new(pat.clone()),
-                                                colon_token: Token![:](proc_macro2::Span::call_site()),
+                                                colon_token: Token![:](
+                                                    proc_macro2::Span::call_site(),
+                                                ),
                                                 ty: Box::new(Type::Verbatim(
                                                     proc_macro2::TokenStream::new(),
                                                 )),
@@ -640,6 +694,8 @@ impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
 
             // Check sinks
             self.check_sink(&normalized_callee, &call_id, line);
+            self.check_source(&normalized_callee, &call_id, line);
+            self.check_sanitizer(&normalized_callee, &call_id, line);
         }
 
         syn::visit::visit_expr_call(self, node);
@@ -659,7 +715,9 @@ impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
         if mcp::is_mcp_registration(&method)
             && let Some(first_arg) = node.args.first()
         {
-            let tool_name = display::expr_to_string(first_arg).trim_matches('"').to_string();
+            let tool_name = display::expr_to_string(first_arg)
+                .trim_matches('"')
+                .to_string();
             if !tool_name.is_empty() {
                 let closure_sig = node.args.iter().nth(1).and_then(|arg| {
                     if let Expr::Closure(closure) = arg {
@@ -669,7 +727,10 @@ impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
                             unsafety: None,
                             abi: None,
                             fn_token: Token![fn](proc_macro2::Span::call_site()),
-                            ident: proc_macro2::Ident::new("handler", proc_macro2::Span::call_site()),
+                            ident: proc_macro2::Ident::new(
+                                "handler",
+                                proc_macro2::Span::call_site(),
+                            ),
                             generics: Generics::default(),
                             paren_token: syn::token::Paren::default(),
                             inputs: closure
@@ -694,13 +755,7 @@ impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
                     }
                 });
 
-                self.emit_sdk_entrypoint(
-                    &callee,
-                    &tool_name,
-                    line,
-                    &caller,
-                    closure_sig.as_ref(),
-                );
+                self.emit_sdk_entrypoint(&callee, &tool_name, line, &caller, closure_sig.as_ref());
             }
         }
 
@@ -733,6 +788,8 @@ impl<'ast> Visit<'ast> for RustFactExtractor<'ast> {
             }));
 
             self.check_sink(&normalized_callee, &call_id, line);
+            self.check_source(&normalized_callee, &call_id, line);
+            self.check_sanitizer(&normalized_callee, &call_id, line);
         }
 
         syn::visit::visit_expr_method_call(self, node);
@@ -835,6 +892,8 @@ pub fn extract_rust_facts(
     file: &Path,
     source: &str,
     sinks: &[SinkModel],
+    sources: &[SourceModel],
+    sanitizers: &[SanitizerModel],
 ) -> RustExtractionResult {
     let ast = match syn::parse_file(source) {
         Ok(file_ast) => file_ast,
@@ -851,7 +910,7 @@ pub fn extract_rust_facts(
         }
     };
 
-    let mut extractor = RustFactExtractor::new(root, file, source, sinks);
+    let mut extractor = RustFactExtractor::new(root, file, source, sinks, sources, sanitizers);
     extractor.visit_file(&ast);
 
     // Sort facts by line
@@ -871,15 +930,18 @@ pub fn extract_rust_facts(
 mod tests {
     use std::path::Path;
 
-    use crate::model::EntryPointKind;
     use super::*;
+    use crate::model::EntryPointKind;
 
     fn extract(source: &str) -> RustExtractionResult {
+        let catalog = crate::models::default_catalog();
         extract_rust_facts(
             Path::new("/repo"),
             Path::new("/repo/src/main.rs"),
             source,
-            crate::models::default_catalog().sinks_for_language("rust"),
+            catalog.sinks_for_language("rust"),
+            catalog.sources_for_language("rust"),
+            catalog.sanitizers_for_language("rust"),
         )
     }
 
@@ -986,17 +1048,15 @@ use std::collections::{HashMap, BTreeMap};
         assert!(result.diagnostics.is_empty());
         let imports = import_facts(&result);
         assert!(
-            imports.iter().any(|i| i.module == "std::process::Command" && i.kind == ImportKind::Use)
+            imports
+                .iter()
+                .any(|i| i.module == "std::process::Command" && i.kind == ImportKind::Use)
         );
-        assert!(
-            imports.iter().any(|i| i.module == "std::fs::File" && i.kind == ImportKind::UseAs && i.alias.as_deref() == Some("FsFile"))
-        );
-        assert!(
-            imports.iter().any(|i| i.kind == ImportKind::UseGlob)
-        );
-        assert!(
-            imports.iter().any(|i| i.kind == ImportKind::UseGroup)
-        );
+        assert!(imports.iter().any(|i| i.module == "std::fs::File"
+            && i.kind == ImportKind::UseAs
+            && i.alias.as_deref() == Some("FsFile")));
+        assert!(imports.iter().any(|i| i.kind == ImportKind::UseGlob));
+        assert!(imports.iter().any(|i| i.kind == ImportKind::UseGroup));
     }
 
     #[test]
@@ -1019,17 +1079,29 @@ async fn async_handler(params: serde_json::Value) -> Result<(), Box<dyn std::err
         let functions = function_facts(&result);
         assert_eq!(functions.len(), 2);
 
-        let run_cmd = functions.iter().find(|f| f.name == "run_command").expect("run_command");
+        let run_cmd = functions
+            .iter()
+            .find(|f| f.name == "run_command")
+            .expect("run_command");
         assert_eq!(run_cmd.language, "rust");
         assert_eq!(run_cmd.qualified_name, "run_command");
         assert_eq!(run_cmd.params.len(), 2);
         assert_eq!(run_cmd.params[0].name, "command");
         assert_eq!(run_cmd.params[0].annotation.as_deref(), Some("&str"));
         assert_eq!(run_cmd.params[1].name, "args");
-        assert_eq!(run_cmd.return_type.as_deref(), Some("std::io::Result<String>"));
-        assert_eq!(run_cmd.docstring.as_deref(), Some("Run a command with the given arguments."));
+        assert_eq!(
+            run_cmd.return_type.as_deref(),
+            Some("std::io::Result<String>")
+        );
+        assert_eq!(
+            run_cmd.docstring.as_deref(),
+            Some("Run a command with the given arguments.")
+        );
 
-        let async_fn = functions.iter().find(|f| f.name == "async_handler").expect("async_handler");
+        let async_fn = functions
+            .iter()
+            .find(|f| f.name == "async_handler")
+            .expect("async_handler");
         assert!(async_fn.return_type.as_deref().unwrap().contains("Result"));
     }
 
@@ -1050,7 +1122,10 @@ impl MyTool {
 
         assert!(result.diagnostics.is_empty());
         let functions = function_facts(&result);
-        let handle = functions.iter().find(|f| f.name == "handle").expect("handle");
+        let handle = functions
+            .iter()
+            .find(|f| f.name == "handle")
+            .expect("handle");
         assert_eq!(handle.qualified_name, "MyTool.handle");
         assert_eq!(handle.enclosing_class.as_deref(), Some("MyTool"));
         assert_eq!(handle.docstring.as_deref(), Some("Handle a tool request."));
@@ -1075,11 +1150,26 @@ fn do_work() {
         let calls = call_facts(&result);
         assert!(!calls.is_empty());
 
-        let cmd_new = calls.iter().find(|c| c.callee == "Command::new").expect("Command::new call");
-        assert_eq!(cmd_new.normalized_callee.as_deref(), Some("std::process::Command::new"));
-        assert!(cmd_new.resolution.as_ref().and_then(|r| r.import_alias.as_deref()) == Some("Command"));
+        let cmd_new = calls
+            .iter()
+            .find(|c| c.callee == "Command::new")
+            .expect("Command::new call");
+        assert_eq!(
+            cmd_new.normalized_callee.as_deref(),
+            Some("std::process::Command::new")
+        );
+        assert!(
+            cmd_new
+                .resolution
+                .as_ref()
+                .and_then(|r| r.import_alias.as_deref())
+                == Some("Command")
+        );
 
-        let cmd_output = calls.iter().find(|c| c.callee == "cmd.output").expect("cmd.output call");
+        let cmd_output = calls
+            .iter()
+            .find(|c| c.callee == "cmd.output")
+            .expect("cmd.output call");
         assert_eq!(cmd_output.normalized_callee.as_deref(), Some("cmd.output"));
     }
 
@@ -1105,12 +1195,21 @@ fn read_resource(path: String) -> String {
         let entries = entrypoint_facts(&result);
         assert_eq!(entries.len(), 2);
 
-        let tool_entry = entries.iter().find(|e| e.name == "my_tool").expect("my_tool entrypoint");
+        let tool_entry = entries
+            .iter()
+            .find(|e| e.name == "my_tool")
+            .expect("my_tool entrypoint");
         assert_eq!(tool_entry.kind, EntryPointKind::McpTool);
-        assert_eq!(tool_entry.evidence.as_ref().unwrap().kind, "attribute_macro");
+        assert_eq!(
+            tool_entry.evidence.as_ref().unwrap().kind,
+            "attribute_macro"
+        );
         assert!(tool_entry.evidence.as_ref().unwrap().text.contains("tool"));
 
-        let resource_entry = entries.iter().find(|e| e.name == "read_resource").expect("read_resource entrypoint");
+        let resource_entry = entries
+            .iter()
+            .find(|e| e.name == "read_resource")
+            .expect("read_resource entrypoint");
         assert_eq!(resource_entry.kind, EntryPointKind::McpResource);
 
         let sources = source_facts(&result);
@@ -1342,7 +1441,11 @@ fn register(server: &mut Server) {
 
         // Dedup collapses the chain to a single call/sink, but BOTH chained
         // MCP registrations must still be detected as entrypoints.
-        assert_eq!(entries.len(), 2, "expected two entrypoints, got {entries:?}");
+        assert_eq!(
+            entries.len(),
+            2,
+            "expected two entrypoints, got {entries:?}"
+        );
         assert!(entries.iter().any(|e| e.name == "tool_a"));
         assert!(entries.iter().any(|e| e.name == "tool_b"));
         assert!(entries.iter().all(|e| e.kind == EntryPointKind::McpTool));

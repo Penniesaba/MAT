@@ -12,16 +12,15 @@ use rustpython_parser::{Parse, ast};
 
 use crate::model::{
     AssignFact, CallArg, CallFact, CallKwarg, CallResolution, Confidence, EntryPointEvidence,
-    EntryPointFact, Fact, FactBase, FunctionFact, ImportFact, ImportKind,
-    SinkFact, SourceFact,
+    EntryPointFact, Fact, FactBase, FunctionFact, ImportFact, ImportKind, SanitizerFact, SinkFact,
+    SourceFact,
 };
-use crate::models::SinkModel;
+use crate::models::{SanitizerModel, SinkModel, SourceModel};
 
 use super::{
-    ExtractionDiagnostic, PythonExtractionResult, display_path,
-    fact_sort_key, line_col_for_offset, make_assign_id, make_call_id,
-    make_entrypoint_id, make_function_id, make_import_id, make_sink_id, make_source_id,
-    snippet_for_range,
+    ExtractionDiagnostic, PythonExtractionResult, display_path, fact_sort_key, line_col_for_offset,
+    make_assign_id, make_call_id, make_entrypoint_id, make_function_id, make_import_id,
+    make_sanitizer_id, make_sink_id, make_source_id, matches_callee_pattern, snippet_for_range,
 };
 
 const EXTRACTOR_NAME: &str = "rust_python_ast_phase7";
@@ -31,8 +30,10 @@ pub fn extract_python_facts(
     file: &Path,
     source: &str,
     sinks: &[SinkModel],
+    sources: &[SourceModel],
+    sanitizers: &[SanitizerModel],
 ) -> PythonExtractionResult {
-    let mut extractor = PythonFactExtractor::new(root, file, source, sinks);
+    let mut extractor = PythonFactExtractor::new(root, file, source, sinks, sources, sanitizers);
     extractor.extract()
 }
 
@@ -41,6 +42,8 @@ struct PythonFactExtractor<'a> {
     file: PathBuf,
     source: &'a str,
     sinks: &'a [SinkModel],
+    sources: &'a [SourceModel],
+    sanitizers: &'a [SanitizerModel],
     facts: Vec<Fact>,
     diagnostics: Vec<ExtractionDiagnostic>,
     import_aliases: BTreeMap<String, String>,
@@ -50,12 +53,21 @@ struct PythonFactExtractor<'a> {
 }
 
 impl<'a> PythonFactExtractor<'a> {
-    fn new(root: &Path, file: &Path, source: &'a str, sinks: &'a [SinkModel]) -> Self {
+    fn new(
+        root: &Path,
+        file: &Path,
+        source: &'a str,
+        sinks: &'a [SinkModel],
+        sources: &'a [SourceModel],
+        sanitizers: &'a [SanitizerModel],
+    ) -> Self {
         Self {
             root: root.to_path_buf(),
             file: file.to_path_buf(),
             source,
             sinks,
+            sources,
+            sanitizers,
             facts: Vec::new(),
             diagnostics: Vec::new(),
             import_aliases: BTreeMap::new(),
@@ -470,6 +482,8 @@ impl<'a> PythonFactExtractor<'a> {
             }),
         };
         self.emit_sink_for_call(&call_fact);
+        self.emit_source_for_call(&call_fact);
+        self.emit_sanitizer_for_call(&call_fact);
         self.facts.push(Fact::Call(call_fact));
     }
 
@@ -517,6 +531,64 @@ impl<'a> PythonFactExtractor<'a> {
             conditions,
             confidence: classification.confidence,
         }));
+    }
+
+    /// Emit a model-driven `SourceFact` when the callee matches a source model
+    /// (e.g. `os.environ.get`). The source is anchored to the call via
+    /// `call_id`, so the taint graph can treat the call's result as tainted.
+    fn emit_source_for_call(&mut self, call: &CallFact) {
+        let callee = call
+            .normalized_callee
+            .as_deref()
+            .unwrap_or(call.callee.as_str());
+        for model in self.sources {
+            if matches_callee_pattern(callee, &model.patterns) {
+                let name = model
+                    .patterns
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| callee.to_string());
+                self.facts.push(Fact::Source(SourceFact {
+                    base: FactBase {
+                        id: format!("source:model:{}:{}", call.base.id, model.category),
+                        file: call.base.file.clone(),
+                        line: call.base.line,
+                        extractor: EXTRACTOR_NAME.to_string(),
+                    },
+                    kind: model.category.clone(),
+                    function_id: self.caller_function_id().unwrap_or_default(),
+                    name,
+                    confidence: Confidence::Medium,
+                    call_id: Some(call.base.id.clone()),
+                }));
+                break; // first-match-wins
+            }
+        }
+    }
+
+    /// Emit a `SanitizerFact` when the callee matches a sanitizer model.
+    fn emit_sanitizer_for_call(&mut self, call: &CallFact) {
+        let callee = call
+            .normalized_callee
+            .as_deref()
+            .unwrap_or(call.callee.as_str());
+        for model in self.sanitizers {
+            if matches_callee_pattern(callee, &model.patterns) {
+                self.facts.push(Fact::Sanitizer(SanitizerFact {
+                    base: FactBase {
+                        id: make_sanitizer_id(&self.root, &self.file, call.base.line, callee),
+                        file: call.base.file.clone(),
+                        line: call.base.line,
+                        extractor: EXTRACTOR_NAME.to_string(),
+                    },
+                    call_id: call.base.id.clone(),
+                    sanitizer_name: callee.to_string(),
+                    neutralizes: model.neutralizes.clone(),
+                    confidence: Confidence::High,
+                }));
+                break; // first-match-wins
+            }
+        }
     }
 
     fn visit_assign_stmt(&mut self, assign: &ast::StmtAssign) {
@@ -636,7 +708,10 @@ impl<'a> PythonFactExtractor<'a> {
         let (end_line, _) = line_col_for_offset(self.source, end);
         let function_id = make_function_id("python", &self.root, &self.file, &qualified_name);
         let params = functions::params_from_arguments(args);
-        let decorator_texts = decorators.iter().map(calls::expr_to_string).collect::<Vec<_>>();
+        let decorator_texts = decorators
+            .iter()
+            .map(calls::expr_to_string)
+            .collect::<Vec<_>>();
         let enclosing_class = self.class_stack.last().cloned();
 
         self.facts.push(Fact::Function(FunctionFact {
@@ -697,6 +772,7 @@ impl<'a> PythonFactExtractor<'a> {
                     kind: "mcp_tool_parameter".to_string(),
                     function_id: function_id.clone(),
                     name: param,
+                    call_id: None,
                     confidence: Confidence::High,
                 }));
             }
@@ -717,17 +793,20 @@ mod tests {
 
     use crate::model::{
         AssignFact, CallFact, Confidence, EntryPointFact, EntryPointKind, Fact, FunctionFact,
-        ImportFact, ImportKind, SinkFact, SourceFact,
+        ImportFact, ImportKind, SanitizerFact, SinkFact, SourceFact,
     };
 
     use super::*;
 
     fn extract(source: &str) -> PythonExtractionResult {
+        let catalog = crate::models::default_catalog();
         extract_python_facts(
             Path::new("/repo"),
             Path::new("/repo/server.py"),
             source,
-            crate::models::default_catalog().sinks_for_language("python"),
+            catalog.sinks_for_language("python"),
+            catalog.sources_for_language("python"),
+            catalog.sanitizers_for_language("python"),
         )
     }
 
@@ -913,12 +992,16 @@ def risky(path: str, data: str, sql: str, tpl: str):
         assert!(categories.contains(&"env_access"));
 
         // `open` is mode-sensitive: read mode → file_read, write mode → file_write.
-        assert!(sinks
-            .iter()
-            .any(|item| item.sink_name == "open" && item.category == "file_read"));
-        assert!(sinks
-            .iter()
-            .any(|item| item.sink_name == "open" && item.category == "file_write"));
+        assert!(
+            sinks
+                .iter()
+                .any(|item| item.sink_name == "open" && item.category == "file_read")
+        );
+        assert!(
+            sinks
+                .iter()
+                .any(|item| item.sink_name == "open" && item.category == "file_write")
+        );
     }
 
     #[test]
@@ -1304,5 +1387,52 @@ class Server:
             .find(|item| item.qualified_name == "Server.method")
             .expect("method fact");
         assert_eq!(method.enclosing_class.as_deref(), Some("Server"));
+    }
+
+    #[test]
+    fn extracts_model_driven_sources_and_sanitizers() {
+        let result = extract(
+            r#"
+import os
+import shlex
+
+@mcp.tool()
+def run_cmd(cmd: str):
+    secret = os.environ.get("SECRET")
+    safe = shlex.quote(cmd)
+    return secret, safe
+"#,
+        );
+
+        assert!(result.diagnostics.is_empty());
+
+        // Model-driven source: os.environ.get → env_var, anchored to its call.
+        let sources = source_facts(&result);
+        assert!(
+            sources
+                .iter()
+                .any(|s| s.call_id.is_some() && s.kind == "env_var"),
+            "expected a model-driven env_var source; got {:?}",
+            sources
+                .iter()
+                .map(|s| (&s.kind, &s.call_id))
+                .collect::<Vec<_>>()
+        );
+
+        // Sanitizer: shlex.quote → neutralizes command_execution.
+        let sanitizers: Vec<&SanitizerFact> = result
+            .facts
+            .iter()
+            .filter_map(|f| match f {
+                Fact::Sanitizer(s) => Some(s),
+                _ => None,
+            })
+            .collect();
+        assert!(sanitizers.iter().any(|s| s.sanitizer_name == "shlex.quote"));
+        assert!(
+            sanitizers
+                .iter()
+                .any(|s| s.neutralizes == vec!["command_execution".to_string()])
+        );
     }
 }

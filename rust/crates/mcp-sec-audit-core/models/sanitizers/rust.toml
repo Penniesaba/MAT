@@ -1,0 +1,2 @@
+# Rust sanitizer models. No standard-library sanitizer is modeled yet; learned
+# sanitizers (agent-proposed) are appended here via the evolution loop.

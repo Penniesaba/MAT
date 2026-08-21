@@ -73,6 +73,7 @@ pub enum Fact {
     Entrypoint(EntryPointFact),
     Call(CallFact),
     Sink(SinkFact),
+    Sanitizer(SanitizerFact),
     Source(SourceFact),
     Assign(AssignFact),
     Dataflow(DataFlowFact),
@@ -154,6 +155,21 @@ pub struct SourceFact {
     pub kind: String,
     pub function_id: String,
     pub name: String,
+    pub confidence: Confidence,
+    /// For model-driven sources: the call whose result is tainted. `None` for
+    /// structurally-detected sources (MCP tool parameters, entrypoints).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SanitizerFact {
+    #[serde(flatten)]
+    pub base: FactBase,
+    pub call_id: String,
+    pub sanitizer_name: String,
+    /// Sink categories neutralized (a `"*"` entry neutralizes everything).
+    pub neutralizes: Vec<String>,
     pub confidence: Confidence,
 }
 
