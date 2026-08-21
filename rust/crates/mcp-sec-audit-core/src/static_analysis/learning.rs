@@ -1,10 +1,11 @@
 //! Gate for classifying agent-proposed sink candidates against cheap
 //! semantic-inference heuristics.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::model::{Confidence, Fact, FactBase, ModelCandidate, Severity, SinkFact};
-use crate::models::{rule_prefix, PackageRule, SinkModel};
+use crate::models::{ModelCatalog, rule_prefix, PackageRule, SinkModel};
 
 use super::infer::{language_from_file, name_category};
 
@@ -130,6 +131,118 @@ pub fn write_learned_sinks(dir: &Path, models: &[SinkModel]) -> anyhow::Result<(
             m.reason, m.patterns, m.learned_from.as_deref().unwrap_or("unknown")
         );
         std::fs::write(dir.join(format!("learned-{safe}.toml")), text)?;
+    }
+    Ok(())
+}
+
+// --- M2 可回滚 catalog 进化（staging + 指纹 + rollback）------------------
+//
+// 这些原语直到 M3 的两阶段编排才被 pipeline 接线：阶段 1 门控出的 sink 候选
+// 经 `stage_catalog_evolution` 暂存，`write_staging` 落盘到 staging 目录（非
+// `learned/`），阶段 2 用 `catalog_fingerprint` 作回退锚点，必要时
+// `rollback_staging` 删除暂存。接线前仅由单元测试驱动，故逐项 `#[allow(dead_code)]`。
+
+/// 一次暂存（试探性、可回退）的 catalog 进化。`base_fingerprint` 是进化前的身份
+/// （回退锚点）；`fingerprint` 标识 delta 本身。
+#[allow(dead_code)]
+pub(crate) struct StagedDelta {
+    pub(crate) base_fingerprint: String,
+    pub(crate) models: Vec<SinkModel>,
+    pub(crate) fingerprint: String,
+}
+
+/// `ModelCatalog` 的确定性内容身份：排序后的 `language:category:pattern` 条目用 `|` 连接。
+#[allow(dead_code)]
+pub(crate) fn catalog_fingerprint(catalog: &ModelCatalog) -> String {
+    let mut entries = Vec::new();
+    for lang in ["python", "javascript", "rust"] {
+        for m in catalog.sinks_for_language(lang) {
+            for p in &m.patterns {
+                entries.push(format!("{lang}:{}:{}", m.category, p));
+            }
+        }
+    }
+    entries.sort();
+    entries.join("|")
+}
+
+/// 把门控后（Hot/Warm）的 sink 候选转成可回退的 `StagedDelta`，对现有 catalog 去重。
+/// 没有新增时返回 `None`。G1 门控（`gate_sink_candidate`）与 G2 可表达性
+/// （`diff::classify_candidate`）由调用方在更上游完成。
+#[allow(dead_code)]
+pub(crate) fn stage_catalog_evolution(
+    catalog: &ModelCatalog,
+    candidates: &[ModelCandidate],
+) -> Option<StagedDelta> {
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for lang in ["python", "javascript", "rust"] {
+        for m in catalog.sinks_for_language(lang) {
+            for p in &m.patterns {
+                seen.insert(format!("{lang}:{}:{}", m.category, p));
+            }
+        }
+    }
+
+    let mut models = Vec::new();
+    for c in candidates {
+        if c.kind != "sink" || c.name.trim().is_empty() || c.category.trim().is_empty() {
+            continue;
+        }
+        let key = format!("{}:{}:{}", c.language, c.category, c.name);
+        if seen.insert(key) {
+            models.push(SinkModel {
+                language: c.language.clone(),
+                category: c.category.clone(),
+                severity: Severity::Medium,
+                confidence: c.confidence.clone(),
+                reason: format!(
+                    "staged sink: {} (evidence: {})",
+                    c.category,
+                    c.evidence_snippets.first().cloned().unwrap_or_default()
+                ),
+                patterns: vec![c.name.clone()],
+                source: Some("learned-staged".to_string()),
+                learned_from: None,
+            });
+        }
+    }
+
+    if models.is_empty() {
+        return None;
+    }
+    let base_fingerprint = catalog_fingerprint(catalog);
+    let mut fp = models
+        .iter()
+        .flat_map(|m| m.patterns.iter().map(|p| format!("{}:{}:{}", m.language, m.category, p)))
+        .collect::<Vec<_>>();
+    fp.sort();
+    let fingerprint = fp.join("|");
+    Some(StagedDelta { base_fingerprint, models, fingerprint })
+}
+
+/// 把暂存 delta 写到 staging 目录（不是 `learned/`），每个模型一个 TOML 文件。
+#[allow(dead_code)]
+pub(crate) fn write_staging(dir: &Path, delta: &StagedDelta) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    for (i, m) in delta.models.iter().enumerate() {
+        let safe = m.patterns.first()
+            .map(|p| p.replace(['.', ':', '/'], "_"))
+            .unwrap_or_else(|| i.to_string());
+        let text = format!(
+            "[[sinks]]\nlanguage = {:?}\ncategory = {:?}\nseverity = {:?}\nconfidence = {:?}\nreason = {:?}\npatterns = {:?}\nsource = \"learned-staged\"\nlearned_from = {:?}\n",
+            m.language, m.category, severity_str(&m.severity), confidence_str(&m.confidence),
+            m.reason, m.patterns, m.learned_from.as_deref().unwrap_or("staged")
+        );
+        std::fs::write(dir.join(format!("staged-{safe}.toml")), text)?;
+    }
+    Ok(())
+}
+
+/// 回退一次暂存进化：删除 staging 目录。`learned/` 不动。
+#[allow(dead_code)]
+pub(crate) fn rollback_staging(dir: &Path) -> anyhow::Result<()> {
+    if dir.exists() {
+        std::fs::remove_dir_all(dir)?;
     }
     Ok(())
 }
@@ -266,5 +379,50 @@ mod tests {
         assert_eq!(loaded.sink_count(), 1);
         assert!(loaded.sinks_for_language("python")[0].source.as_deref() == Some("learned"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn catalog_fingerprint_is_deterministic_and_content_sensitive() {
+        let a = crate::models::default_catalog();
+        let b = crate::models::default_catalog();
+        assert_eq!(catalog_fingerprint(&a), catalog_fingerprint(&b));
+        let mut extra = crate::models::default_catalog();
+        extra.merge(crate::models::ModelCatalog::from_sinks(vec![SinkModel {
+            language: "python".into(), category: "file_read".into(),
+            severity: Severity::Medium, confidence: Confidence::Low,
+            reason: "x".into(), patterns: vec!["novel.read".into()],
+            source: None, learned_from: None,
+        }]));
+        assert_ne!(catalog_fingerprint(&a), catalog_fingerprint(&extra));
+    }
+
+    #[test]
+    fn stage_dedups_existing_and_returns_none_when_noop() {
+        let catalog = crate::models::default_catalog();
+        // subprocess.run 已是内置 python sink —— staging 它是 no-op。
+        let cand = cand_lang("subprocess.run", "command_execution", "python");
+        assert!(stage_catalog_evolution(&catalog, &[cand]).is_none());
+    }
+
+    #[test]
+    fn stage_builds_delta_for_new_sink() {
+        let catalog = crate::models::default_catalog();
+        let cand = cand_lang("brand_new.lib.read", "file_read", "python");
+        let delta = stage_catalog_evolution(&catalog, &[cand]).expect("new sink stages");
+        assert_eq!(delta.models.len(), 1);
+        assert_eq!(delta.models[0].patterns, vec!["brand_new.lib.read"]);
+        assert_eq!(delta.base_fingerprint, catalog_fingerprint(&catalog));
+    }
+
+    #[test]
+    fn staging_roundtrips_and_rollback_removes_dir() {
+        let catalog = crate::models::default_catalog();
+        let cand = cand_lang("brand_new.lib.read", "file_read", "python");
+        let delta = stage_catalog_evolution(&catalog, &[cand]).unwrap();
+        let dir = std::env::temp_dir().join(format!("staging-test-{}", std::process::id()));
+        write_staging(&dir, &delta).expect("write staging");
+        assert!(dir.join("staged-brand_new_lib_read.toml").exists());
+        rollback_staging(&dir).expect("rollback");
+        assert!(!dir.exists());
     }
 }
