@@ -203,20 +203,42 @@ pub fn run_static_scan_with_progress(
 
     // ---------- 门控（G1/G2）+ 试探性进化（G3） ----------
     let rules = crate::models::default_package_rules();
-    let gated: Vec<ModelCandidate> = agent_output_1.model_candidates.iter()
-        .filter(|c| c.kind == "sink"
-            && matches!(learning::gate_sink_candidate(c, &rules),
-                        learning::GateDecision::Hot | learning::GateDecision::Warm)
-            && matches!(diff::classify_candidate(c),
-                        diff::Representability::MadSink | diff::Representability::TaintModel))
-        .cloned()
-        .collect();
+    let mut gated: Vec<ModelCandidate> = Vec::new();
+    for c in &agent_output_1.model_candidates {
+        let gate = learning::gate_sink_candidate(c, &rules);
+        let representability = diff::classify_candidate(c);
+        let g1_pass = c.kind == "sink"
+            && matches!(gate, learning::GateDecision::Hot | learning::GateDecision::Warm);
+        let g2_pass = matches!(
+            representability,
+            diff::Representability::MadSink | diff::Representability::TaintModel
+        );
+        tracing::info!(
+            target: "mcp_sec_audit::evolution",
+            candidate = %c.name,
+            category = %c.category,
+            gate = ?gate,
+            representability = ?representability,
+            gated = g1_pass && g2_pass,
+            "gated agent candidate"
+        );
+        if g1_pass && g2_pass {
+            gated.push(c.clone());
+        }
+    }
 
     // 无进化可做时，直接以阶段 1 结果走融合+汇总，返回（不重跑阶段 2）。
     let Some(staged) = learning::stage_catalog_evolution(&base_catalog, &gated) else {
         progress("Differential: no evolution candidates — skipping phase 2");
         return finish(&ctx, &targets, rule_results, taint_results_1, agent_output_1, codeql_output_1, facts_1, progress);
     };
+
+    tracing::info!(
+        target: "mcp_sec_audit::evolution",
+        staged = staged.models.len(),
+        fingerprint = %staged.fingerprint,
+        "staged catalog evolution"
+    );
 
     let diff_1 = diff::diff_lines(
         rule_results.clone(),

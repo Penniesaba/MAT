@@ -32,8 +32,18 @@ pub(crate) fn run(
         codeql_results,
         config.line_proximity,
     );
+    tracing::info!(
+        target: "mcp_sec_audit::fusion",
+        groups = match_groups.len(),
+        "fusion match groups formed"
+    );
 
     let scored_groups = scorer::score_groups(match_groups, config);
+    tracing::info!(
+        target: "mcp_sec_audit::fusion",
+        surviving = scored_groups.len(),
+        "fusion score pass complete"
+    );
 
     merger::merge_groups(scored_groups)
 }
