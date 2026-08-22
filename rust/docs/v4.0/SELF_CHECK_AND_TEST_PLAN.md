@@ -212,9 +212,13 @@ src/
 | 单元测试 | `cd rust && cargo test --workspace` | core **274** + cli **5** = **279 通过，0 失败，0 警告** | 覆盖：差分/迁移/门控/暂存/回滚/组件指纹/prompt'/三类模型装载/fact 抽取/taint 传播/fusion 分组/CodeQL MaD/SARIF 解析/配置解析/CLI |
 | 集成/端到端 | `cd rust && cargo run -- <config.toml>` | 需 CodeQL CLI（≥2.26.3 才有 MaD）与 `claude` 可用 | 用 `test-targets/configs/*.toml` 驱动真实扫描 |
 
-> 关键单元测试（v4 相关）：`static_analysis::pipeline::tests::agent_warm_reinjection_adds_taint_finding_for_learned_sink`、
-> `static_analysis::validate::tests::*`（b1/a1/b2/回滚）、`static_analysis::learning::tests::catalog_fingerprint_*`、
-> `static_analysis::diff::*`（c/a/b + b0）、`static_analysis::agent::prompt::tests::renders_recheck_and_do_not_report_sections`。
+> 关键单元测试（v4 相关）：`pipeline::tests::agent_warm_reinjection_adds_taint_finding_for_learned_sink`、
+> `pipeline::tests::build_recheck_splits_a1_and_a2`（a1/a2 二分）、`validate::tests::*`（b1/a1/a2/b2 迁移 + 回滚 +
+> `ambiguous_items_surfaces_still_b_only`）、`learning::tests::catalog_fingerprint_is_deterministic_and_content_sensitive`、
+> `learning::tests::staging_roundtrips_and_rollback_removes_dir`、`diff::*`（c/a/b + b0）、
+> `agent::prompt::tests::renders_recheck_and_do_not_report_sections` + `renders_explanation_prompt`（L2 解释提示词）、
+> `codeql::models::tests::write_model_pack_dir_writes_python_and_javascript_packs`（MaD 编译）、
+> `codeql::tests::mad_gate_accepts_2_26_3_and_newer` / `mad_gate_rejects_2_26_2_and_missing`（MaD 版本门控）。
 
 ## 3.2 配置 schema（`config.rs` 全字段）
 
@@ -238,7 +242,7 @@ src/
 | `configs/rust-config.toml` | `rust-mcp-server` | rule+taint+agent+codeql | Rust 全线路 |
 | `configs/all-languages-config.toml` | 三个 server | rule+taint+fusion | 多语言 + 四线融合 |
 | `configs/excel-mcp-server-config.toml` | `excel-mcp-server`（真实 CVE） | rule+taint+agent+codeql+learned_dir | 真实漏洞召回/融合/自进化（scenario A/B/C/D） |
-| **`configs/v4-evolution-config.toml`**（本次新增） | `excel-mcp-server` | 全线路 + learned_dir + 13 个 logging scope | **v4.0 两阶段差分进化端到端**（见 3.5） |
+| **`configs/v4-evolution-config.toml`** | `excel-mcp-server` | 全线路 + learned_dir + 13 个 logging scope | **v4.0 两阶段差分进化端到端**（见 3.5） |
 
 > 说明：`js-config.toml` / `rust-config.toml` 的 `[static.agent]`/`[static.codeql]` 只设 `enabled=true` 未设 `provider`/`binary`，
 > 依赖默认 `claude` 与 PATH 上的 `codeql`；实际端到端运行时请显式指定（参考 `v4-evolution-config.toml` 的写法）。
@@ -247,17 +251,22 @@ src/
 
 ### 3.4.1 单元测试（每提交 / CI 常驻）
 - `cargo test --workspace` 必须 0 失败、0 警告（`cargo build --workspace 2>&1 | grep -i warning` 为空）。
-- v4 关键回归面：两阶段编排、门控（G1/G2）、暂存/回滚、迁移校验、prompt' 渲染、三类模型装载、MaD 编译。
+- v4 关键回归面：两阶段编排、门控（G1/G2/G3）、暂存/回滚、迁移校验（b0/a1/a2/b1/b2）、prompt' 渲染（a1/a2 二分）、
+  三类模型装载（source/sink/sanitizer）、sanitizer 截断 taint、L2 解释提示词、L3 裁决出口、真溯源 learned_from、
+  MaD 编译 + 版本门控、suite ref 非版本化。
 
 ### 3.4.2 端到端扫描（按 scenario 分层）
 1. **A 线召回基线**：`agent.enabled=false` + `fusion.enabled=false`，验证 rule/taint/codeql 各自命中数。
 2. **四线融合**：`fusion.enabled=true`，验证 `require_confirmed_by` 与 `codeql_weight=4` 对融合置信度的影响。
 3. **两阶段差分进化（v4 核心）**：`agent.enabled=true` + `learned_dir`，观测：
-   - `[evolution]` 逐候选 gate 判定（Hot/Warm/Cold + MadSink/TaintModel/SemanticOnly）；
-   - `[diff]` 差分分区 c/a/b 计数；`[validate]` 迁移结果（b1/a1 确认、新增误报、仍混沌）；
-   - `learned/` 目录在 promote 分支新增 TOML（`write_learned_sinks`）；
-   - rollback 时 staging 目录被删、learned/ 不动。
-4. **可观测性**：`[logging.scopes]` 把 `evolution/validate/diff/facts/infer` 调到 `debug/trace`，验证中间结果与数据流转可见。
+   - `[evolution]` 逐候选 gate 判定（Hot/Warm/Cold + MadSink/TaintModel/SemanticOnly），并显式筛出 b0（SemanticOnly/Cold）；
+   - `[diff]` 差分分区 c/a/b 计数；`[validate]` 迁移结果五记号（b1/a1 确认、a2 A 误报、b2 新增噪声、b0 语义漏洞、仍混沌 b_still_ambiguous）；
+   - `learned/` 目录在 promote 分支新增**三类** TOML（`write_learned_sinks` / `write_learned_sources` / `write_learned_sanitizers`），
+     且 `learned_from` 写真实溯源 `{scan_id}/{agent_provider}`；
+   - rollback 时（`b2 > b1`）staging 目录被删、learned/ 不动；
+   - L2：仍混沌 b-only 条目交 agent 语义解释（`render_explanation_prompt` + `attach_explanations`），
+     L3：`EvolutionReport.ambiguous_for_review` 把裁决出口写进结果文件。
+4. **可观测性**：`[logging.scopes]` 把 `evolution/validate/diff/facts/infer/component` 调到 `debug/trace`，验证中间结果与数据流转可见。
 
 ### 3.4.3 真值靶子（excel-mcp-server CVE-2026-40576）
 - 已知漏洞：`src/excel_mcp/server.py::get_excel_path()` 绝对路径绕过 + `os.path.join(..., "..")`（CWE-22）。
@@ -268,11 +277,20 @@ src/
 - 用 stub agent（见 `pipeline::tests::agent_warm_reinjection_*` 的固定 JSON 输出）做**确定性**单测，
   避免 agent 随机性（风险 R2）影响断言；端到端进化验证再切回真实 `claude`。
 
-## 3.5 本次「落实」的变更
+## 3.5 本次「落实」的变更（v4.0 全量落地，G1–G6）
 
-1. **新增** `test-targets/configs/v4-evolution-config.toml`：一条覆盖 v4.0 两阶段差分进化完整路径的端到端配置，
-   含全部 13 个 `[logging.scopes]`（与 `cli/src/logging.rs` 的 `SCOPE_TARGETS` 对齐）。
-2. 在本文档中把 6 个配置文件的用途、启用线路、观测点做成矩阵（3.3），并给出分层测试方案（3.4）。
+1. **G1 三类模型**：`models/mod.rs` 新增 `SourceModel`/`SanitizerModel`，`ModelCatalog` 扩展 sinks/sources/sanitizers
+   三类装载；内置 `models/{sinks,sources,sanitizers}/*.toml`；抽取器按三类模型装配 fact，sanitizer 截断 taint。
+2. **G2 Component 接线**：`component.rs` 的 `Component` trait 补全 `evolve/promote/rollback`，四实现齐，
+   `pipeline.rs` 经 `TaintComponent.evolve/promote/rollback` 驱动进化。
+3. **G3 差分标签补全**：`validate.rs::Migration` 落到 b0/a1/a2/b1/b2 五记号 + `should_rollback = b2 > b1`；
+   `pipeline.rs::build_recheck` 把 a-only 二分为 a1/a2。
+4. **G4 分层验证 + 真溯源**：L2（`render_explanation_prompt` + `attach_explanations` 回填 agent 语义解释）、
+   L3（`ambiguous_items` 进 `EvolutionReport.ambiguous_for_review`）；`learned_from` 写真实 `{scan_id}/{provider}`。
+5. **G5 MaD 深度参与**：CodeQL CLI 升级到 **2.26.3**，回退 suite pin 到非版本化，重下 packs，
+   重新生成 mcp-* 的 `codeql-pack.lock.yml`，实测 `--model-packs` 3 列 sinkModel 通过 overlay-eval。
+6. **G6 文档 + 测试收口**：本文件 1.2/1.3 核对表全部 ✅、1.4 缺口清单清空（仅剩 P3 待决），
+   单测 279（core 274 + cli 5）通过、0 失败、0 警告。
 
 ---
 
