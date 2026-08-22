@@ -64,11 +64,14 @@ impl CliCodeqlProvider {
 }
 
 /// Parse a `(major, minor, patch)` tuple from the first line of
-/// `codeql --version` output (e.g. "CodeQL command-line toolchain release 2.26.2.").
+/// `codeql --version` output (e.g. "CodeQL command-line toolchain release 2.26.3.").
 pub(crate) fn parse_codeql_version(stdout: &str) -> Option<(u32, u32, u32)> {
     let line = stdout.lines().next()?;
     let after_release = line.split("release ").nth(1)?;
-    let version = after_release.split_whitespace().next()?.trim_end_matches('.');
+    let version = after_release
+        .split_whitespace()
+        .next()?
+        .trim_end_matches('.');
     let mut parts = version.split('.');
     let major = parts.next()?.parse().ok()?;
     let minor = parts.next()?.parse().ok()?;
@@ -196,9 +199,9 @@ impl CodeqlProvider for CliCodeqlProvider {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
-        let mut child = cmd.spawn().map_err(|e| {
-            anyhow::anyhow!("failed to spawn codeql analyze: {}", e)
-        })?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("failed to spawn codeql analyze: {}", e))?;
 
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
@@ -279,7 +282,10 @@ mod tests {
 
     #[test]
     fn parses_three_component_version_without_trailing_dot() {
-        assert_eq!(parse_codeql_version("CodeQL release 2.26.3"), Some((2, 26, 3)));
+        assert_eq!(
+            parse_codeql_version("CodeQL release 2.26.3"),
+            Some((2, 26, 3))
+        );
     }
 
     #[test]

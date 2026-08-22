@@ -100,7 +100,8 @@ pub fn sink_candidates_to_sink_facts(facts: &[Fact], candidates: &[ModelCandidat
 
 /// Convert sink candidates to `SinkModel`s so R4's MaD compiler can turn them
 /// into CodeQL model packs for the warm CodeQL re-run.
-// Deferred until CodeQL CLI ≥ 2.26.3 (R4 RULING 11: --model-packs broken under 2.26.2). Not wired by the pipeline.
+// 被 catalog→MaD 路径取代：阶段 2 用 `evolved_catalog` 直接喂 `codeql::run`，
+// 由其内部 `write_model_pack_dir` 编译三类模型为 MaD（CLI ≥ 2.26.3 时注入）。
 #[allow(dead_code)]
 pub fn candidates_to_mad_sinks(candidates: &[ModelCandidate]) -> Vec<SinkModel> {
     candidates

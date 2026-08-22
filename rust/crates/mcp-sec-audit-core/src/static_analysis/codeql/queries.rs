@@ -7,7 +7,7 @@ use anyhow::{Result, bail};
 pub struct QueryPack {
     /// Paths to .ql files or .qlref references (language-native for this DB).
     pub query_files: Vec<PathBuf>,
-    /// Standard query pack references for this language (e.g. "codeql/rust-queries@0.1.39").
+    /// Standard query pack references for this language (e.g. "codeql/rust-queries").
     pub suite_refs: Vec<String>,
 }
 
@@ -51,14 +51,12 @@ impl QueryPack {
 
 /// Standard security suite reference for a database language.
 ///
-/// Version-pinned: CLI 2.26.2 cannot resolve unversioned pack refs from the
-/// local cache, and the latest packs (built by CLI 2.26.3) fail to download.
-/// Revert to unversioned refs after a CLI upgrade to 2.26.3+.
+/// Unversioned refs resolve to the latest compatible pack under CLI >= 2.26.3.
 fn standard_suite_refs_for(language: &str) -> Vec<String> {
     match language {
-        "python" => vec!["codeql/python-queries@1.8.7".to_string()],
-        "javascript" | "typescript" => vec!["codeql/javascript-queries@2.4.2".to_string()],
-        "rust" => vec!["codeql/rust-queries@0.1.39".to_string()],
+        "python" => vec!["codeql/python-queries".to_string()],
+        "javascript" | "typescript" => vec!["codeql/javascript-queries".to_string()],
+        "rust" => vec!["codeql/rust-queries".to_string()],
         _ => Vec::new(),
     }
 }
@@ -107,13 +105,13 @@ mod tests {
                 .and_then(|n| n.to_str())
                 .map_or(false, |n| n.contains("ToolParameterToSink"))
         }));
-        assert_eq!(pack.suite_refs, vec!["codeql/python-queries@1.8.7"]);
+        assert_eq!(pack.suite_refs, vec!["codeql/python-queries"]);
     }
 
     #[test]
     fn rust_pack_has_rust_suite() {
         let pack = QueryPack::for_language("rust").expect("rust pack");
-        assert_eq!(pack.suite_refs, vec!["codeql/rust-queries@0.1.39"]);
+        assert_eq!(pack.suite_refs, vec!["codeql/rust-queries"]);
     }
 
     #[test]

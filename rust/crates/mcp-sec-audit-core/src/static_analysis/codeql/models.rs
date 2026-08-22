@@ -113,13 +113,14 @@ pub(crate) fn write_model_pack_dir(
         std::fs::write(&path, yaml)?;
     }
     // The pack must be a dependency-free library extension pack (CodeQL rejects
-    // extension packs that declare `dependencies`). Target versions are pinned.
+    // extension packs that declare `dependencies`). Target versions are pinned
+    // to the CLI 2.26.3-bundled `-all` packs.
     let qlpack = r#"name: mcp-sec-audit-mad
 version: 0.0.1
 library: true
 extensionTargets:
-  codeql/python-all: "7.2.2"
-  codeql/javascript-all: "2.8.2"
+  codeql/python-all: "7.2.3"
+  codeql/javascript-all: "2.9.0"
 dataExtensions:
   - "*.model.yml"
 "#;
@@ -151,12 +152,18 @@ mod tests {
 
     #[test]
     fn maps_categories_to_mad_kinds() {
-        assert_eq!(mad_sink_kind("command_execution"), Some("command-injection"));
+        assert_eq!(
+            mad_sink_kind("command_execution"),
+            Some("command-injection")
+        );
         assert_eq!(mad_sink_kind("dynamic_execution"), Some("code-injection"));
         assert_eq!(mad_sink_kind("database_injection"), Some("sql-injection"));
         assert_eq!(mad_sink_kind("network_request"), Some("request-forgery"));
         assert_eq!(mad_sink_kind("file_read"), Some("path-injection"));
-        assert_eq!(mad_sink_kind("template_injection"), Some("template injection"));
+        assert_eq!(
+            mad_sink_kind("template_injection"),
+            Some("template injection")
+        );
         assert_eq!(mad_sink_kind("deserialization"), None);
         assert_eq!(mad_sink_kind("env_access"), None);
     }
@@ -212,17 +219,26 @@ mod tests {
         // The model pack must be a dependency-free library extension pack that
         // declares its extension targets and data extensions.
         let qlpack = std::fs::read_to_string(dir.join("qlpack.yml")).expect("read qlpack.yml");
-        assert!(qlpack.contains("library: true"), "qlpack.yml missing library: true");
-        assert!(qlpack.contains("extensionTargets:"), "qlpack.yml missing extensionTargets");
         assert!(
-            qlpack.contains("codeql/python-all: \"7.2.2\""),
+            qlpack.contains("library: true"),
+            "qlpack.yml missing library: true"
+        );
+        assert!(
+            qlpack.contains("extensionTargets:"),
+            "qlpack.yml missing extensionTargets"
+        );
+        assert!(
+            qlpack.contains("codeql/python-all: \"7.2.3\""),
             "qlpack.yml missing python-all target"
         );
         assert!(
-            qlpack.contains("codeql/javascript-all: \"2.8.2\""),
+            qlpack.contains("codeql/javascript-all: \"2.9.0\""),
             "qlpack.yml missing javascript-all target"
         );
-        assert!(qlpack.contains("dataExtensions:"), "qlpack.yml missing dataExtensions");
+        assert!(
+            qlpack.contains("dataExtensions:"),
+            "qlpack.yml missing dataExtensions"
+        );
         assert!(
             !qlpack.contains("dependencies:"),
             "qlpack.yml must not declare dependencies"
