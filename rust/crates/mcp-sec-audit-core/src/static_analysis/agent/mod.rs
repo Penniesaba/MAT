@@ -1,3 +1,4 @@
+mod adjudicate;
 mod parser;
 mod prompt;
 pub mod provider;
@@ -13,6 +14,10 @@ use provider::{AgentProvider, AgentRunConfig, CliAgentProvider};
 // 两阶段编排（M3 Task 4）在 pipeline 里渲染 prompt' 并调用 run_with_prompt；
 // 故把 prompt 的验证提示词原语 re-export 到 agent 模块面。
 pub(crate) use prompt::{PromptFinding, render_explanation_prompt, render_verification_prompt};
+
+// Self-consistent adjudication (Task 3): the runner consumes this rendered
+// prompt as its input contract, so re-export at the agent module surface.
+pub(crate) use adjudicate::render_adjudication_prompt;
 
 /// Hardcoded constants (not user-configurable).
 const PROMPT_PROFILE: &str = "mcp_security_audit";
