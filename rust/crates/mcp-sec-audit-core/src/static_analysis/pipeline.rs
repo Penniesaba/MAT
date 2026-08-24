@@ -537,7 +537,7 @@ pub fn run_static_scan_with_progress(
         b0_count: migration.b0_count,
         b_still_ambiguous: migration.b_still_ambiguous,
         rolled_back,
-        promoted: promoted_n > 0,
+        promoted: !rolled_back && promoted_n > 0,
         promoted_count: if rolled_back { 0 } else { promoted_n },
         retired_count: 0,
         b0_candidates: b0,
