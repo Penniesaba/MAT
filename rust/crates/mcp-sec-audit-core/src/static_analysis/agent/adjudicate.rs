@@ -24,6 +24,52 @@ pub struct AdjudicationVerdict {
     pub confidence: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdjudicationOutcome { Promote, Reject, Uncertain }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedVerdict {
+    pub verdict: AdjudicationVerdict,
+    pub outcome: AdjudicationOutcome,
+    pub votes: u32,
+}
+
+/// Schema gate: `reachable` must be one of three enum values; else treat as unknown.
+fn valid_reachable(s: &str) -> bool {
+    matches!(s, "reachable" | "unreachable" | "unknown")
+}
+
+/// Majority-vote each item across rounds. 3:0 => Promote/Reject by is_real;
+/// any split (2:1 / 1:2) => Uncertain; invalid reachable => Uncertain.
+pub fn vote(rounds: &[Vec<AdjudicationVerdict>]) -> Vec<ResolvedVerdict> {
+    use std::collections::BTreeMap;
+    let mut by_item: BTreeMap<String, Vec<&AdjudicationVerdict>> = BTreeMap::new();
+    for round in rounds {
+        for v in round {
+            by_item.entry(v.item_id.clone()).or_default().push(v);
+        }
+    }
+    let mut out = Vec::new();
+    for (_item_id, vs) in by_item {
+        if vs.is_empty() { continue; }
+        let total = vs.len() as u32;
+        let yes = vs.iter().filter(|v| v.is_real).count() as u32;
+        let all_valid = vs.iter().all(|v| valid_reachable(&v.reachable));
+        let outcome = if !all_valid {
+            AdjudicationOutcome::Uncertain
+        } else if yes == total {
+            AdjudicationOutcome::Promote
+        } else if yes == 0 {
+            AdjudicationOutcome::Reject
+        } else {
+            AdjudicationOutcome::Uncertain
+        };
+        out.push(ResolvedVerdict { verdict: vs[0].clone(), outcome, votes: total });
+    }
+    out.sort_by(|a, b| a.verdict.item_id.cmp(&b.verdict.item_id));
+    out
+}
+
 /// Parse one JSON object per line; ignore blank/non-JSON lines.
 pub fn parse_verdicts(stdout: &str) -> Result<Vec<AdjudicationVerdict>> {
     let mut out = Vec::new();
@@ -122,5 +168,61 @@ mod tests {
         assert_eq!(v.len(), 1);
         assert!(v[0].is_real);
         assert_eq!(v[0].abstractable.as_ref().unwrap().pattern, "fs.readFileSync");
+    }
+
+    #[test]
+    fn vote_requires_unanimous_or_downgrades_to_uncertain() {
+        use AdjudicationVerdict as V;
+        let mk = |is_real: bool| V {
+            item_id: "a.py:1".into(), is_real,
+            reachable: "reachable".into(),
+            abstractable: Some(Abstraction { kind: "sink".into(), category: "file_read".into(), pattern: "foo.read".into() }),
+            confidence: "high".into(),
+        };
+        // 3:0 一致 → Promote
+        let unanimous = vec![vec![mk(true)], vec![mk(true)], vec![mk(true)]];
+        let r = vote(&unanimous);
+        assert_eq!(r[0].outcome, AdjudicationOutcome::Promote);
+        assert_eq!(r[0].votes, 3);
+        // 2:1 分裂 → Uncertain
+        let split = vec![vec![mk(true)], vec![mk(true)], vec![mk(false)]];
+        let r2 = vote(&split);
+        assert_eq!(r2[0].outcome, AdjudicationOutcome::Uncertain);
+    }
+
+    #[test]
+    fn vote_rejects_unanimous_false_and_schema_gates_invalid_reachable() {
+        use AdjudicationVerdict as V;
+        let mk = |is_real: bool, reachable: &str| V {
+            item_id: "a.py:1".into(), is_real,
+            reachable: reachable.into(),
+            abstractable: Some(Abstraction { kind: "sink".into(), category: "file_read".into(), pattern: "foo.read".into() }),
+            confidence: "high".into(),
+        };
+        // 3:0 一致 false → Reject
+        let reject = vec![vec![mk(false, "unreachable")], vec![mk(false, "unreachable")], vec![mk(false, "unreachable")]];
+        let r = vote(&reject);
+        assert_eq!(r[0].outcome, AdjudicationOutcome::Reject);
+        assert_eq!(r[0].votes, 3);
+        // 某轮 reachable 非法（schema 门控）→ Uncertain，即使 3:0 一致
+        let bad_schema = vec![vec![mk(true, "reachable")], vec![mk(true, "reachable")], vec![mk(true, "maybe")]];
+        let r2 = vote(&bad_schema);
+        assert_eq!(r2[0].outcome, AdjudicationOutcome::Uncertain);
+        // 多 item：按 item_id 排序输出
+        let mk_id = |id: &str, is_real: bool| V {
+            item_id: id.into(), is_real,
+            reachable: "reachable".into(),
+            abstractable: None,
+            confidence: "high".into(),
+        };
+        let multi = vec![
+            vec![mk_id("b.py:2", true)],
+            vec![mk_id("a.py:1", true)],
+        ];
+        let r3 = vote(&multi);
+        assert_eq!(r3.len(), 2);
+        assert_eq!(r3[0].verdict.item_id, "a.py:1");
+        assert_eq!(r3[1].verdict.item_id, "b.py:2");
+        assert!(r3[0].votes == 1 && r3[0].outcome == AdjudicationOutcome::Promote);
     }
 }
