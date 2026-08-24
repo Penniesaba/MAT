@@ -502,6 +502,7 @@ pub fn run_static_scan_with_progress(
     );
 
     let rolled_back = migration.should_rollback();
+    let promoted_n = delta.model_count();
     let (final_taint, final_agent, final_codeql, final_facts) = if rolled_back {
         base_component.rollback(&staging_dir)?;
         tracing::warn!(
@@ -510,14 +511,21 @@ pub fn run_static_scan_with_progress(
         );
         (taint_results_1, agent_output_1, codeql_output_1, facts_1)
     } else {
-        if let Some(dir) = &ctx.config.static_.learned_dir {
-            base_component.promote(&delta, std::path::Path::new(dir))?;
+        if promoted_n > 0 {
+            if let Some(dir) = &ctx.config.static_.learned_dir {
+                base_component.promote(&delta, std::path::Path::new(dir))?;
+            }
+            tracing::info!(
+                target: "mcp_sec_audit::evolution",
+                learned = promoted_n,
+                "promoted staged models to learned"
+            );
+        } else {
+            tracing::info!(
+                target: "mcp_sec_audit::evolution",
+                "nothing to promote — empty delta"
+            );
         }
-        tracing::info!(
-            target: "mcp_sec_audit::evolution",
-            learned = delta.model_count(),
-            "promoted staged models to learned"
-        );
         (taint_results_2, agent_output_2, codeql_output_2, facts_2)
     };
 
@@ -529,7 +537,9 @@ pub fn run_static_scan_with_progress(
         b0_count: migration.b0_count,
         b_still_ambiguous: migration.b_still_ambiguous,
         rolled_back,
-        promoted: !rolled_back,
+        promoted: promoted_n > 0,
+        promoted_count: if rolled_back { 0 } else { promoted_n },
+        retired_count: 0,
         b0_candidates: b0,
         ambiguous_for_review: ambiguous,
     };

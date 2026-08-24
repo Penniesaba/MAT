@@ -232,6 +232,12 @@ pub struct EvolutionReport {
     /// Whether the staged evolution was promoted to learned.
     #[serde(default)]
     pub promoted: bool,
+    /// Number of models actually persisted to learned/ this run (0 when empty delta).
+    #[serde(default)]
+    pub promoted_count: usize,
+    /// Number of models retired/removed this run (0 until lifecycle phase lands).
+    #[serde(default)]
+    pub retired_count: usize,
     /// The b0 semantic-only candidates themselves (surfaced, not dropped).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub b0_candidates: Vec<ModelCandidate>,
@@ -314,5 +320,13 @@ mod tests {
         assert!(value.get("codeql_results").is_some());
         assert!(value["summary"].get("codeql_result_count").is_some());
         assert_eq!(value["summary"]["codeql_result_count"].as_u64(), Some(1));
+    }
+
+    #[test]
+    fn evolution_report_counts_default_to_zero() {
+        let e = EvolutionReport::default();
+        assert_eq!(e.promoted_count, 0);
+        assert_eq!(e.retired_count, 0);
+        assert!(!e.promoted);
     }
 }
