@@ -300,6 +300,9 @@ async fn run_command(command: String) -> Result<String, String> {
             patterns: vec!["totally.custom.sink".into()],
             source: None,
             learned_from: None,
+            corroboration_count: 0,
+            pollution_count: 0,
+            last_seen_run: None,
         };
         let source = "import os\ntotally.custom.sink('x')\n";
         let result = extract_python_facts(

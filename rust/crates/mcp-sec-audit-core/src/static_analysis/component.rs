@@ -227,6 +227,9 @@ mod tests {
             patterns: vec![name.into()],
             source: Some("learned-staged".into()),
             learned_from: None,
+            corroboration_count: 0,
+            pollution_count: 0,
+            last_seen_run: None,
         }
     }
 
@@ -262,6 +265,9 @@ mod tests {
                 patterns: vec!["os.custom".into()],
                 source: None,
                 learned_from: None,
+                corroboration_count: 0,
+                pollution_count: 0,
+                last_seen_run: None,
             }],
             sanitizers: vec![SanitizerModel {
                 language: "python".into(),
@@ -269,6 +275,9 @@ mod tests {
                 neutralizes: vec!["command_execution".into()],
                 source: None,
                 learned_from: None,
+                corroboration_count: 0,
+                pollution_count: 0,
+                last_seen_run: None,
             }],
             ..Default::default()
         };

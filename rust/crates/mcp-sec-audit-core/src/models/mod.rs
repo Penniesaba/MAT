@@ -24,6 +24,15 @@ pub struct SinkModel {
     /// Provenance for learned models: "scan-id/agent-id".
     #[serde(default)]
     pub learned_from: Option<String>,
+    /// Times this learned model was corroborated by the differential signal (b1/a1).
+    #[serde(default)]
+    pub corroboration_count: u32,
+    /// Times this learned model was implicated in a b2 pollution event.
+    #[serde(default)]
+    pub pollution_count: u32,
+    /// Run identifier (e.g. "20260824") of the last scan that observed this model.
+    #[serde(default)]
+    pub last_seen_run: Option<String>,
 }
 
 impl SinkModel {
@@ -51,6 +60,15 @@ pub struct SourceModel {
     /// Provenance for learned models: "scan-id/agent-id".
     #[serde(default)]
     pub learned_from: Option<String>,
+    /// Times this learned model was corroborated by the differential signal (b1/a1).
+    #[serde(default)]
+    pub corroboration_count: u32,
+    /// Times this learned model was implicated in a b2 pollution event.
+    #[serde(default)]
+    pub pollution_count: u32,
+    /// Run identifier (e.g. "20260824") of the last scan that observed this model.
+    #[serde(default)]
+    pub last_seen_run: Option<String>,
 }
 
 /// A single sanitizer model: a function that neutralizes taint for one or more
@@ -73,6 +91,15 @@ pub struct SanitizerModel {
     /// Provenance for learned models: "scan-id/agent-id".
     #[serde(default)]
     pub learned_from: Option<String>,
+    /// Times this learned model was corroborated by the differential signal (b1/a1).
+    #[serde(default)]
+    pub corroboration_count: u32,
+    /// Times this learned model was implicated in a b2 pollution event.
+    #[serde(default)]
+    pub pollution_count: u32,
+    /// Run identifier (e.g. "20260824") of the last scan that observed this model.
+    #[serde(default)]
+    pub last_seen_run: Option<String>,
 }
 
 pub(crate) fn rule_prefix(language: &str) -> &'static str {
@@ -459,6 +486,9 @@ neutralizes = ["command_execution"]
             patterns: vec![],
             source: None,
             learned_from: None,
+            corroboration_count: 0,
+            pollution_count: 0,
+            last_seen_run: None,
         };
         assert_eq!(model.rule_id(), "js.command_execution");
     }
@@ -560,5 +590,53 @@ category = "command_execution"
                 .iter()
                 .any(|r| r.package == "sh" && r.category.as_deref() == Some("command_execution"))
         );
+    }
+
+    #[test]
+    fn learned_model_lifecycle_fields_roundtrip_toml() {
+        // 旧格式（无生命周期字段）仍能加载 → 向后兼容
+        let old = r#"
+[[sinks]]
+language = "python"
+category = "file_read"
+severity = "medium"
+confidence = "low"
+reason = "legacy"
+patterns = ["openpyxl.load_workbook"]
+source = "learned"
+"#;
+        let dir = std::env::temp_dir().join(format!("lifecycle-old-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("old.toml"), old).unwrap();
+        let cat = super::load_models_dir(&dir).expect("old TOML must still load");
+        let s = &cat.sinks_for_language("python")[0];
+        assert_eq!(s.corroboration_count, 0);
+        assert_eq!(s.pollution_count, 0);
+        assert_eq!(s.last_seen_run, None);
+        std::fs::remove_dir_all(&dir).ok();
+
+        // 新格式字段被反序列化
+        let new = r#"
+[[sinks]]
+language = "python"
+category = "file_read"
+severity = "medium"
+confidence = "high"
+reason = "learned"
+patterns = ["openpyxl.load_workbook"]
+source = "learned"
+corroboration_count = 2
+pollution_count = 1
+last_seen_run = "20260824"
+"#;
+        let dir2 = std::env::temp_dir().join(format!("lifecycle-new-{}", std::process::id()));
+        std::fs::create_dir_all(&dir2).unwrap();
+        std::fs::write(dir2.join("new.toml"), new).unwrap();
+        let cat2 = super::load_models_dir(&dir2).expect("new TOML loads");
+        let s2 = &cat2.sinks_for_language("python")[0];
+        assert_eq!(s2.corroboration_count, 2);
+        assert_eq!(s2.pollution_count, 1);
+        assert_eq!(s2.last_seen_run.as_deref(), Some("20260824"));
+        std::fs::remove_dir_all(&dir2).ok();
     }
 }

@@ -116,6 +116,9 @@ pub fn candidates_to_mad_sinks(candidates: &[ModelCandidate]) -> Vec<SinkModel> 
             patterns: vec![c.name.clone()],
             source: Some("learned".to_string()),
             learned_from: None,
+            corroboration_count: 0,
+            pollution_count: 0,
+            last_seen_run: None,
         })
         .collect()
 }
@@ -144,6 +147,9 @@ pub fn candidate_to_sink_model(
         patterns: vec![c.name.clone()],
         source: Some("learned".to_string()),
         learned_from: Some(format!("{scan_id}/{agent_id}")),
+        corroboration_count: 0,
+        pollution_count: 0,
+        last_seen_run: None,
     })
 }
 
@@ -158,14 +164,17 @@ pub fn write_learned_sinks(dir: &Path, models: &[SinkModel]) -> anyhow::Result<(
             .map(|p| p.replace(['.', ':', '/'], "_"))
             .unwrap_or_else(|| i.to_string());
         let text = format!(
-            "[[sinks]]\nlanguage = {:?}\ncategory = {:?}\nseverity = {:?}\nconfidence = {:?}\nreason = {:?}\npatterns = {:?}\nsource = \"learned\"\nlearned_from = {:?}\n",
+            "[[sinks]]\nlanguage = {:?}\ncategory = {:?}\nseverity = {:?}\nconfidence = {:?}\nreason = {:?}\npatterns = {:?}\nsource = \"learned\"\nlearned_from = {:?}\ncorroboration_count = {}\npollution_count = {}\nlast_seen_run = {:?}\n",
             m.language,
             m.category,
             severity_str(&m.severity),
             confidence_str(&m.confidence),
             m.reason,
             m.patterns,
-            m.learned_from.as_deref().unwrap_or("unknown")
+            m.learned_from.as_deref().unwrap_or("unknown"),
+            m.corroboration_count,
+            m.pollution_count,
+            m.last_seen_run.as_deref().unwrap_or("none")
         );
         std::fs::write(dir.join(format!("learned-{safe}.toml")), text)?;
     }
@@ -182,11 +191,14 @@ pub fn write_learned_sources(dir: &Path, models: &[SourceModel]) -> anyhow::Resu
             .map(|p| p.replace(['.', ':', '/'], "_"))
             .unwrap_or_else(|| i.to_string());
         let text = format!(
-            "[[sources]]\nlanguage = {:?}\ncategory = {:?}\npatterns = {:?}\nsource = \"learned\"\nlearned_from = {:?}\n",
+            "[[sources]]\nlanguage = {:?}\ncategory = {:?}\npatterns = {:?}\nsource = \"learned\"\nlearned_from = {:?}\ncorroboration_count = {}\npollution_count = {}\nlast_seen_run = {:?}\n",
             m.language,
             m.category,
             m.patterns,
-            m.learned_from.as_deref().unwrap_or("unknown")
+            m.learned_from.as_deref().unwrap_or("unknown"),
+            m.corroboration_count,
+            m.pollution_count,
+            m.last_seen_run.as_deref().unwrap_or("none")
         );
         std::fs::write(dir.join(format!("learned-{safe}.toml")), text)?;
     }
@@ -203,11 +215,14 @@ pub fn write_learned_sanitizers(dir: &Path, models: &[SanitizerModel]) -> anyhow
             .map(|p| p.replace(['.', ':', '/'], "_"))
             .unwrap_or_else(|| i.to_string());
         let text = format!(
-            "[[sanitizers]]\nlanguage = {:?}\npatterns = {:?}\nneutralizes = {:?}\nsource = \"learned\"\nlearned_from = {:?}\n",
+            "[[sanitizers]]\nlanguage = {:?}\npatterns = {:?}\nneutralizes = {:?}\nsource = \"learned\"\nlearned_from = {:?}\ncorroboration_count = {}\npollution_count = {}\nlast_seen_run = {:?}\n",
             m.language,
             m.patterns,
             m.neutralizes,
-            m.learned_from.as_deref().unwrap_or("unknown")
+            m.learned_from.as_deref().unwrap_or("unknown"),
+            m.corroboration_count,
+            m.pollution_count,
+            m.last_seen_run.as_deref().unwrap_or("none")
         );
         std::fs::write(dir.join(format!("learned-{safe}.toml")), text)?;
     }
@@ -325,6 +340,9 @@ pub(crate) fn stage_catalog_evolution(
                         patterns: vec![c.name.clone()],
                         source: Some("learned-staged".to_string()),
                         learned_from: None,
+                        corroboration_count: 0,
+                        pollution_count: 0,
+                        last_seen_run: None,
                     });
                 }
             }
@@ -337,6 +355,9 @@ pub(crate) fn stage_catalog_evolution(
                         patterns: vec![c.name.clone()],
                         source: Some("learned-staged".to_string()),
                         learned_from: None,
+                        corroboration_count: 0,
+                        pollution_count: 0,
+                        last_seen_run: None,
                     });
                 }
             }
@@ -349,6 +370,9 @@ pub(crate) fn stage_catalog_evolution(
                         neutralizes: vec![c.category.clone()],
                         source: Some("learned-staged".to_string()),
                         learned_from: None,
+                        corroboration_count: 0,
+                        pollution_count: 0,
+                        last_seen_run: None,
                     });
                 }
             }
@@ -644,6 +668,9 @@ mod tests {
             patterns: vec!["novel.read".into()],
             source: None,
             learned_from: None,
+            corroboration_count: 0,
+            pollution_count: 0,
+            last_seen_run: None,
         }]));
         assert_ne!(catalog_fingerprint(&a), catalog_fingerprint(&extra));
     }

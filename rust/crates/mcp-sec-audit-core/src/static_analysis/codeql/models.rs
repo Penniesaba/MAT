@@ -66,12 +66,18 @@ pub fn sink_models_to_mad(models: &[SinkModel]) -> Vec<MadSinkEntry> {
     out
 }
 
+/// The extension-target `-all` library pack and its pinned version for a
+/// language's MaD pack. `typescript` shares the `javascript` target.
+fn mad_extension_target(language: &str) -> (&'static str, &'static str) {
+    match language {
+        "javascript" | "typescript" => ("codeql/javascript-all", "2.9.0"),
+        _ => ("codeql/python-all", "7.2.3"),
+    }
+}
+
 /// Render a full MaD model-pack extension file for one language.
 pub fn render_mad_pack(models: &[SinkModel], language: &str) -> String {
-    let pack = match language {
-        "javascript" | "typescript" => "codeql/javascript-all",
-        _ => "codeql/python-all",
-    };
+    let (pack, _version) = mad_extension_target(language);
     let mut body = String::from("extensions:\n  - addsTo:\n");
     body.push_str(&format!("      pack: {pack}\n"));
     body.push_str("      extensible: sinkModel\n    data:\n");
@@ -86,49 +92,62 @@ pub fn render_mad_pack(models: &[SinkModel], language: &str) -> String {
 
 /// A compiled MaD model pack: a directory (passed via `--additional-packs`)
 /// containing one library extension pack referenced by `name` (passed via
-/// `--model-packs`).
+/// `--model-packs`). `language` is the MaD language key ("python" |
+/// "javascript") so the caller can inject only the pack matching the database
+/// being analyzed.
 pub(crate) struct MadPack {
     pub name: String,
     pub search_path: PathBuf,
+    pub language: String,
 }
 
-/// Compile the catalog's Python and JavaScript sink models into a CodeQL MaD
-/// model pack under a temp dir: the `.model.yml` files plus a `qlpack.yml`
-/// that declares the extension targets. Languages with no models are skipped
-/// (no empty `.model.yml` is written); `rust` is intentionally not a MaD
-/// target today.
+/// Compile the catalog's Python and JavaScript sink models into one CodeQL MaD
+/// model pack **per language**, each in its own subdirectory under a shared
+/// temp dir. Per-language isolation is mandatory: a single pack that loads both
+/// `python.model.yml` and `javascript.model.yml` (e.g. via a `dataExtensions:
+/// "*.model.yml"` wildcard) makes `codeql database analyze` parse the wrong
+/// language's `sinkModel` tuples and abort with `Expected 4, but was 3`.
+/// Languages with no models are skipped (no empty `.model.yml` is written);
+/// `rust` is intentionally not a MaD target today.
 pub(crate) fn write_model_pack_dir(
     catalog: &ModelCatalog,
     _ctx: &StaticScanContext,
-) -> Result<MadPack> {
-    let dir = std::env::temp_dir().join(format!("mcp-sec-audit-mad-{}", std::process::id()));
-    std::fs::create_dir_all(&dir)?;
+) -> Result<Vec<MadPack>> {
+    let base = std::env::temp_dir().join(format!("mcp-sec-audit-mad-{}", std::process::id()));
+    std::fs::create_dir_all(&base)?;
+    let mut packs = Vec::new();
     for language in ["python", "javascript"] {
         let models = catalog.sinks_for_language(language);
         if models.is_empty() {
             continue;
         }
         let yaml = render_mad_pack(models, language);
-        let path = dir.join(format!("{language}.model.yml"));
-        std::fs::write(&path, yaml)?;
+        let dir = base.join(language);
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join(format!("{language}.model.yml")), yaml)?;
+
+        let (pack_name, target_pack, target_version) = match language {
+            "javascript" => (
+                "mcp-sec-audit-mad-javascript",
+                "codeql/javascript-all",
+                "2.9.0",
+            ),
+            _ => ("mcp-sec-audit-mad-python", "codeql/python-all", "7.2.3"),
+        };
+        // The pack must be a dependency-free library extension pack (CodeQL
+        // rejects extension packs that declare `dependencies`), scoped to this
+        // language's `-all` target and explicit `.model.yml` (never a wildcard).
+        let qlpack = format!(
+            "name: {pack_name}\nversion: 0.0.1\nlibrary: true\nextensionTargets:\n  {target_pack}: \"{target_version}\"\ndataExtensions:\n  - \"{language}.model.yml\"\n"
+        );
+        std::fs::write(dir.join("qlpack.yml"), qlpack)?;
+        packs.push(MadPack {
+            name: pack_name.to_string(),
+            search_path: dir,
+            language: language.to_string(),
+        });
     }
-    // The pack must be a dependency-free library extension pack (CodeQL rejects
-    // extension packs that declare `dependencies`). Target versions are pinned
-    // to the CLI 2.26.3-bundled `-all` packs.
-    let qlpack = r#"name: mcp-sec-audit-mad
-version: 0.0.1
-library: true
-extensionTargets:
-  codeql/python-all: "7.2.3"
-  codeql/javascript-all: "2.9.0"
-dataExtensions:
-  - "*.model.yml"
-"#;
-    std::fs::write(dir.join("qlpack.yml"), qlpack)?;
-    Ok(MadPack {
-        name: "mcp-sec-audit-mad".into(),
-        search_path: dir,
-    })
+    Ok(packs)
 }
 
 #[cfg(test)]
@@ -147,6 +166,9 @@ mod tests {
             patterns: patterns.iter().map(|s| s.to_string()).collect(),
             source: None,
             learned_from: None,
+            corroboration_count: 0,
+            pollution_count: 0,
+            last_seen_run: None,
         }
     }
 
@@ -195,54 +217,76 @@ mod tests {
     }
 
     #[test]
-    fn write_model_pack_dir_writes_python_and_javascript_packs() {
+    fn write_model_pack_dir_writes_per_language_packs() {
         let catalog = crate::models::default_catalog();
         let ctx = StaticScanContext {
             config: crate::RuntimeConfig::default(),
             rulebook_paths: Vec::new(),
             discovered_files: Vec::new(),
         };
-        let pack = write_model_pack_dir(&catalog, &ctx).expect("write model pack dir");
-        assert_eq!(pack.name, "mcp-sec-audit-mad");
-        let dir = pack.search_path;
-        for language in ["python", "javascript"] {
-            let path = dir.join(format!("{language}.model.yml"));
-            let yaml = std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("read {language}.model.yml: {e}"));
+        let packs = write_model_pack_dir(&catalog, &ctx).expect("write model pack dir");
+        // python + javascript each get their own pack; rust is not a MaD target.
+        let names: Vec<&str> = packs.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"mcp-sec-audit-mad-python"));
+        assert!(names.contains(&"mcp-sec-audit-mad-javascript"));
+        assert_eq!(packs.len(), 2);
+
+        for pack in &packs {
+            let dir = &pack.search_path;
+            let lang = pack.language.as_str();
+            // Only this language's model file exists inside its own subdirectory.
+            assert!(dir.join(format!("{lang}.model.yml")).exists());
+            let other = if lang == "python" {
+                "javascript"
+            } else {
+                "python"
+            };
             assert!(
-                yaml.contains("extensible: sinkModel"),
-                "{language}.model.yml missing sinkModel"
+                !dir.join(format!("{other}.model.yml")).exists(),
+                "{lang} pack must not contain {other}.model.yml"
+            );
+
+            let qlpack = std::fs::read_to_string(dir.join("qlpack.yml")).expect("read qlpack.yml");
+            assert!(qlpack.contains("library: true"), "missing library: true");
+            assert!(
+                qlpack.contains("extensionTargets:"),
+                "missing extensionTargets"
+            );
+            assert!(
+                !qlpack.contains("dependencies:"),
+                "qlpack.yml must not declare dependencies"
+            );
+            // Regression: dataExtensions must be explicit, never a wildcard that
+            // would load another language's model file.
+            assert!(
+                !qlpack.contains("\"*.model.yml\""),
+                "dataExtensions must not use a wildcard"
+            );
+            assert!(
+                qlpack.contains(&format!("\"{lang}.model.yml\"")),
+                "dataExtensions must reference {lang}.model.yml explicitly"
+            );
+            // extensionTargets must scope to this language only.
+            let own_target = if lang == "python" {
+                "codeql/python-all"
+            } else {
+                "codeql/javascript-all"
+            };
+            let other_target = if lang == "python" {
+                "codeql/javascript-all"
+            } else {
+                "codeql/python-all"
+            };
+            assert!(qlpack.contains(own_target), "missing own -all target");
+            assert!(
+                !qlpack.contains(other_target),
+                "{lang} pack must not declare {other_target}"
             );
         }
-        // Only python + javascript are MaD targets; rust must not be emitted.
-        assert!(!dir.join("rust.model.yml").exists());
-        // The model pack must be a dependency-free library extension pack that
-        // declares its extension targets and data extensions.
-        let qlpack = std::fs::read_to_string(dir.join("qlpack.yml")).expect("read qlpack.yml");
-        assert!(
-            qlpack.contains("library: true"),
-            "qlpack.yml missing library: true"
-        );
-        assert!(
-            qlpack.contains("extensionTargets:"),
-            "qlpack.yml missing extensionTargets"
-        );
-        assert!(
-            qlpack.contains("codeql/python-all: \"7.2.3\""),
-            "qlpack.yml missing python-all target"
-        );
-        assert!(
-            qlpack.contains("codeql/javascript-all: \"2.9.0\""),
-            "qlpack.yml missing javascript-all target"
-        );
-        assert!(
-            qlpack.contains("dataExtensions:"),
-            "qlpack.yml missing dataExtensions"
-        );
-        assert!(
-            !qlpack.contains("dependencies:"),
-            "qlpack.yml must not declare dependencies"
-        );
-        std::fs::remove_dir_all(&dir).expect("cleanup");
+
+        // Cleanup: remove the shared base dir (parent of each language subdir).
+        if let Some(parent) = packs[0].search_path.parent() {
+            std::fs::remove_dir_all(parent).expect("cleanup");
+        }
     }
 }
