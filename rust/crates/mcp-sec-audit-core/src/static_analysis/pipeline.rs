@@ -506,6 +506,8 @@ pub fn run_static_scan_with_progress(
     let mut promoted_from_adjudication = 0usize;
     let retired = 0usize; // lifecycle retirement not yet landed (Plan 3)
     let mut actions: Vec<agent::PromoteAction> = Vec::new();
+    let mut rules: Vec<String> = Vec::new();
+    let mut prompt_extra: String = String::new();
     if (!ambiguous.is_empty() || !b0.is_empty()) && effective_config.static_.agent.enabled {
         // b0 candidates carry no file:line; build AdjudicationItem-shaped input.
         let mut items: Vec<crate::AdjudicationItem> = ambiguous.clone();
@@ -526,9 +528,10 @@ pub fn run_static_scan_with_progress(
                         match r.outcome {
                             agent::AdjudicationOutcome::Promote => {
                                 if let Some(a) = agent::resolved_to_promote_action(r) {
-                                    // Only count actions that are actually persisted
-                                    // (Sink/Source/Sanitizer). Rule/Prompt abstractions
-                                    // are deferred to Plan 3 and never written, so
+                                    // Only count actions that are actually persisted as
+                                    // models (Sink/Source/Sanitizer). Rule/Prompt
+                                    // abstractions are persisted separately (rulebook /
+                                    // prompt files) and are not model promotions, so
                                     // counting them would over-report promotions.
                                     match &a {
                                         agent::PromoteAction::Sink(_)
@@ -537,12 +540,17 @@ pub fn run_static_scan_with_progress(
                                             promoted_from_adjudication += 1;
                                         }
                                         agent::PromoteAction::Rule(_)
-                                        | agent::PromoteAction::Prompt(_) => {
-                                            tracing::debug!(
-                                                target: "mcp_sec_audit::evolution",
-                                                "rule/prompt promotion deferred to Plan 3"
-                                            );
+                                        | agent::PromoteAction::Prompt(_) => {}
+                                    }
+                                    match &a {
+                                        agent::PromoteAction::Rule(c) => rules.push(c.clone()),
+                                        agent::PromoteAction::Prompt(t) => {
+                                            if !prompt_extra.is_empty() {
+                                                prompt_extra.push('\n');
+                                            }
+                                            prompt_extra.push_str(t);
                                         }
+                                        _ => {}
                                     }
                                     actions.push(a);
                                 }
@@ -613,14 +621,41 @@ pub fn run_static_scan_with_progress(
                     },
                 );
             if !sinks.is_empty() {
-                learning::write_learned_sinks(Path::new(dir), &sinks)?;
+                // Merge (not overwrite) so a re-promoted pattern keeps its
+                // accumulated evidence (corroboration/pollution counts and
+                // last_seen_run) instead of resetting on every run.
+                let existing_catalog = if !Path::new(dir).exists() {
+                    // Fresh run: no learned dir yet, start from empty (benign).
+                    crate::models::ModelCatalog::default()
+                } else {
+                    match crate::models::load_models_dir(Path::new(dir)) {
+                        Ok(cat) => cat,
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "mcp_sec_audit::evolution",
+                                error = %e,
+                                "failed to load learned models; promotion will not merge prior evidence"
+                            );
+                            crate::models::ModelCatalog::default()
+                        }
+                    }
+                };
+                let existing_sinks = ["python", "javascript", "rust"]
+                    .iter()
+                    .flat_map(|lang| existing_catalog.sinks_for_language(lang).to_vec())
+                    .collect::<Vec<_>>();
+                let merged = learning::merge_sink_models(&existing_sinks, &sinks);
+                learning::write_learned_sinks(Path::new(dir), &merged)?;
             }
+            // TODO(plan4): merge sources/sanitizers (currently overwrite).
             if !sources.is_empty() {
                 learning::write_learned_sources(Path::new(dir), &sources)?;
             }
             if !sanitizers.is_empty() {
                 learning::write_learned_sanitizers(Path::new(dir), &sanitizers)?;
             }
+            learning::write_learned_rules(Path::new(dir), &rules)?;
+            learning::write_learned_prompt(Path::new(dir), &prompt_extra)?;
         }
         (taint_results_2, agent_output_2, codeql_output_2, facts_2)
     };

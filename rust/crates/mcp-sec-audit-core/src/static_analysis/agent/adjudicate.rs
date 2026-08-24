@@ -46,8 +46,10 @@ fn valid_reachable(s: &str) -> bool {
     matches!(s, "reachable" | "unreachable" | "unknown")
 }
 
-/// Majority-vote each item across rounds. 3:0 => Promote/Reject by is_real;
-/// any split (2:1 / 1:2) => Uncertain; invalid reachable => Uncertain.
+/// Majority-vote each item across rounds. Promote requires unanimity on BOTH
+/// `is_real` (all true) AND `reachable` (all == "reachable"); 3:0 is_real false
+/// => Reject; any split (2:1 / 1:2 on either axis, or reachable != "reachable")
+/// => Uncertain; invalid reachable => Uncertain.
 pub fn vote(rounds: &[Vec<AdjudicationVerdict>]) -> Vec<ResolvedVerdict> {
     use std::collections::BTreeMap;
     let mut by_item: BTreeMap<String, Vec<&AdjudicationVerdict>> = BTreeMap::new();
@@ -66,9 +68,13 @@ pub fn vote(rounds: &[Vec<AdjudicationVerdict>]) -> Vec<ResolvedVerdict> {
         let total = vs.len() as u32;
         let yes = vs.iter().filter(|v| v.is_real).count() as u32;
         let all_valid = vs.iter().all(|v| valid_reachable(&v.reachable));
+        // Spec §5.3: a round that disagrees on reachability grounds the item
+        // in no single observed path, so a 2:1 reachable split must downgrade
+        // to Uncertain even when is_real is unanimous.
+        let all_reachable = vs.iter().all(|v| v.reachable == "reachable");
         let outcome = if !all_valid || total != expected {
             AdjudicationOutcome::Uncertain
-        } else if yes == total {
+        } else if yes == total && all_reachable {
             AdjudicationOutcome::Promote
         } else if yes == 0 {
             AdjudicationOutcome::Reject
@@ -286,6 +292,23 @@ mod tests {
         let split = vec![vec![mk(true)], vec![mk(true)], vec![mk(false)]];
         let r2 = vote(&split);
         assert_eq!(r2[0].outcome, AdjudicationOutcome::Uncertain);
+    }
+
+    #[test]
+    fn vote_downgrades_on_reachable_split() {
+        let mk = |reachable: &str| AdjudicationVerdict {
+            item_id: "a.py:1".into(), is_real: true, reachable: reachable.into(),
+            abstractable: Some(Abstraction { kind: "sink".into(), category: "file_read".into(), pattern: "x.read".into() }),
+            confidence: "high".into(),
+        };
+        // 3 轮 is_real 全 true，但 reachable 2:1 分裂（2 reachable + 1 unreachable）
+        let rounds = vec![
+            vec![mk("reachable")],
+            vec![mk("reachable")],
+            vec![mk("unreachable")],
+        ];
+        let r = vote(&rounds);
+        assert_eq!(r[0].outcome, AdjudicationOutcome::Uncertain);
     }
 
     #[test]

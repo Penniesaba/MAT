@@ -1,7 +1,7 @@
 //! Gate for classifying agent-proposed sink candidates against cheap
 //! semantic-inference heuristics.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::model::{Confidence, Fact, FactBase, ModelCandidate, Severity, SinkFact};
@@ -153,6 +153,49 @@ pub fn candidate_to_sink_model(
     })
 }
 
+/// Confidence ordering: High(2) > Medium(1) > Low(0). `Confidence` derives
+/// only `PartialEq`, not `PartialOrd`, so we rank explicitly.
+fn confidence_rank(c: &crate::Confidence) -> u8 {
+    match c {
+        crate::Confidence::High => 2,
+        crate::Confidence::Medium => 1,
+        crate::Confidence::Low => 0,
+    }
+}
+
+fn sink_key(m: &SinkModel) -> String {
+    let pat = m.patterns.first().cloned().unwrap_or_default();
+    format!("{}:{}:{}", m.language, m.category, pat)
+}
+
+/// Merge new models into existing by (language, category, pattern): sum
+/// corroboration/pollution counts; when new.last_seen_run is Some, use it
+/// (lexical newer-than comparison deferred to Plan 4); existing models not in
+/// `new` are preserved. Sorted by pattern for determinism.
+pub fn merge_sink_models(existing: &[SinkModel], new: &[SinkModel]) -> Vec<SinkModel> {
+    let mut map: BTreeMap<String, SinkModel> = BTreeMap::new();
+    for m in existing {
+        map.insert(sink_key(m), m.clone());
+    }
+    for m in new {
+        let key = sink_key(m);
+        map.entry(key)
+            .and_modify(|e| {
+                e.corroboration_count += m.corroboration_count;
+                e.pollution_count += m.pollution_count;
+                if m.last_seen_run.is_some() {
+                    e.last_seen_run = m.last_seen_run.clone();
+                }
+                // 已有模型置信度取较高者（不因新来 low 而降级）
+                if confidence_rank(&m.confidence) > confidence_rank(&e.confidence) {
+                    e.confidence = m.confidence.clone();
+                }
+            })
+            .or_insert_with(|| m.clone());
+    }
+    map.into_values().collect()
+}
+
 /// Append learned models to a directory as one TOML file per model (sorted by
 /// name for determinism). Creates the directory if absent.
 pub fn write_learned_sinks(dir: &Path, models: &[SinkModel]) -> anyhow::Result<()> {
@@ -248,6 +291,34 @@ pub(crate) fn write_learned_models(dir: &Path, delta: &StagedDelta) -> anyhow::R
     write_learned_sinks(dir, &delta.sinks)?;
     write_learned_sources(dir, &delta.sources)?;
     write_learned_sanitizers(dir, &delta.sanitizers)?;
+    Ok(())
+}
+
+/// Write/overwrite rule capabilities to a learned-rulebook file (one
+/// "- capability" per line).
+// TODO(plan4): accumulate rule/prompt across runs.
+pub fn write_learned_rules(dir: &Path, capabilities: &[String]) -> anyhow::Result<()> {
+    if capabilities.is_empty() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dir)?;
+    let text = capabilities
+        .iter()
+        .map(|c| format!("- {c}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(dir.join("learned-capabilities.txt"), text)?;
+    Ok(())
+}
+
+/// Write/overwrite prompt-extra text to a learned-prompt file.
+// TODO(plan4): accumulate rule/prompt across runs.
+pub fn write_learned_prompt(dir: &Path, text: &str) -> anyhow::Result<()> {
+    if text.trim().is_empty() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(dir.join("learned-prompt.md"), text)?;
     Ok(())
 }
 
@@ -750,5 +821,86 @@ mod tests {
         assert!(dir.join("staged-brand_new_lib_read.toml").exists());
         rollback_staging(&dir).expect("rollback");
         assert!(!dir.exists());
+    }
+
+    #[test]
+    fn write_learned_rules_appends_capabilities() {
+        let dir = std::env::temp_dir().join(format!("learn-rules-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        write_learned_rules(&dir, &["path_traversal".into()]).expect("write");
+        let content =
+            std::fs::read_to_string(dir.join("learned-capabilities.txt")).expect("read");
+        assert!(content.contains("- path_traversal"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn write_learned_prompt_writes_text() {
+        let dir = std::env::temp_dir().join(format!("learn-prompt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        write_learned_prompt(&dir, "## recheck capability over-exposure\n").expect("write");
+        let content = std::fs::read_to_string(dir.join("learned-prompt.md")).expect("read");
+        assert!(content.contains("capability over-exposure"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn merge_sink_models_preserves_existing_evidence() {
+        let existing = SinkModel {
+            language: "python".into(), category: "file_read".into(),
+            severity: crate::Severity::Medium, confidence: crate::Confidence::Medium,
+            reason: "t".into(), patterns: vec!["openpyxl.load_workbook".into()],
+            source: Some("learned".into()), learned_from: None,
+            corroboration_count: 2, pollution_count: 0, last_seen_run: Some("20260821".into()),
+        };
+        let new = SinkModel {
+            language: "python".into(), category: "file_read".into(),
+            severity: crate::Severity::Medium, confidence: crate::Confidence::Low,
+            reason: "t".into(), patterns: vec!["openpyxl.load_workbook".into()],
+            source: Some("learned".into()), learned_from: Some("adjudication".into()),
+            corroboration_count: 1, pollution_count: 0, last_seen_run: None,
+        };
+        let merged = merge_sink_models(&[existing.clone()], &[new]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].corroboration_count, 3); // 2 + 1
+        assert_eq!(merged[0].confidence, crate::Confidence::Medium); // existing preserved
+    }
+
+    #[test]
+    fn merge_sink_models_keeps_existing_not_in_new_and_newer_run() {
+        let existing = vec![
+            SinkModel {
+                language: "python".into(), category: "file_read".into(),
+                severity: Severity::Medium, confidence: Confidence::Medium,
+                reason: "old".into(), patterns: vec!["keep.me".into()],
+                source: Some("learned".into()), learned_from: None,
+                corroboration_count: 2, pollution_count: 0, last_seen_run: Some("20260821".into()),
+            },
+            SinkModel {
+                language: "python".into(), category: "file_read".into(),
+                severity: Severity::Medium, confidence: Confidence::Low,
+                reason: "old".into(), patterns: vec!["upgrade.me".into()],
+                source: Some("learned".into()), learned_from: None,
+                corroboration_count: 1, pollution_count: 1, last_seen_run: Some("20260821".into()),
+            },
+        ];
+        let new = vec![
+            SinkModel {
+                language: "python".into(), category: "file_read".into(),
+                severity: Severity::Medium, confidence: Confidence::High,
+                reason: "new".into(), patterns: vec!["upgrade.me".into()],
+                source: Some("learned".into()), learned_from: None,
+                corroboration_count: 1, pollution_count: 0, last_seen_run: Some("20260824".into()),
+            },
+        ];
+        let merged = merge_sink_models(&existing, &new);
+        // `keep.me` preserved, `upgrade.me` merged in place.
+        assert_eq!(merged.len(), 2);
+        let keep = merged.iter().find(|m| m.patterns == vec!["keep.me"]).unwrap();
+        assert_eq!(keep.corroboration_count, 2);
+        let upgraded = merged.iter().find(|m| m.patterns == vec!["upgrade.me"]).unwrap();
+        assert_eq!(upgraded.corroboration_count, 2); // 1 + 1
+        assert_eq!(upgraded.confidence, Confidence::High); // newer higher wins
+        assert_eq!(upgraded.last_seen_run.as_deref(), Some("20260824")); // newer run wins
     }
 }
