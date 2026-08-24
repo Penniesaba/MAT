@@ -620,26 +620,26 @@ pub fn run_static_scan_with_progress(
                         (s, so, sa)
                     },
                 );
-            if !sinks.is_empty() {
-                // Merge (not overwrite) so a re-promoted pattern keeps its
-                // accumulated evidence (corroboration/pollution counts and
-                // last_seen_run) instead of resetting on every run.
-                let existing_catalog = if !Path::new(dir).exists() {
-                    // Fresh run: no learned dir yet, start from empty (benign).
-                    crate::models::ModelCatalog::default()
-                } else {
-                    match crate::models::load_models_dir(Path::new(dir)) {
-                        Ok(cat) => cat,
-                        Err(e) => {
-                            tracing::warn!(
-                                target: "mcp_sec_audit::evolution",
-                                error = %e,
-                                "failed to load learned models; promotion will not merge prior evidence"
-                            );
-                            crate::models::ModelCatalog::default()
-                        }
+            // Load prior learned models once so each class merges (not
+            // overwrites) its accumulated evidence (corroboration/pollution
+            // counts and last_seen_run) instead of resetting on every run.
+            let existing_catalog = if !Path::new(dir).exists() {
+                // Fresh run: no learned dir yet, start from empty (benign).
+                crate::models::ModelCatalog::default()
+            } else {
+                match crate::models::load_models_dir(Path::new(dir)) {
+                    Ok(cat) => cat,
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "mcp_sec_audit::evolution",
+                            error = %e,
+                            "failed to load learned models; promotion will not merge prior evidence"
+                        );
+                        crate::models::ModelCatalog::default()
                     }
-                };
+                }
+            };
+            if !sinks.is_empty() {
                 let existing_sinks = ["python", "javascript", "rust"]
                     .iter()
                     .flat_map(|lang| existing_catalog.sinks_for_language(lang).to_vec())
@@ -647,12 +647,21 @@ pub fn run_static_scan_with_progress(
                 let merged = learning::merge_sink_models(&existing_sinks, &sinks);
                 learning::write_learned_sinks(Path::new(dir), &merged)?;
             }
-            // TODO(plan4): merge sources/sanitizers (currently overwrite).
             if !sources.is_empty() {
-                learning::write_learned_sources(Path::new(dir), &sources)?;
+                let existing_sources = ["python", "javascript", "rust"]
+                    .iter()
+                    .flat_map(|lang| existing_catalog.sources_for_language(lang).to_vec())
+                    .collect::<Vec<_>>();
+                let merged = learning::merge_source_models(&existing_sources, &sources);
+                learning::write_learned_sources(Path::new(dir), &merged)?;
             }
             if !sanitizers.is_empty() {
-                learning::write_learned_sanitizers(Path::new(dir), &sanitizers)?;
+                let existing_sanitizers = ["python", "javascript", "rust"]
+                    .iter()
+                    .flat_map(|lang| existing_catalog.sanitizers_for_language(lang).to_vec())
+                    .collect::<Vec<_>>();
+                let merged = learning::merge_sanitizer_models(&existing_sanitizers, &sanitizers);
+                learning::write_learned_sanitizers(Path::new(dir), &merged)?;
             }
             learning::write_learned_rules(Path::new(dir), &rules)?;
             learning::write_learned_prompt(Path::new(dir), &prompt_extra)?;

@@ -196,6 +196,63 @@ pub fn merge_sink_models(existing: &[SinkModel], new: &[SinkModel]) -> Vec<SinkM
     map.into_values().collect()
 }
 
+fn source_key(m: &SourceModel) -> String {
+    let pat = m.patterns.first().cloned().unwrap_or_default();
+    format!("{}:{}:{}", m.language, m.category, pat)
+}
+
+/// Merge new source models into existing by (language, category, pattern): sum
+/// corroboration/pollution counts; when new.last_seen_run is Some, use it;
+/// existing models not in `new` are preserved. Sorted by key for determinism.
+pub fn merge_source_models(existing: &[SourceModel], new: &[SourceModel]) -> Vec<SourceModel> {
+    let mut map: BTreeMap<String, SourceModel> = BTreeMap::new();
+    for m in existing {
+        map.insert(source_key(m), m.clone());
+    }
+    for m in new {
+        map.entry(source_key(m))
+            .and_modify(|e| {
+                e.corroboration_count += m.corroboration_count;
+                e.pollution_count += m.pollution_count;
+                if m.last_seen_run.is_some() {
+                    e.last_seen_run = m.last_seen_run.clone();
+                }
+            })
+            .or_insert_with(|| m.clone());
+    }
+    map.into_values().collect()
+}
+
+fn sanitizer_key(m: &SanitizerModel) -> String {
+    let pat = m.patterns.first().cloned().unwrap_or_default();
+    format!("{}:{}:{}", m.language, pat, m.neutralizes.join(","))
+}
+
+/// Merge new sanitizer models into existing by (language, pattern, neutralizes):
+/// sum corroboration/pollution counts; when new.last_seen_run is Some, use it;
+/// existing models not in `new` are preserved. Sorted by key for determinism.
+pub fn merge_sanitizer_models(
+    existing: &[SanitizerModel],
+    new: &[SanitizerModel],
+) -> Vec<SanitizerModel> {
+    let mut map: BTreeMap<String, SanitizerModel> = BTreeMap::new();
+    for m in existing {
+        map.insert(sanitizer_key(m), m.clone());
+    }
+    for m in new {
+        map.entry(sanitizer_key(m))
+            .and_modify(|e| {
+                e.corroboration_count += m.corroboration_count;
+                e.pollution_count += m.pollution_count;
+                if m.last_seen_run.is_some() {
+                    e.last_seen_run = m.last_seen_run.clone();
+                }
+            })
+            .or_insert_with(|| m.clone());
+    }
+    map.into_values().collect()
+}
+
 /// Append learned models to a directory as one TOML file per model (sorted by
 /// name for determinism). Creates the directory if absent.
 pub fn write_learned_sinks(dir: &Path, models: &[SinkModel]) -> anyhow::Result<()> {
@@ -294,31 +351,58 @@ pub(crate) fn write_learned_models(dir: &Path, delta: &StagedDelta) -> anyhow::R
     Ok(())
 }
 
-/// Write/overwrite rule capabilities to a learned-rulebook file (one
-/// "- capability" per line).
-// TODO(plan4): accumulate rule/prompt across runs.
+/// Accumulate rule capabilities into a learned-rulebook file (one
+/// "- capability" per line). Reads the existing `- capability` lines, appends
+/// any not-yet-present capabilities (dedup via BTreeSet), and writes the full
+/// list back — so earlier runs' rules survive later runs.
 pub fn write_learned_rules(dir: &Path, capabilities: &[String]) -> anyhow::Result<()> {
     if capabilities.is_empty() {
         return Ok(());
     }
     std::fs::create_dir_all(dir)?;
-    let text = capabilities
+    let path = dir.join("learned-capabilities.txt");
+    let mut existing: Vec<String> = if path.exists() {
+        std::fs::read_to_string(&path)?
+            .lines()
+            .filter_map(|l| l.strip_prefix("- ").map(str::to_string))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let mut seen: std::collections::BTreeSet<String> = existing.iter().cloned().collect();
+    for c in capabilities {
+        if seen.insert(c.clone()) {
+            existing.push(c.clone());
+        }
+    }
+    let text = existing
         .iter()
         .map(|c| format!("- {c}"))
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(dir.join("learned-capabilities.txt"), text)?;
+    std::fs::write(&path, text)?;
     Ok(())
 }
 
-/// Write/overwrite prompt-extra text to a learned-prompt file.
-// TODO(plan4): accumulate rule/prompt across runs.
+/// Accumulate prompt-extra text into a learned-prompt file. Reads the existing
+/// content and appends the new text (newline-separated when the file does not
+/// already end in a newline), so earlier runs' prompt text survives later runs.
 pub fn write_learned_prompt(dir: &Path, text: &str) -> anyhow::Result<()> {
     if text.trim().is_empty() {
         return Ok(());
     }
     std::fs::create_dir_all(dir)?;
-    std::fs::write(dir.join("learned-prompt.md"), text)?;
+    let path = dir.join("learned-prompt.md");
+    let mut content = if path.exists() {
+        std::fs::read_to_string(&path)?
+    } else {
+        String::new()
+    };
+    if !content.is_empty() && !content.ends_with('\n') {
+        content.push('\n');
+    }
+    content.push_str(text);
+    std::fs::write(&path, content)?;
     Ok(())
 }
 
@@ -845,6 +929,70 @@ mod tests {
     }
 
     #[test]
+    fn write_learned_rules_accumulates_across_calls() {
+        let dir = std::env::temp_dir().join(format!("learn-rules-acc-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        write_learned_rules(&dir, &["path_traversal".into()]).expect("w1");
+        write_learned_rules(
+            &dir,
+            &["command_execution".into(), "path_traversal".into()],
+        )
+        .expect("w2");
+        let content = std::fs::read_to_string(dir.join("learned-capabilities.txt")).expect("read");
+        assert!(content.contains("- path_traversal"));
+        assert!(content.contains("- command_execution"));
+        // dedup: path_traversal 不重复
+        assert_eq!(content.matches("- path_traversal").count(), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn write_learned_prompt_accumulates_across_calls() {
+        let dir = std::env::temp_dir().join(format!("learn-prompt-acc-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // First block written without a trailing newline, exercising the
+        // newline-separator path on the second append.
+        write_learned_prompt(&dir, "## first block").expect("p1");
+        write_learned_prompt(&dir, "## second block").expect("p2");
+        let content = std::fs::read_to_string(dir.join("learned-prompt.md")).expect("read");
+        assert!(content.contains("## first block"));
+        assert!(content.contains("## second block"));
+        // Both blocks are joined by a newline (not concatenated).
+        assert!(content.contains("## first block\n## second block"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // Realistic caller pattern: pipeline.rs builds `rules`/`prompt_extra`
+    // fresh per run from that run's adjudication promotions, so each run only
+    // passes its own newly-promoted capabilities. Prior runs must not be lost
+    // (this is the cross-run accumulation the brief targets; the disjoint
+    // writes make the overwrite behavior observable, unlike the brief's test
+    // which passes both sets in the second call).
+    #[test]
+    fn write_learned_rules_preserves_prior_run_capabilities() {
+        let dir = std::env::temp_dir().join(format!("learn-rules-crossrun-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        write_learned_rules(&dir, &["path_traversal".into()]).expect("run1");
+        write_learned_rules(&dir, &["command_execution".into()]).expect("run2");
+        let content = std::fs::read_to_string(dir.join("learned-capabilities.txt")).expect("read");
+        assert!(content.contains("- path_traversal"));
+        assert!(content.contains("- command_execution"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn write_learned_prompt_preserves_prior_run_text() {
+        let dir = std::env::temp_dir().join(format!("learn-prompt-crossrun-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        write_learned_prompt(&dir, "## block one").expect("run1");
+        write_learned_prompt(&dir, "## block two").expect("run2");
+        let content = std::fs::read_to_string(dir.join("learned-prompt.md")).expect("read");
+        assert!(content.contains("block one"));
+        assert!(content.contains("block two"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn merge_sink_models_preserves_existing_evidence() {
         let existing = SinkModel {
             language: "python".into(), category: "file_read".into(),
@@ -864,6 +1012,103 @@ mod tests {
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].corroboration_count, 3); // 2 + 1
         assert_eq!(merged[0].confidence, crate::Confidence::Medium); // existing preserved
+    }
+
+    #[test]
+    fn merge_source_models_preserves_evidence() {
+        let existing = SourceModel {
+            language: "python".into(), category: "env_var".into(), patterns: vec!["os.environ".into()],
+            source: Some("learned".into()), learned_from: None,
+            corroboration_count: 2, pollution_count: 1, last_seen_run: Some("20260821".into()),
+        };
+        let new = SourceModel {
+            language: "python".into(), category: "env_var".into(), patterns: vec!["os.environ".into()],
+            source: Some("learned".into()), learned_from: Some("adjudication".into()),
+            corroboration_count: 1, pollution_count: 0, last_seen_run: None,
+        };
+        let merged = merge_source_models(&[existing], &[new]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].corroboration_count, 3);
+        assert_eq!(merged[0].pollution_count, 1);
+    }
+
+    #[test]
+    fn merge_source_models_keeps_existing_not_in_new_and_newer_run() {
+        let existing = vec![
+            SourceModel {
+                language: "python".into(), category: "env_var".into(), patterns: vec!["keep.me".into()],
+                source: Some("learned".into()), learned_from: None,
+                corroboration_count: 2, pollution_count: 0, last_seen_run: Some("20260821".into()),
+            },
+            SourceModel {
+                language: "python".into(), category: "env_var".into(), patterns: vec!["upgrade.me".into()],
+                source: Some("learned".into()), learned_from: None,
+                corroboration_count: 1, pollution_count: 1, last_seen_run: Some("20260821".into()),
+            },
+        ];
+        let new = vec![SourceModel {
+            language: "python".into(), category: "env_var".into(), patterns: vec!["upgrade.me".into()],
+            source: Some("learned".into()), learned_from: None,
+            corroboration_count: 1, pollution_count: 0, last_seen_run: Some("20260824".into()),
+        }];
+        let merged = merge_source_models(&existing, &new);
+        assert_eq!(merged.len(), 2);
+        let keep = merged.iter().find(|m| m.patterns == vec!["keep.me"]).unwrap();
+        assert_eq!(keep.corroboration_count, 2);
+        let upgraded = merged.iter().find(|m| m.patterns == vec!["upgrade.me"]).unwrap();
+        assert_eq!(upgraded.corroboration_count, 2); // 1 + 1
+        assert_eq!(upgraded.last_seen_run.as_deref(), Some("20260824")); // newer run wins
+    }
+
+    #[test]
+    fn merge_sanitizer_models_preserves_evidence() {
+        let existing = SanitizerModel {
+            language: "python".into(), patterns: vec!["shlex.quote".into()],
+            neutralizes: vec!["command_execution".into()],
+            source: Some("learned".into()), learned_from: None,
+            corroboration_count: 2, pollution_count: 1, last_seen_run: Some("20260821".into()),
+        };
+        let new = SanitizerModel {
+            language: "python".into(), patterns: vec!["shlex.quote".into()],
+            neutralizes: vec!["command_execution".into()],
+            source: Some("learned".into()), learned_from: Some("adjudication".into()),
+            corroboration_count: 1, pollution_count: 0, last_seen_run: None,
+        };
+        let merged = merge_sanitizer_models(&[existing], &[new]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].corroboration_count, 3);
+        assert_eq!(merged[0].pollution_count, 1);
+    }
+
+    #[test]
+    fn merge_sanitizer_models_keeps_existing_not_in_new_and_newer_run() {
+        let existing = vec![
+            SanitizerModel {
+                language: "python".into(), patterns: vec!["keep.me".into()],
+                neutralizes: vec!["command_execution".into()],
+                source: Some("learned".into()), learned_from: None,
+                corroboration_count: 2, pollution_count: 0, last_seen_run: Some("20260821".into()),
+            },
+            SanitizerModel {
+                language: "python".into(), patterns: vec!["upgrade.me".into()],
+                neutralizes: vec!["command_execution".into()],
+                source: Some("learned".into()), learned_from: None,
+                corroboration_count: 1, pollution_count: 1, last_seen_run: Some("20260821".into()),
+            },
+        ];
+        let new = vec![SanitizerModel {
+            language: "python".into(), patterns: vec!["upgrade.me".into()],
+            neutralizes: vec!["command_execution".into()],
+            source: Some("learned".into()), learned_from: None,
+            corroboration_count: 1, pollution_count: 0, last_seen_run: Some("20260824".into()),
+        }];
+        let merged = merge_sanitizer_models(&existing, &new);
+        assert_eq!(merged.len(), 2);
+        let keep = merged.iter().find(|m| m.patterns == vec!["keep.me"]).unwrap();
+        assert_eq!(keep.corroboration_count, 2);
+        let upgraded = merged.iter().find(|m| m.patterns == vec!["upgrade.me"]).unwrap();
+        assert_eq!(upgraded.corroboration_count, 2); // 1 + 1
+        assert_eq!(upgraded.last_seen_run.as_deref(), Some("20260824")); // newer run wins
     }
 
     #[test]
