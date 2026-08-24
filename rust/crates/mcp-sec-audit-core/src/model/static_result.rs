@@ -235,6 +235,15 @@ pub struct EvolutionReport {
     /// Number of models actually persisted to learned/ this run (0 when empty delta).
     #[serde(default)]
     pub promoted_count: usize,
+    /// Number of ambiguous/b0 items this run submitted to adjudication.
+    #[serde(default)]
+    pub adjudicated: usize,
+    /// Number of models persisted from adjudication this run.
+    #[serde(default)]
+    pub promoted_from_adjudication: usize,
+    /// Number of models retired this run.
+    #[serde(default)]
+    pub retired: usize,
     /// Number of models retired/removed this run (0 until lifecycle phase lands).
     #[serde(default)]
     pub retired_count: usize,

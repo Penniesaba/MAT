@@ -22,8 +22,8 @@ pub(crate) use prompt::{PromptFinding, render_explanation_prompt, render_verific
 // not wired yet, so the re-export is only exercised by unit tests for now.
 #[allow(unused_imports)]
 pub(crate) use adjudicate::{
-    Abstraction, AdjudicationOutcome, AdjudicationVerdict, ResolvedVerdict, parse_verdicts,
-    render_adjudication_prompt, run_adjudication, vote,
+    Abstraction, AdjudicationOutcome, AdjudicationVerdict, PromoteAction, ResolvedVerdict,
+    parse_verdicts, render_adjudication_prompt, resolved_to_promote_action, run_adjudication, vote,
 };
 
 /// Hardcoded constants (not user-configurable).

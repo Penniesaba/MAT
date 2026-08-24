@@ -10,6 +10,8 @@ use anyhow::Result;
 use serde::Deserialize;
 
 use crate::AdjudicationItem;
+use crate::Confidence;
+use crate::models::{SanitizerModel, SinkModel, SourceModel};
 use crate::static_analysis::pipeline::StaticScanContext;
 use super::provider::{AgentProvider, AgentRunConfig, CliAgentProvider};
 
@@ -92,6 +94,93 @@ pub fn parse_verdicts(stdout: &str) -> Result<Vec<AdjudicationVerdict>> {
         }
     }
     Ok(out)
+}
+
+/// A concrete learned-model write the evolution executor should apply.
+pub enum PromoteAction {
+    Sink(SinkModel),
+    Source(SourceModel),
+    Sanitizer(SanitizerModel),
+    Rule(String),
+    Prompt(String),
+}
+
+/// Convert a resolved adjudication verdict into a promote action. Returns
+/// `None` unless the outcome is Promote, the verdict is real and reachable,
+/// and an abstraction was produced. New models enter at confidence Low with
+/// corroboration_count = 1 (first evidence is this adjudication).
+pub fn resolved_to_promote_action(r: &ResolvedVerdict) -> Option<PromoteAction> {
+    if r.outcome != AdjudicationOutcome::Promote {
+        return None;
+    }
+    let v = &r.verdict;
+    if !v.is_real || v.reachable != "reachable" {
+        return None;
+    }
+    let abs = v.abstractable.as_ref()?;
+    let language = language_for_file(&v.item_id);
+    match abs.kind.as_str() {
+        "sink" => Some(PromoteAction::Sink(SinkModel {
+            language,
+            category: abs.category.clone(),
+            severity: crate::Severity::Medium,
+            confidence: Confidence::Low,
+            reason: format!("learned sink via adjudication: {}", abs.category),
+            patterns: vec![abs.pattern.clone()],
+            source: Some("learned".into()),
+            learned_from: Some("adjudication".into()),
+            corroboration_count: 1,
+            pollution_count: 0,
+            last_seen_run: None,
+        })),
+        "source" => Some(PromoteAction::Source(SourceModel {
+            language,
+            category: abs.category.clone(),
+            patterns: vec![abs.pattern.clone()],
+            source: Some("learned".into()),
+            learned_from: Some("adjudication".into()),
+            corroboration_count: 1,
+            pollution_count: 0,
+            last_seen_run: None,
+        })),
+        "sanitizer" => Some(PromoteAction::Sanitizer(SanitizerModel {
+            language,
+            patterns: vec![abs.pattern.clone()],
+            neutralizes: vec![abs.category.clone()],
+            source: Some("learned".into()),
+            learned_from: Some("adjudication".into()),
+            corroboration_count: 1,
+            pollution_count: 0,
+            last_seen_run: None,
+        })),
+        "rule" => Some(PromoteAction::Rule(abs.category.clone())),
+        "prompt" => Some(PromoteAction::Prompt(format!(
+            "{} — {}",
+            abs.category,
+            abs.pattern
+        ))),
+        _ => None,
+    }
+}
+
+/// Infer a language key from an item_id of the form `file.ext:line`.
+fn language_for_file(item_id: &str) -> String {
+    let file = item_id.split(':').next().unwrap_or(item_id).to_lowercase();
+    match file.as_str() {
+        "python" => return "python".into(),
+        "rust" => return "rust".into(),
+        "javascript" => return "javascript".into(),
+        _ => {}
+    }
+    if file.ends_with(".py") {
+        "python".into()
+    } else if file.ends_with(".rs") {
+        "rust".into()
+    } else if file.ends_with(".ts") || file.ends_with(".js") {
+        "javascript".into()
+    } else {
+        "javascript".into()
+    }
 }
 
 const ROUNDS: u32 = 3;
@@ -238,6 +327,143 @@ mod tests {
         assert_eq!(r3[0].outcome, AdjudicationOutcome::Uncertain);
         assert_eq!(r3[1].votes, 1);
         assert_eq!(r3[1].outcome, AdjudicationOutcome::Uncertain);
+    }
+
+    #[test]
+    fn resolved_to_promote_action_maps_sink_verdict() {
+        let r = ResolvedVerdict {
+            verdict: AdjudicationVerdict {
+                item_id: "server.ts:22".into(),
+                is_real: true,
+                reachable: "reachable".into(),
+                abstractable: Some(Abstraction { kind: "sink".into(), category: "file_read".into(), pattern: "fs.readFileSync".into() }),
+                confidence: "high".into(),
+            },
+            outcome: AdjudicationOutcome::Promote,
+            votes: 3,
+        };
+        let a = resolved_to_promote_action(&r).expect("maps");
+        match a {
+            PromoteAction::Sink(m) => {
+                assert_eq!(m.language, "javascript");
+                assert_eq!(m.category, "file_read");
+                assert_eq!(m.patterns, vec!["fs.readFileSync"]);
+                assert_eq!(m.confidence, crate::Confidence::Low);
+                assert_eq!(m.corroboration_count, 1);
+            }
+            _ => panic!("expected Sink"),
+        }
+    }
+
+    #[test]
+    fn resolved_to_promote_action_carries_language_from_b0_token() {
+        // b0 candidates carry no file:line; pipeline prefixes the item_id with a
+        // language token (`python:openpyxl.load_workbook:0`). The leading token
+        // must win over the `.ts`/`.js`/default fallthrough so a python b0 sink
+        // is not mislabeled `javascript`.
+        let r = ResolvedVerdict {
+            verdict: AdjudicationVerdict {
+                item_id: "python:openpyxl.load_workbook:0".into(),
+                is_real: true,
+                reachable: "reachable".into(),
+                abstractable: Some(Abstraction { kind: "sink".into(), category: "file_read".into(), pattern: "openpyxl.load_workbook".into() }),
+                confidence: "high".into(),
+            },
+            outcome: AdjudicationOutcome::Promote,
+            votes: 3,
+        };
+        let a = resolved_to_promote_action(&r).expect("maps");
+        match a {
+            PromoteAction::Sink(m) => assert_eq!(m.language, "python"),
+            _ => panic!("expected Sink"),
+        }
+    }
+
+    #[test]
+    fn resolved_to_promote_action_rejects_on_uncertain_or_reject() {
+        let mk = |outcome| ResolvedVerdict {
+            verdict: AdjudicationVerdict {
+                item_id: "a.py:1".into(), is_real: true, reachable: "reachable".into(),
+                abstractable: Some(Abstraction { kind: "sink".into(), category: "file_read".into(), pattern: "foo.read".into() }),
+                confidence: "high".into(),
+            },
+            outcome, votes: 1,
+        };
+        assert!(resolved_to_promote_action(&mk(AdjudicationOutcome::Reject)).is_none());
+        assert!(resolved_to_promote_action(&mk(AdjudicationOutcome::Uncertain)).is_none());
+    }
+
+    // Helpers to build a resolved Promote verdict with a single expression.
+    fn abs(kind: &str, category: &str, pattern: &str) -> Abstraction {
+        Abstraction {
+            kind: kind.into(),
+            category: category.into(),
+            pattern: pattern.into(),
+        }
+    }
+
+    fn mk_resolved(
+        item_id: &str,
+        is_real: bool,
+        reachable: &str,
+        abstractable: Option<Abstraction>,
+    ) -> ResolvedVerdict {
+        ResolvedVerdict {
+            verdict: AdjudicationVerdict {
+                item_id: item_id.into(),
+                is_real,
+                reachable: reachable.into(),
+                abstractable,
+                confidence: "high".into(),
+            },
+            outcome: AdjudicationOutcome::Promote,
+            votes: 3,
+        }
+    }
+
+    #[test]
+    fn resolved_to_promote_action_gates_on_is_real() {
+        let r = mk_resolved("a.py:1", false, "reachable", Some(abs("sink", "file_read", "foo.read")));
+        assert!(resolved_to_promote_action(&r).is_none());
+    }
+
+    #[test]
+    fn resolved_to_promote_action_gates_on_reachable_grounding() {
+        // The lightweight grounding gate: even a real, abstractable item must
+        // not promote unless it was observed reachable.
+        let unreachable = mk_resolved("a.py:1", true, "unreachable", Some(abs("sink", "file_read", "foo.read")));
+        let unknown = mk_resolved("a.py:1", true, "unknown", Some(abs("sink", "file_read", "foo.read")));
+        assert!(resolved_to_promote_action(&unreachable).is_none());
+        assert!(resolved_to_promote_action(&unknown).is_none());
+    }
+
+    #[test]
+    fn resolved_to_promote_action_gates_on_absent_abstraction() {
+        let r = mk_resolved("a.py:1", true, "reachable", None);
+        assert!(resolved_to_promote_action(&r).is_none());
+    }
+
+    #[test]
+    fn resolved_to_promote_action_rejects_unknown_kind() {
+        let r = mk_resolved("a.py:1", true, "reachable", Some(abs("mystery", "whatever", "x")));
+        assert!(resolved_to_promote_action(&r).is_none());
+    }
+
+    #[test]
+    fn resolved_to_promote_action_maps_rule_and_prompt() {
+        let rule = mk_resolved("a.py:1", true, "reachable", Some(abs("rule", "path_traversal", "read")));
+        match resolved_to_promote_action(&rule) {
+            Some(PromoteAction::Rule(c)) => assert_eq!(c, "path_traversal"),
+            _ => panic!("expected Rule"),
+        }
+        let prompt = mk_resolved("a.py:1", true, "reachable", Some(abs("prompt", "flag_exfil", "http.post")));
+        match resolved_to_promote_action(&prompt) {
+            Some(PromoteAction::Prompt(p)) => {
+                assert!(p.contains("flag_exfil"), "prompt text should carry category");
+                assert!(p.contains("http.post"), "prompt text should carry pattern");
+            }
+            _ => panic!("expected Prompt"),
+        }
     }
 
     #[test]

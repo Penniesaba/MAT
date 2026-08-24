@@ -501,6 +501,73 @@ pub fn run_static_scan_with_progress(
         "L2/L3 residual items"
     );
 
+    // ---------- 自洽裁决（模糊因子闭环） ----------
+    let mut adjudicated = 0usize;
+    let mut promoted_from_adjudication = 0usize;
+    let retired = 0usize; // lifecycle retirement not yet landed (Plan 3)
+    let mut actions: Vec<agent::PromoteAction> = Vec::new();
+    if (!ambiguous.is_empty() || !b0.is_empty()) && effective_config.static_.agent.enabled {
+        // b0 candidates carry no file:line; build AdjudicationItem-shaped input.
+        let mut items: Vec<crate::AdjudicationItem> = ambiguous.clone();
+        for c in &b0 {
+            items.push(crate::AdjudicationItem {
+                file: format!("{}:{}", c.language, c.name),
+                line: 0,
+                kind: "b0_semantic_only".to_string(),
+                agent_explanation: c.evidence_snippets.first().cloned(),
+            });
+        }
+        if !items.is_empty() {
+            match agent::run_adjudication(&ctx, &items) {
+                Ok(rounds) => {
+                    let resolved = agent::vote(&rounds);
+                    for r in &resolved {
+                        adjudicated += 1;
+                        match r.outcome {
+                            agent::AdjudicationOutcome::Promote => {
+                                if let Some(a) = agent::resolved_to_promote_action(r) {
+                                    // Only count actions that are actually persisted
+                                    // (Sink/Source/Sanitizer). Rule/Prompt abstractions
+                                    // are deferred to Plan 3 and never written, so
+                                    // counting them would over-report promotions.
+                                    match &a {
+                                        agent::PromoteAction::Sink(_)
+                                        | agent::PromoteAction::Source(_)
+                                        | agent::PromoteAction::Sanitizer(_) => {
+                                            promoted_from_adjudication += 1;
+                                        }
+                                        agent::PromoteAction::Rule(_)
+                                        | agent::PromoteAction::Prompt(_) => {
+                                            tracing::debug!(
+                                                target: "mcp_sec_audit::evolution",
+                                                "rule/prompt promotion deferred to Plan 3"
+                                            );
+                                        }
+                                    }
+                                    actions.push(a);
+                                }
+                            }
+                            agent::AdjudicationOutcome::Reject => { /* discard */ }
+                            agent::AdjudicationOutcome::Uncertain => { /* leave for next run */ }
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!(
+                    target: "mcp_sec_audit::agent",
+                    error = %e,
+                    "self-consistent adjudication failed"
+                ),
+            }
+        }
+    }
+    tracing::info!(
+        target: "mcp_sec_audit::evolution",
+        adjudicated,
+        promoted_from_adjudication,
+        retired,
+        "self-consistent adjudication complete"
+    );
+
     let rolled_back = migration.should_rollback();
     let promoted_n = delta.model_count();
     // `promoted`/`promoted_count` must reflect actual persistence: promote() is
@@ -530,6 +597,31 @@ pub fn run_static_scan_with_progress(
                 "nothing to promote — empty delta"
             );
         }
+        // Persist adjudication-derived models (sink/source/sanitizer) to learned_dir.
+        if let Some(dir) = &ctx.config.static_.learned_dir {
+            let (sinks, sources, sanitizers): (Vec<_>, Vec<_>, Vec<_>) =
+                actions.iter().fold(
+                    (Vec::new(), Vec::new(), Vec::new()),
+                    |(mut s, mut so, mut sa), a| {
+                        match a {
+                            agent::PromoteAction::Sink(m) => s.push(m.clone()),
+                            agent::PromoteAction::Source(m) => so.push(m.clone()),
+                            agent::PromoteAction::Sanitizer(m) => sa.push(m.clone()),
+                            _ => {}
+                        }
+                        (s, so, sa)
+                    },
+                );
+            if !sinks.is_empty() {
+                learning::write_learned_sinks(Path::new(dir), &sinks)?;
+            }
+            if !sources.is_empty() {
+                learning::write_learned_sources(Path::new(dir), &sources)?;
+            }
+            if !sanitizers.is_empty() {
+                learning::write_learned_sanitizers(Path::new(dir), &sanitizers)?;
+            }
+        }
         (taint_results_2, agent_output_2, codeql_output_2, facts_2)
     };
 
@@ -543,6 +635,9 @@ pub fn run_static_scan_with_progress(
         rolled_back,
         promoted: persisted,
         promoted_count: if persisted { promoted_n } else { 0 },
+        adjudicated,
+        promoted_from_adjudication,
+        retired,
         retired_count: 0,
         b0_candidates: b0,
         ambiguous_for_review: ambiguous,
