@@ -503,6 +503,10 @@ pub fn run_static_scan_with_progress(
 
     let rolled_back = migration.should_rollback();
     let promoted_n = delta.model_count();
+    // `promoted`/`promoted_count` must reflect actual persistence: promote() is
+    // only invoked (and only persists) when not rolled back, the delta is
+    // non-empty, AND a learned_dir is configured. Otherwise we overpromise.
+    let persisted = !rolled_back && promoted_n > 0 && ctx.config.static_.learned_dir.is_some();
     let (final_taint, final_agent, final_codeql, final_facts) = if rolled_back {
         base_component.rollback(&staging_dir)?;
         tracing::warn!(
@@ -537,8 +541,8 @@ pub fn run_static_scan_with_progress(
         b0_count: migration.b0_count,
         b_still_ambiguous: migration.b_still_ambiguous,
         rolled_back,
-        promoted: !rolled_back && promoted_n > 0,
-        promoted_count: if rolled_back { 0 } else { promoted_n },
+        promoted: persisted,
+        promoted_count: if persisted { promoted_n } else { 0 },
         retired_count: 0,
         b0_candidates: b0,
         ambiguous_for_review: ambiguous,

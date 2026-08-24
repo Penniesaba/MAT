@@ -1,5 +1,10 @@
 //! Self-consistent adjudication: render the prompt that asks the claude CLI
 //! to judge each ambiguous evolution candidate with three closed questions.
+//!
+//! Plan 2 (M3/M4) drives this postprocess stage (render → parse → vote) through
+//! the agent-module re-exports. Until that wiring lands, the stage is only
+//! exercised by unit tests, so dead-code is allowed for the not-yet-wired surface.
+#![allow(dead_code)]
 
 use anyhow::Result;
 use serde::Deserialize;
@@ -50,12 +55,16 @@ pub fn vote(rounds: &[Vec<AdjudicationVerdict>]) -> Vec<ResolvedVerdict> {
         }
     }
     let mut out = Vec::new();
+    // An item must be present (with valid schema) in *every* round before a
+    // Promote/Reject is allowed. Missing data from a dropped/failed round must
+    // downgrade to Uncertain, never promote on incomplete evidence.
+    let expected = rounds.len() as u32;
     for (_item_id, vs) in by_item {
         if vs.is_empty() { continue; }
         let total = vs.len() as u32;
         let yes = vs.iter().filter(|v| v.is_real).count() as u32;
         let all_valid = vs.iter().all(|v| valid_reachable(&v.reachable));
-        let outcome = if !all_valid {
+        let outcome = if !all_valid || total != expected {
             AdjudicationOutcome::Uncertain
         } else if yes == total {
             AdjudicationOutcome::Promote
@@ -223,6 +232,38 @@ mod tests {
         assert_eq!(r3.len(), 2);
         assert_eq!(r3[0].verdict.item_id, "a.py:1");
         assert_eq!(r3[1].verdict.item_id, "b.py:2");
-        assert!(r3[0].votes == 1 && r3[0].outcome == AdjudicationOutcome::Promote);
+        // Partial-round presence (1 of 2 rounds) must downgrade to Uncertain,
+        // never Promote on incomplete evidence.
+        assert_eq!(r3[0].votes, 1);
+        assert_eq!(r3[0].outcome, AdjudicationOutcome::Uncertain);
+        assert_eq!(r3[1].votes, 1);
+        assert_eq!(r3[1].outcome, AdjudicationOutcome::Uncertain);
+    }
+
+    #[test]
+    fn postprocess_stages_connect_render_parse_vote_without_claude() {
+        // Compile-only wiring proof that the three postprocess stages connect
+        // (render → parse → vote) without spawning claude. This is what Plan 2
+        // drives via the agent-module re-exports.
+        let items = vec![crate::AdjudicationItem {
+            file: "server.ts".into(),
+            line: 22,
+            kind: "b_still_ambiguous".into(),
+            agent_explanation: Some("reads arbitrary files".into()),
+        }];
+        let prompt = render_adjudication_prompt(&items);
+        assert!(prompt.contains("server.ts:22"));
+
+        // A fake single-line JSON verdict (what a real agent round would emit).
+        let fake_stdout = "{\"item_id\":\"server.ts:22\",\"is_real\":true,\"reachable\":\"reachable\",\"abstractable\":null,\"confidence\":\"high\",\"reason\":\"arbitrary read\"}\n";
+        let parsed = parse_verdicts(fake_stdout).expect("fake verdict parses");
+        assert_eq!(parsed.len(), 1);
+
+        // Simulate a full 3-round run where every round returns the same
+        // verdict: unanimous → Promote, proving the full chain resolves.
+        let resolved = vote(&[parsed.clone(), parsed.clone(), parsed]);
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].votes, 3);
+        assert_eq!(resolved[0].outcome, AdjudicationOutcome::Promote);
     }
 }

@@ -163,8 +163,8 @@ pub fn write_learned_sinks(dir: &Path, models: &[SinkModel]) -> anyhow::Result<(
             .first()
             .map(|p| p.replace(['.', ':', '/'], "_"))
             .unwrap_or_else(|| i.to_string());
-        let text = format!(
-            "[[sinks]]\nlanguage = {:?}\ncategory = {:?}\nseverity = {:?}\nconfidence = {:?}\nreason = {:?}\npatterns = {:?}\nsource = \"learned\"\nlearned_from = {:?}\ncorroboration_count = {}\npollution_count = {}\nlast_seen_run = {:?}\n",
+        let mut text = format!(
+            "[[sinks]]\nlanguage = {:?}\ncategory = {:?}\nseverity = {:?}\nconfidence = {:?}\nreason = {:?}\npatterns = {:?}\nsource = \"learned\"\nlearned_from = {:?}\ncorroboration_count = {}\npollution_count = {}\n",
             m.language,
             m.category,
             severity_str(&m.severity),
@@ -174,8 +174,12 @@ pub fn write_learned_sinks(dir: &Path, models: &[SinkModel]) -> anyhow::Result<(
             m.learned_from.as_deref().unwrap_or("unknown"),
             m.corroboration_count,
             m.pollution_count,
-            m.last_seen_run.as_deref().unwrap_or("none")
         );
+        // Only emit the run marker when present — a missing key reloads as
+        // `None` via `#[serde(default)]`, preserving the None-vs-Some distinction.
+        if let Some(run) = &m.last_seen_run {
+            text.push_str(&format!("last_seen_run = {:?}\n", run));
+        }
         std::fs::write(dir.join(format!("learned-{safe}.toml")), text)?;
     }
     Ok(())
@@ -190,16 +194,20 @@ pub fn write_learned_sources(dir: &Path, models: &[SourceModel]) -> anyhow::Resu
             .first()
             .map(|p| p.replace(['.', ':', '/'], "_"))
             .unwrap_or_else(|| i.to_string());
-        let text = format!(
-            "[[sources]]\nlanguage = {:?}\ncategory = {:?}\npatterns = {:?}\nsource = \"learned\"\nlearned_from = {:?}\ncorroboration_count = {}\npollution_count = {}\nlast_seen_run = {:?}\n",
+        let mut text = format!(
+            "[[sources]]\nlanguage = {:?}\ncategory = {:?}\npatterns = {:?}\nsource = \"learned\"\nlearned_from = {:?}\ncorroboration_count = {}\npollution_count = {}\n",
             m.language,
             m.category,
             m.patterns,
             m.learned_from.as_deref().unwrap_or("unknown"),
             m.corroboration_count,
             m.pollution_count,
-            m.last_seen_run.as_deref().unwrap_or("none")
         );
+        // Only emit the run marker when present — a missing key reloads as
+        // `None` via `#[serde(default)]`, preserving the None-vs-Some distinction.
+        if let Some(run) = &m.last_seen_run {
+            text.push_str(&format!("last_seen_run = {:?}\n", run));
+        }
         std::fs::write(dir.join(format!("learned-{safe}.toml")), text)?;
     }
     Ok(())
@@ -214,16 +222,20 @@ pub fn write_learned_sanitizers(dir: &Path, models: &[SanitizerModel]) -> anyhow
             .first()
             .map(|p| p.replace(['.', ':', '/'], "_"))
             .unwrap_or_else(|| i.to_string());
-        let text = format!(
-            "[[sanitizers]]\nlanguage = {:?}\npatterns = {:?}\nneutralizes = {:?}\nsource = \"learned\"\nlearned_from = {:?}\ncorroboration_count = {}\npollution_count = {}\nlast_seen_run = {:?}\n",
+        let mut text = format!(
+            "[[sanitizers]]\nlanguage = {:?}\npatterns = {:?}\nneutralizes = {:?}\nsource = \"learned\"\nlearned_from = {:?}\ncorroboration_count = {}\npollution_count = {}\n",
             m.language,
             m.patterns,
             m.neutralizes,
             m.learned_from.as_deref().unwrap_or("unknown"),
             m.corroboration_count,
             m.pollution_count,
-            m.last_seen_run.as_deref().unwrap_or("none")
         );
+        // Only emit the run marker when present — a missing key reloads as
+        // `None` via `#[serde(default)]`, preserving the None-vs-Some distinction.
+        if let Some(run) = &m.last_seen_run {
+            text.push_str(&format!("last_seen_run = {:?}\n", run));
+        }
         std::fs::write(dir.join(format!("learned-{safe}.toml")), text)?;
     }
     Ok(())
@@ -651,6 +663,41 @@ mod tests {
         assert_eq!(loaded.sink_count(), 1);
         assert!(loaded.sinks_for_language("python")[0].source.as_deref() == Some("learned"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn write_learned_sinks_preserves_last_seen_run_none_vs_some() {
+        // None must not roundtrip as Some("none"): the key is omitted, so
+        // #[serde(default)] maps it back to None.
+        let dir_none = tmp_dir("write-none");
+        let mut m_none = candidate_to_sink_model(
+            &cand("openpyxl.load_workbook", "file_read"),
+            "scan-1",
+            "claude",
+        )
+        .unwrap();
+        m_none.last_seen_run = None;
+        write_learned_sinks(&dir_none, &[m_none]).expect("write none");
+        let loaded_none = crate::models::load_models_dir(&dir_none).expect("load none");
+        assert_eq!(loaded_none.sinks_for_language("python")[0].last_seen_run, None);
+        std::fs::remove_dir_all(&dir_none).ok();
+
+        // A Some run marker is emitted and reloads verbatim.
+        let dir_some = tmp_dir("write-some");
+        let mut m_some = candidate_to_sink_model(
+            &cand("openpyxl.load_workbook", "file_read"),
+            "scan-1",
+            "claude",
+        )
+        .unwrap();
+        m_some.last_seen_run = Some("20260824".to_string());
+        write_learned_sinks(&dir_some, &[m_some]).expect("write some");
+        let loaded_some = crate::models::load_models_dir(&dir_some).expect("load some");
+        assert_eq!(
+            loaded_some.sinks_for_language("python")[0].last_seen_run.as_deref(),
+            Some("20260824")
+        );
+        std::fs::remove_dir_all(&dir_some).ok();
     }
 
     #[test]

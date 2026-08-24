@@ -17,7 +17,14 @@ pub(crate) use prompt::{PromptFinding, render_explanation_prompt, render_verific
 
 // Self-consistent adjudication (Task 3/4): the runner consumes this rendered
 // prompt as its input contract, so re-export at the agent module surface.
-pub(crate) use adjudicate::{AdjudicationVerdict, parse_verdicts, render_adjudication_prompt, run_adjudication};
+// `vote`, `AdjudicationOutcome`, `ResolvedVerdict`, and `Abstraction` are the
+// postprocess stage consumed by Plan 2 (M3/M4), so expose them too. Plan 2 is
+// not wired yet, so the re-export is only exercised by unit tests for now.
+#[allow(unused_imports)]
+pub(crate) use adjudicate::{
+    Abstraction, AdjudicationOutcome, AdjudicationVerdict, ResolvedVerdict, parse_verdicts,
+    render_adjudication_prompt, run_adjudication, vote,
+};
 
 /// Hardcoded constants (not user-configurable).
 const PROMPT_PROFILE: &str = "mcp_security_audit";
