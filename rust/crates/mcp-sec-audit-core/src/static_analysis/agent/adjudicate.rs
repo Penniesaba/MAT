@@ -1,7 +1,75 @@
 //! Self-consistent adjudication: render the prompt that asks the claude CLI
 //! to judge each ambiguous evolution candidate with three closed questions.
 
+use anyhow::Result;
+use serde::Deserialize;
+
 use crate::AdjudicationItem;
+use crate::static_analysis::pipeline::StaticScanContext;
+use super::provider::{AgentProvider, AgentRunConfig, CliAgentProvider};
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Abstraction {
+    pub kind: String,
+    pub category: String,
+    pub pattern: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct AdjudicationVerdict {
+    pub item_id: String,
+    pub is_real: bool,
+    pub reachable: String,
+    pub abstractable: Option<Abstraction>,
+    pub confidence: String,
+}
+
+/// Parse one JSON object per line; ignore blank/non-JSON lines.
+pub fn parse_verdicts(stdout: &str) -> Result<Vec<AdjudicationVerdict>> {
+    let mut out = Vec::new();
+    for line in stdout.lines() {
+        let t = line.trim();
+        if t.is_empty() || !t.starts_with('{') {
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<AdjudicationVerdict>(t) {
+            out.push(v);
+        }
+    }
+    Ok(out)
+}
+
+const ROUNDS: u32 = 3;
+
+/// Run the claude CLI adjudication ROUNDS times, returning one Vec per round.
+pub fn run_adjudication(
+    ctx: &StaticScanContext,
+    items: &[AdjudicationItem],
+) -> Result<Vec<Vec<AdjudicationVerdict>>> {
+    let agent_config = &ctx.config.static_.agent;
+    let prompt = render_adjudication_prompt(items);
+    let target_root = ctx
+        .discovered_files
+        .first()
+        .and_then(|df| df.path.parent())
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| ".".to_string());
+
+    let mut rounds = Vec::new();
+    for _ in 0..ROUNDS {
+        let cfg = AgentRunConfig {
+            working_dir: target_root.clone(),
+            prompt: prompt.clone(),
+            provider_binary: agent_config.provider.clone(),
+            max_turns: agent_config.max_turns,
+            timeout_seconds: agent_config.timeout_seconds,
+            extra_args: agent_config.extra_args.clone(),
+        };
+        let output = CliAgentProvider.run(&cfg)?;
+        rounds.push(parse_verdicts(&output.stdout)?);
+    }
+    Ok(rounds)
+}
 
 /// Render the adjudication prompt. The agent must answer each item as a single
 /// line of strict JSON, one per line, nothing else — so the post-processing
@@ -45,5 +113,14 @@ mod tests {
         assert!(p.contains("JSON"));
         assert!(p.contains("is_real"));
         assert!(p.contains("reachable"));
+    }
+
+    #[test]
+    fn parse_verdicts_parses_one_line_per_json() {
+        let stdout = "{\"item_id\":\"server.ts:22\",\"is_real\":true,\"reachable\":\"reachable\",\"abstractable\":{\"kind\":\"sink\",\"category\":\"file_read\",\"pattern\":\"fs.readFileSync\"},\"confidence\":\"high\",\"reason\":\"arbitrary read\"}\n";
+        let v = parse_verdicts(stdout).unwrap();
+        assert_eq!(v.len(), 1);
+        assert!(v[0].is_real);
+        assert_eq!(v[0].abstractable.as_ref().unwrap().pattern, "fs.readFileSync");
     }
 }

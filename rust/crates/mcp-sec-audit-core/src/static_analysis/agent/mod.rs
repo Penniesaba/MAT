@@ -15,9 +15,9 @@ use provider::{AgentProvider, AgentRunConfig, CliAgentProvider};
 // 故把 prompt 的验证提示词原语 re-export 到 agent 模块面。
 pub(crate) use prompt::{PromptFinding, render_explanation_prompt, render_verification_prompt};
 
-// Self-consistent adjudication (Task 3): the runner consumes this rendered
+// Self-consistent adjudication (Task 3/4): the runner consumes this rendered
 // prompt as its input contract, so re-export at the agent module surface.
-pub(crate) use adjudicate::render_adjudication_prompt;
+pub(crate) use adjudicate::{AdjudicationVerdict, parse_verdicts, render_adjudication_prompt, run_adjudication};
 
 /// Hardcoded constants (not user-configurable).
 const PROMPT_PROFILE: &str = "mcp_security_audit";
