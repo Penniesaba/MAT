@@ -7,8 +7,10 @@
 //! The governor, learning bus, and orchestrator build on top of it.
 
 mod config;
+mod governor;
 
 pub use config::{
     BatchConfig, BatchSettings, LimitsConfig, RepoConfig, load_batch_config, merge_repo_config,
     parse_batch_config_toml,
 };
+pub use governor::{ResourceClass, ResourceGovernor};
