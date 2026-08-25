@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+libc.workspace = true
 mcp-sec-audit-core.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

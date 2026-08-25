@@ -660,6 +660,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "libc",
  "mcp-sec-audit-core",
  "tracing",
  "tracing-subscriber",
