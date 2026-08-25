@@ -334,6 +334,13 @@ async fn run_repo(
     let path = repo.path.clone();
     let progress = progress.scoped(&name);
 
+    // Enter a per-repo span so every log line this repository emits (progress
+    // aside, which is already `[repo]`-prefixed by the channel progress) is
+    // attributed back to it. The CLI's `ModuleFormat` renders the span's
+    // `repo` field as a `[name]` bracket before the module name.
+    let span = tracing::info_span!("repo", repo = %name);
+    let _enter = span.enter();
+
     let merged = match merge_repo_config(&base, &repo) {
         Ok(merged) => merged,
         Err(e) => {

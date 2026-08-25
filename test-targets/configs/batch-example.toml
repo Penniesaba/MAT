@@ -1,0 +1,110 @@
+# Batch analysis example — analyze multiple MCP repositories in parallel.
+#
+# This file is a superset of a single-repo runtime config: `[batch]` governs
+# the parallel run, every other top-level table is the shared base config
+# (same syntax as test-targets/configs/*.toml), and each `[[batch.repo]]`
+# pairs a name/path with optional nested overrides applied on top of the base.
+#
+# Usage (run from the `rust/` directory):
+#   cargo run -- batch ../test-targets/configs/batch-example.toml
+
+[batch]
+max_parallel = 2              # repos running at once (whole-task permits)
+learning_bus = true           # false = isolated repos, reproducible eval baseline
+fail_fast    = false          # true = first repo failure aborts the batch
+
+[batch.limits]
+codeql = 1                    # concurrent CodeQL CLI processes (memory-heavy)
+agent  = 1                    # concurrent agent (LLM) processes (rate-limited)
+cpu    = 4                    # concurrent CPU-bound phases (rule/taint/fusion/facts)
+
+# --- shared base config (same syntax as a single-repo config) ---
+
+[scan]
+languages = ["python", "typescript", "rust"]
+exclude   = ["__pycache__", ".venv", ".mypy_cache", "node_modules", "target", ".git"]
+
+[static]
+enabled     = true
+save_facts  = true
+learned_dir = "models/learned"   # cold-persistence dir: gated learned models land here
+
+[static.rule]
+enabled = true
+rule_paths = ["rules/mcp", "rules/languages"]
+
+[static.taint]
+enabled = true
+forward = true
+backward = true
+max_depth = 8
+entrypoint_required = false
+
+[static.agent]
+enabled = false                 # toggle true + set learned_dir for cross-repo learning
+provider = "claude"
+max_turns = 30
+timeout_seconds = 600
+extra_args = []
+
+[static.codeql]
+enabled = true
+binary = "/home/xiao/App/codeql/codeql/codeql"
+timeout_seconds = 1200
+extra_args = []
+
+[fusion]
+enabled = true
+require_confirmed_by = 1
+boost_when_multiple_lines_agree = true
+agent_only_as_advisory = true
+line_proximity = 5
+rule_weight = 3
+taint_weight = 2
+agent_weight = 1
+codeql_weight = 4
+
+[report]
+output  = "docs/result/batch-<timestamp>/<repo>"   # <timestamp> -> YYYYMMDD-HHMMSS, <repo> -> repo name
+formats = ["json", "markdown"]
+include_fused_results = true
+include_raw_rule_results = true
+include_raw_taint_results = true
+include_raw_agent_results = true
+include_raw_codeql_results = true
+include_facts = false
+
+[logging]
+level = "info"
+format = "compact"
+ansi = true
+show_timestamps = true
+show_progress = true
+# log_file = "logs/batch.log"
+
+[logging.scopes]
+pipeline = "info"
+codeql = "debug"
+learning = "trace"
+
+# --- repository list; each entry may override any base field above ---
+
+[[batch.repo]]
+name = "excel-mcp-server"
+path = "../test-targets/excel-mcp-server"
+
+[[batch.repo]]
+name = "mcts-examples"
+path = "../test-targets/MCTS/examples"
+
+[[batch.repo]]
+name = "rust-mcp-server"
+path = "../test-targets/rust-mcp-server"
+
+# Example per-repo override (uncomment to disable CodeQL for one repo only):
+#
+# [[batch.repo]]
+# name = "python-mcp-server"
+# path = "../test-targets/python-mcp-server"
+# [batch.repo.static.codeql]
+# enabled = false

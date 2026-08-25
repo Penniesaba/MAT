@@ -6,8 +6,8 @@ use mcp_sec_audit_core::{LogFormat, LogLevel, LoggingConfig};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::Registry;
 use tracing_subscriber::filter::{LevelFilter, Targets};
-use tracing_subscriber::fmt::format::{FormatEvent, Writer};
-use tracing_subscriber::fmt::{FmtContext, FormatFields, MakeWriter};
+use tracing_subscriber::fmt::format::{DefaultFields, FormatEvent, Writer};
+use tracing_subscriber::fmt::{FormattedFields, FmtContext, FormatFields, MakeWriter};
 use tracing_subscriber::layer::{Layer, SubscriberExt};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -144,12 +144,76 @@ where
         if self.show_timestamps {
             write!(writer, "{} ", local_minute_timestamp())?;
         }
+        if let Some(repo) = repo_from_context(ctx) {
+            write!(writer, "[{repo}] ")?;
+        }
         let ansi = writer.has_ansi_escapes();
         let module = module_name(event.metadata().target());
         write!(writer, "{}: ", styled_module(module, ansi))?;
         ctx.format_fields(writer.by_ref(), event)?;
         writeln!(writer)
     }
+}
+
+/// The nearest `repo` span-field value in the event's span context, if any.
+///
+/// Repo tasks enter `tracing::info_span!("repo", repo = %name)`, so every log
+/// line a repository emits carries a `repo` field on an ancestor span. The
+/// value is recovered from the span's `FormattedFields` extension (the
+/// `repo=<name>` prefix), after stripping the ANSI styling the field name and
+/// `=` pick up when the layer's `ansi` flag is on.
+fn repo_from_context<S, N>(ctx: &FmtContext<'_, S, N>) -> Option<String>
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    let mut found = None;
+    // `visit_spans` walks leaf-to-root, so the first `repo` hit is the nearest
+    // ancestor span that carries it (a nested pipeline span without `repo` is
+    // skipped).
+    let _ = ctx.visit_spans(|span| {
+        if found.is_none()
+            && let Some(fields) = span.extensions().get::<FormattedFields<DefaultFields>>()
+            && let Some(repo) = repo_of_formatted_fields(&fields.fields)
+        {
+            found = Some(repo);
+        }
+        Ok::<(), ()>(())
+    });
+    found
+}
+
+/// Extracts the raw value of a `repo=<name>` prefix from a span's formatted
+/// fields, stripping the ANSI styling the field name and `=` pick up when the
+/// layer's `ansi` flag is on.
+fn repo_of_formatted_fields(fields: &str) -> Option<String> {
+    strip_ansi(fields).strip_prefix("repo=").map(str::to_string)
+}
+
+/// Removes ANSI CSI escape sequences (e.g. `\x1b[3m`, `\x1b[0m`) from `s`.
+///
+/// The span field name and `=` in `FormattedFields` are styled (italic /
+/// dimmed) when the layer's `ansi` flag is on; stripping them lets a raw
+/// `repo=<name>` prefix be matched regardless of styling.
+fn strip_ansi(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+            i += 2;
+            while i < bytes.len() && !(0x40..=0x7e).contains(&bytes[i]) {
+                i += 1;
+            }
+            if i < bytes.len() {
+                i += 1;
+            }
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).unwrap_or_default()
 }
 
 /// Last `::`-separated segment of a tracing target: the module name.
@@ -339,6 +403,48 @@ mod tests {
 
         assert!(line.contains("agent: probing component"), "{line:?}");
         assert!(!line.contains('\u{1b}'), "escape codes leaked: {line:?}");
+    }
+
+    /// Captures one formatted line, emitted from inside an entered span whose
+    /// `repo` field is `repo = %name`.
+    fn capture_in_repo_span(config: &LoggingConfig, repo: &str) -> String {
+        let buf = BufWriter::default();
+        let layer = fmt_layer(config, buf.clone()).with_filter(build_targets(config));
+        let subscriber = tracing_subscriber::registry().with(layer);
+        tracing::subscriber::with_default(subscriber, || {
+            let _span = tracing::info_span!("repo", repo = %repo).entered();
+            tracing::info!(target: "mcp_sec_audit::agent", "probing component");
+        });
+        buf.contents()
+    }
+
+    #[test]
+    fn formatted_line_inserts_repo_bracket_between_timestamp_and_module() {
+        let config = LoggingConfig {
+            ansi: false,
+            ..Default::default()
+        };
+        let line = capture_in_repo_span(&config, "excel");
+
+        assert!(
+            line.contains("[excel] agent: probing component"),
+            "repo bracket missing: {line:?}"
+        );
+        assert!(
+            line.find("[excel]") < line.find("agent:"),
+            "repo bracket must precede the module name: {line:?}"
+        );
+    }
+
+    #[test]
+    fn repo_bracket_survives_ansi_styled_span_fields() {
+        let config = LoggingConfig::default();
+        let line = capture_in_repo_span(&config, "excel");
+
+        // The span's `repo` field name/`=` are ANSI-styled when `ansi` is on,
+        // but the rendered `[repo]` bracket must stay plain and readable.
+        assert!(line.contains("[excel]"), "repo bracket missing: {line:?}");
+        assert!(!line.contains("[excel]\u{1b}"), "ansi leaked into bracket: {line:?}");
     }
 
     #[test]

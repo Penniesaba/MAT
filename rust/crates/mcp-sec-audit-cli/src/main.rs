@@ -1,9 +1,11 @@
+mod batch;
 mod logging;
 
 use std::{fs, path::PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Parser)]
 #[command(name = "mcp-sec-audit")]
@@ -35,6 +37,14 @@ enum Command {
         #[command(subcommand)]
         command: ReportCommand,
     },
+    /// Analyze multiple MCP repositories in parallel.
+    Batch(BatchArgs),
+}
+
+#[derive(Debug, Args)]
+struct BatchArgs {
+    /// Path to the batch TOML config file.
+    config: PathBuf,
 }
 
 #[derive(Debug, Subcommand)]
@@ -124,6 +134,41 @@ fn main() -> Result<()> {
                 );
             }
         },
+        Some(Command::Batch(args)) => {
+            // The batch path needs an async runtime, but the single-repo path
+            // (and the other subcommands) are synchronous and must keep running
+            // *outside* any runtime — `run_static_scan_inner` bridges to the
+            // async pipeline via `block_on`, which panics from inside an active
+            // runtime thread. So build the runtime here, for batch only.
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("build tokio runtime")?;
+            let cancel = CancellationToken::new();
+            // A separate token tracks the *user's* Ctrl-C specifically: `cancel`
+            // is also cancelled by `run_batch` itself when `fail_fast` aborts the
+            // batch, and that must map to exit 1 (failures), not 130 (interrupt).
+            let ctrl_c = CancellationToken::new();
+            {
+                let cancel = cancel.clone();
+                let ctrl_c = ctrl_c.clone();
+                rt.spawn(async move {
+                    let _ = tokio::signal::ctrl_c().await;
+                    ctrl_c.cancel();
+                    cancel.cancel();
+                });
+            }
+            let summary = rt.block_on(batch::run(&args.config, cancel.clone()));
+            // `std::process::exit` terminates immediately so the exit code is
+            // fully under our control; the other subcommands keep returning
+            // `Ok(())` and let `main`'s `Result` map their errors normally.
+            std::process::exit(match summary {
+                Ok(_) if ctrl_c.is_cancelled() => 130,
+                Ok(s) if s.failed > 0 || s.cancelled > 0 => 1,
+                Ok(_) => 0,
+                Err(_) => 2,
+            });
+        }
         None => match cli.config {
             Some(config_path) => run_static_scan_from_config(&config_path)?,
             None => {
