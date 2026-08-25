@@ -27,3 +27,10 @@ detection/logs
 
 # Vendored test target (separate git clone)
 targets/serena/
+
+# Vendored test targets (separate git clones)
+test-targets/MCTS/
+test-targets/excel-mcp-server/
+
+# Runtime-generated learned models
+rust/models/

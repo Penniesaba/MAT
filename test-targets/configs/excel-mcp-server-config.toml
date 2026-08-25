@@ -1,0 +1,96 @@
+# excel-mcp-server — Real-World Vulnerable Python MCP Server Test Configuration
+#
+# Target: haris-musa/excel-mcp-server  (PyPI package `excel-mcp-server`) @ v0.1.7
+#         An MCP server that lets an LLM read/write/manipulate Excel files.
+#
+# Known vulnerability: CVE-2026-40576 (GHSA-j98m-w3xp-9f56, PYSEC-2026-331)
+#   - CWE-22 Path Traversal in get_excel_path()  (src/excel_mcp/server.py:75-94)
+#   - Two flaws: absolute-path bypass (os.path.isabs) + unvalidated os.path.join(..., "..")
+#   - Aggravators: no auth, default bind 0.0.0.0, all ~25 @mcp.tool() handlers affected
+#   - Fixed in 0.1.8; scan version <= 0.1.7 to reproduce.
+#
+# Clone + checkout the vulnerable version first (network reachable required):
+#   cd test-targets
+#   git clone https://github.com/haris-musa/excel-mcp-server.git
+#   cd excel-mcp-server
+#   git checkout v0.1.7     # or: git log --oneline | pick the commit before f51340e
+#
+# Usage (run from the `rust/` directory — the config path is a positional arg,
+# NOT a `scan static` subcommand):
+#   cargo run -- ../test-targets/configs/excel-mcp-server-config.toml
+#
+# Test scenarios (see rust/docs/v3.0/EXCEL_MCP_SERVER_TEST_PLAN.md):
+#   A baseline recall   -> [static.agent].enabled=false, [fusion].enabled=false
+#   B multi-line fusion -> [fusion].enabled=true
+#   C self-evolution    -> [static.agent].enabled=true + [static].learned_dir
+#   D observability     -> [logging] scopes (codeql/learning -> debug/trace)
+# This file ships with the FULL scenario C enabled; toggle flags for faster runs.
+
+[scan]
+targets = ["../test-targets/excel-mcp-server"]
+languages = ["python"]
+exclude = ["__pycache__", ".venv", ".mypy_cache", ".pytest_cache", ".git"]
+
+[static]
+enabled = true
+save_facts = true
+# models_dir = "models/custom"   # optional: extra manual sink-model dir (same seam as learned/)
+learned_dir = "models/learned"   # cold-persistence dir: gated agent models land here (scenario C)
+
+[static.rule]
+enabled = true
+rule_paths = ["rules/mcp", "rules/languages"]   # path_traversal capability lives in rules/languages
+
+[static.taint]
+enabled = true          # MUST stay on: semantic inference (recon + model assembly) runs inside taint's fact extraction
+forward = true
+backward = true
+max_depth = 8
+entrypoint_required = true
+
+[static.agent]
+enabled = true          # scenario C; set false for fast regression runs
+provider = "claude"
+max_turns = 30
+timeout_seconds = 600
+extra_args = []
+
+[static.codeql]
+enabled = true
+binary = "/home/xiao/App/codeql/codeql/codeql"
+timeout_seconds = 1200
+extra_args = []
+
+[fusion]
+enabled = true
+require_confirmed_by = 1        # ≥1 corroborating line (demo); raise to 2 for stricter output
+boost_when_multiple_lines_agree = true
+agent_only_as_advisory = true   # agent-only finding is capped at medium confidence
+line_proximity = 5
+rule_weight = 3
+taint_weight = 2
+agent_weight = 1
+codeql_weight = 4               # CodeQL is the precision gold standard — highest weight
+
+[logging]
+level = "info"                  # trace | debug | info | warn | error
+format = "compact"              # full | compact | pretty | json
+ansi = true
+show_timestamps = true
+show_progress = true
+# log_file = "logs/audit.log"   # optional: redirect logs to a file
+
+[logging.scopes]                # per-component override (keys: pipeline/rule/taint/agent/codeql/fusion/learning)
+pipeline = "info"
+codeql = "debug"                # database create / analyze commands + elapsed time
+learning = "trace"              # gate decisions (hot/warm/cold) + warm re-injection + cold persistence
+
+[report]
+output = "/home/xiao/Project/mcp-sec-audit/rust/docs/result/excel/<timestamp>"   # <timestamp> -> YYYYMMDD-HHMMSS
+formats = ["markdown"]
+include_fused_results = true
+include_raw_rule_results = true
+include_raw_taint_results = true
+include_raw_agent_results = true
+include_raw_codeql_results = true
+include_facts = true            # show Sink/Import/Call facts to verify semantic inference

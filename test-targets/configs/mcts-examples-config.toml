@@ -1,0 +1,67 @@
+# MCTS examples/ — MCP server 样例静态分析配置
+#
+# 目标：只扫描 MCTS 仓库里已落盘的 examples/ 目录（各种 MCP server 样例：
+#   vulnerable / medium-risk / baseline / live / single-tool-agent / bench 等）。
+#   MCTS 框架本体（src/、tests/）当前在工作区里是删除状态，不在扫描范围内。
+#
+# 语言覆盖：Python + TypeScript + Rust。examples/bench 下的 go-mcp-server
+#   （.go）本工具暂不支持，会被自动跳过。
+#
+# 运行（在 rust/ 目录下，config 是位置参数，不是子命令）：
+#   cargo run -- ../test-targets/configs/mcts-examples-config.toml
+
+[scan]
+targets = ["../test-targets/MCTS/examples"]
+languages = ["python", "typescript", "rust"]
+exclude = ["__pycache__", ".venv", ".mypy_cache", ".pytest_cache", "node_modules", "target", ".git", "fixtures"]
+
+[static]
+enabled = true
+save_facts = true
+
+[static.rule]
+enabled = true
+rule_paths = ["rules/mcp", "rules/languages"]
+
+[static.taint]
+enabled = true          # 语义推断 + 污点路径；多样例异构目标，关闭 entrypoint 门槛避免漏扫
+forward = true
+backward = true
+max_depth = 8
+entrypoint_required = false
+
+[static.agent]
+enabled =true    # 需要 Claude API，首次跑关闭以保持快速/确定性；需要时改 true
+
+[static.codeql]
+enabled = true          # A 线主力（MCP query pack + 标准安全套件）
+binary = "/home/xiao/App/codeql/codeql/codeql"
+timeout_seconds = 1200
+
+[fusion]
+enabled = true
+require_confirmed_by = 1
+boost_when_multiple_lines_agree = true
+agent_only_as_advisory = true
+line_proximity = 5
+rule_weight = 3
+taint_weight = 2
+agent_weight = 1
+codeql_weight = 4
+
+[report]
+output = "/home/xiao/Project/mcp-sec-audit/rust/docs/result/mcts-<timestamp>"
+formats = ["json", "markdown"]
+include_fused_results = true
+include_raw_rule_results = true
+include_raw_taint_results = true
+include_raw_agent_results = true
+include_raw_codeql_results = true
+include_facts = false
+
+[logging]
+level = "info"
+format = "compact"
+ansi = true
+show_timestamps = true
+show_progress = true

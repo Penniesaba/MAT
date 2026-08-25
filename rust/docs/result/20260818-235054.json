@@ -1,0 +1,1517 @@
+{
+  "facts": [
+    {
+      "type": "import",
+      "id": "import:helpers.rs:6:std::process::Command",
+      "file": "../test-targets/rust-mcp-server/src/helpers.rs",
+      "line": 6,
+      "extractor": "rust_syn_phase9",
+      "language": "rust",
+      "module": "std::process::Command",
+      "imported_name": null,
+      "alias": "Command",
+      "kind": "use"
+    },
+    {
+      "type": "function",
+      "id": "rust:helpers.rs:build_shell_command",
+      "file": "../test-targets/rust-mcp-server/src/helpers.rs",
+      "line": 8,
+      "extractor": "rust_syn_phase9",
+      "language": "rust",
+      "name": "build_shell_command",
+      "qualified_name": "build_shell_command",
+      "end_line": 1,
+      "params": [
+        {
+          "name": "cmd",
+          "annotation": "&str",
+          "default": null
+        }
+      ],
+      "decorators": [
+        "doc",
+        "doc",
+        "doc",
+        "doc",
+        "doc"
+      ],
+      "docstring": "Build a shell command string from user input.\n\nDELIBERATELY VULNERABLE: wraps user input in a shell invocation\nwith no escaping or sanitization. This exists specifically to\ntest cross-function taint propagation.",
+      "return_type": "String",
+      "enclosing_class": null
+    },
+    {
+      "type": "function",
+      "id": "rust:helpers.rs:parse_config",
+      "file": "../test-targets/rust-mcp-server/src/helpers.rs",
+      "line": 18,
+      "extractor": "rust_syn_phase9",
+      "language": "rust",
+      "name": "parse_config",
+      "qualified_name": "parse_config",
+      "end_line": 1,
+      "params": [
+        {
+          "name": "raw",
+          "annotation": "&str",
+          "default": null
+        }
+      ],
+      "decorators": [
+        "doc",
+        "doc",
+        "doc",
+        "doc",
+        "doc"
+      ],
+      "docstring": "Parse a JSON config string.\n\nThin wrapper around serde_json::from_str that provides no additional\nvalidation. Tests that the deserialization sink is detected through\na cross-function call.",
+      "return_type": "Result<serde_json::Value, serde_json::Error>",
+      "enclosing_class": null
+    },
+    {
+      "type": "call",
+      "id": "call:helpers.rs:25:0",
+      "file": "../test-targets/rust-mcp-server/src/helpers.rs",
+      "line": 25,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:helpers.rs:parse_config",
+      "callee": "serde_json::from_str",
+      "normalized_callee": "serde_json::from_str",
+      "column": 0,
+      "end_line": 25,
+      "snippet": "",
+      "args": [
+        {
+          "index": 0,
+          "expr": "raw",
+          "kind": "positional"
+        }
+      ],
+      "kwargs": {},
+      "resolution": null
+    },
+    {
+      "type": "sink",
+      "id": "sink:deserialization:helpers.rs:25",
+      "file": "../test-targets/rust-mcp-server/src/helpers.rs",
+      "line": 25,
+      "extractor": "rust_syn_phase9",
+      "call_id": "call:helpers.rs:25:0",
+      "category": "deserialization",
+      "rule_id": "rust.deserialization",
+      "sink_name": "serde_json::from_str",
+      "severity_base": "medium",
+      "reason": "Deserialization of untrusted input can cause type-confusion or RCE",
+      "conditions": {},
+      "confidence": "high"
+    },
+    {
+      "type": "import",
+      "id": "import:main.rs:15:std::process::Command",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 15,
+      "extractor": "rust_syn_phase9",
+      "language": "rust",
+      "module": "std::process::Command",
+      "imported_name": null,
+      "alias": "ShellCmd",
+      "kind": "use_as"
+    },
+    {
+      "type": "import",
+      "id": "import:main.rs:16:std::fs",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 16,
+      "extractor": "rust_syn_phase9",
+      "language": "rust",
+      "module": "std::fs",
+      "imported_name": null,
+      "alias": null,
+      "kind": "use_group"
+    },
+    {
+      "type": "import",
+      "id": "import:main.rs:16:std::fs",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 16,
+      "extractor": "rust_syn_phase9",
+      "language": "rust",
+      "module": "std::fs",
+      "imported_name": null,
+      "alias": "fs",
+      "kind": "use"
+    },
+    {
+      "type": "import",
+      "id": "import:main.rs:16:std::io",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 16,
+      "extractor": "rust_syn_phase9",
+      "language": "rust",
+      "module": "std::io",
+      "imported_name": null,
+      "alias": null,
+      "kind": "use_group"
+    },
+    {
+      "type": "import",
+      "id": "import:main.rs:16:std::io",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 16,
+      "extractor": "rust_syn_phase9",
+      "language": "rust",
+      "module": "std::io",
+      "imported_name": null,
+      "alias": "io",
+      "kind": "use"
+    },
+    {
+      "type": "import",
+      "id": "import:main.rs:19:helpers::build_shell_command",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 19,
+      "extractor": "rust_syn_phase9",
+      "language": "rust",
+      "module": "helpers::build_shell_command",
+      "imported_name": null,
+      "alias": null,
+      "kind": "use_group"
+    },
+    {
+      "type": "import",
+      "id": "import:main.rs:19:helpers::build_shell_command",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 19,
+      "extractor": "rust_syn_phase9",
+      "language": "rust",
+      "module": "helpers::build_shell_command",
+      "imported_name": null,
+      "alias": "build_shell_command",
+      "kind": "use"
+    },
+    {
+      "type": "import",
+      "id": "import:main.rs:19:helpers::parse_config",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 19,
+      "extractor": "rust_syn_phase9",
+      "language": "rust",
+      "module": "helpers::parse_config",
+      "imported_name": null,
+      "alias": null,
+      "kind": "use_group"
+    },
+    {
+      "type": "import",
+      "id": "import:main.rs:19:helpers::parse_config",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 19,
+      "extractor": "rust_syn_phase9",
+      "language": "rust",
+      "module": "helpers::parse_config",
+      "imported_name": null,
+      "alias": "parse_config",
+      "kind": "use"
+    },
+    {
+      "type": "entrypoint",
+      "id": "entry:main.rs:exec_shell",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 24,
+      "extractor": "rust_syn_phase9",
+      "kind": "mcp_tool",
+      "name": "exec_shell",
+      "function_id": "rust:main.rs:exec_shell",
+      "evidence": {
+        "kind": "attribute_macro",
+        "text": "#[tool(...)]"
+      },
+      "params": [
+        "command"
+      ],
+      "confidence": "high"
+    },
+    {
+      "type": "function",
+      "id": "rust:main.rs:exec_shell",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 24,
+      "extractor": "rust_syn_phase9",
+      "language": "rust",
+      "name": "exec_shell",
+      "qualified_name": "exec_shell",
+      "end_line": 1,
+      "params": [
+        {
+          "name": "command",
+          "annotation": "String",
+          "default": null
+        }
+      ],
+      "decorators": [
+        "doc",
+        "doc",
+        "doc",
+        "doc",
+        "doc",
+        "doc",
+        "#[tool(...)]"
+      ],
+      "docstring": "Execute a shell command.\n\nVULNERABILITY: Command Injection\n- User input flows to Command::new().arg() without sanitization\n- Uses use alias: ShellCmd (= std::process::Command)\n- Crosses function boundary: build_shell_command()",
+      "return_type": "Result<String, String>",
+      "enclosing_class": null
+    },
+    {
+      "type": "source",
+      "id": "source:main.rs:exec_shell:command",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 24,
+      "extractor": "rust_syn_phase9",
+      "kind": "mcp_tool_parameter",
+      "function_id": "rust:main.rs:exec_shell",
+      "name": "command",
+      "confidence": "high"
+    },
+    {
+      "type": "assign",
+      "id": "assign:main.rs:32:shell_cmd",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 32,
+      "extractor": "rust_syn_phase9",
+      "function_id": "rust:main.rs:exec_shell",
+      "target": "shell_cmd",
+      "value": "build_shell_command(...)",
+      "snippet": ""
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:32:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 32,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:exec_shell",
+      "callee": "build_shell_command",
+      "normalized_callee": "helpers::build_shell_command",
+      "column": 0,
+      "end_line": 32,
+      "snippet": "",
+      "args": [
+        {
+          "index": 0,
+          "expr": "&command",
+          "kind": "positional"
+        }
+      ],
+      "kwargs": {},
+      "resolution": {
+        "import_alias": "build_shell_command",
+        "confidence": "high"
+      }
+    },
+    {
+      "type": "assign",
+      "id": "assign:main.rs:33:output",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 33,
+      "extractor": "rust_syn_phase9",
+      "function_id": "rust:main.rs:exec_shell",
+      "target": "output",
+      "value": "<Expr::Try { attrs: [], expr: Expr::MethodCall { attrs: [], receiver: Expr::MethodCall { attrs: [], receiver: Expr::MethodCall { attrs: [], receiver: Expr::MethodCall { attrs: [], receiver: Expr::Call { attrs: [], func: Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: ShellCmd, span: bytes(2116..2124) }, arguments: PathArguments::None }, PathSep, PathSegment { ident: Ident { sym: new, span: bytes(2126..2129) }, arguments: PathArguments::None }] } }, paren_token: Paren, args: [Expr::Lit { attrs: [], lit: Lit::Str { token: \"sh\" } }] }, dot_token: Dot, method: Ident { sym: arg, span: bytes(2145..2148) }, turbofish: None, paren_token: Paren, args: [Expr::Lit { attrs: [], lit: Lit::Str { token: \"-c\" } }] }, dot_token: Dot, method: Ident { sym: arg, span: bytes(2164..2167) }, turbofish: None, paren_token: Paren, args: [Expr::Reference { attrs: [], and_token: And, mutability: None, expr: Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: shell_cmd, span: bytes(2169..2178) }, arguments: PathArguments::None }] } } }] }, dot_token: Dot, method: Ident { sym: output, span: bytes(2189..2195) }, turbofish: None, paren_token: Paren, args: [] }, dot_token: Dot, method: Ident { sym: map_err, span: bytes(2207..2214) }, turbofish: None, paren_token: Paren, args: [Expr::Closure { attrs: [], lifetimes: None, constness: None, movability: None, asyncness: None, capture: None, or1_token: Or, inputs: [Pat::Ident { attrs: [], by_ref: None, mutability: None, ident: Ident { sym: e, span: bytes(2216..2217) }, subpat: None }], or2_token: Or, output: ReturnType::Default, body: Expr::Macro { attrs: [], mac: Macro { path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: format, span: bytes(2219..2225) }, arguments: PathArguments::None }] }, bang_token: Not, delimiter: MacroDelimiter::Paren(Paren), tokens: TokenStream [Literal { lit: \"Command failed: {}\", span: bytes(2227..2247) }, Punct { char: ',', spacing: Alone, span: bytes(2247..2248) }, Ident { sym: e, span: bytes(2249..2250) }] } } }] }, question_token: Question }>",
+      "snippet": ""
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:33:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 33,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:exec_shell",
+      "callee": "ShellCmd::new(...).arg(...).arg(...).output(...).map_err",
+      "normalized_callee": "std::process::Command::new(...).arg(...).arg(...).output(...).map_err",
+      "column": 0,
+      "end_line": 33,
+      "snippet": "",
+      "args": [
+        {
+          "index": 0,
+          "expr": "<closure>",
+          "kind": "positional"
+        }
+      ],
+      "kwargs": {},
+      "resolution": {
+        "import_alias": "ShellCmd",
+        "confidence": "high"
+      }
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:33:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 33,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:exec_shell",
+      "callee": "ShellCmd::new(...).arg(...).arg(...).output",
+      "normalized_callee": "std::process::Command::new(...).arg(...).arg(...).output",
+      "column": 0,
+      "end_line": 33,
+      "snippet": "",
+      "args": [],
+      "kwargs": {},
+      "resolution": {
+        "import_alias": "ShellCmd",
+        "confidence": "high"
+      }
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:33:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 33,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:exec_shell",
+      "callee": "ShellCmd::new(...).arg(...).arg",
+      "normalized_callee": "std::process::Command::new(...).arg(...).arg",
+      "column": 0,
+      "end_line": 33,
+      "snippet": "",
+      "args": [
+        {
+          "index": 0,
+          "expr": "&shell_cmd",
+          "kind": "positional"
+        }
+      ],
+      "kwargs": {},
+      "resolution": {
+        "import_alias": "ShellCmd",
+        "confidence": "high"
+      }
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:33:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 33,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:exec_shell",
+      "callee": "ShellCmd::new(...).arg",
+      "normalized_callee": "std::process::Command::new(...).arg",
+      "column": 0,
+      "end_line": 33,
+      "snippet": "",
+      "args": [
+        {
+          "index": 0,
+          "expr": "\"-c\"",
+          "kind": "positional"
+        }
+      ],
+      "kwargs": {},
+      "resolution": {
+        "import_alias": "ShellCmd",
+        "confidence": "high"
+      }
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:33:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 33,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:exec_shell",
+      "callee": "ShellCmd::new",
+      "normalized_callee": "std::process::Command::new",
+      "column": 0,
+      "end_line": 33,
+      "snippet": "",
+      "args": [
+        {
+          "index": 0,
+          "expr": "\"sh\"",
+          "kind": "positional"
+        }
+      ],
+      "kwargs": {},
+      "resolution": {
+        "import_alias": "ShellCmd",
+        "confidence": "high"
+      }
+    },
+    {
+      "type": "sink",
+      "id": "sink:command_execution:main.rs:33",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 33,
+      "extractor": "rust_syn_phase9",
+      "call_id": "call:main.rs:33:0",
+      "category": "command_execution",
+      "rule_id": "rust.command_execution",
+      "sink_name": "std::process::Command::new(...).arg(...).arg(...).output(...).map_err",
+      "severity_base": "high",
+      "reason": "Executes external commands via std::process::Command",
+      "conditions": {},
+      "confidence": "high"
+    },
+    {
+      "type": "sink",
+      "id": "sink:command_execution:main.rs:33",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 33,
+      "extractor": "rust_syn_phase9",
+      "call_id": "call:main.rs:33:0",
+      "category": "command_execution",
+      "rule_id": "rust.command_execution",
+      "sink_name": "std::process::Command::new(...).arg(...).arg(...).output",
+      "severity_base": "high",
+      "reason": "Executes external commands via std::process::Command",
+      "conditions": {},
+      "confidence": "high"
+    },
+    {
+      "type": "sink",
+      "id": "sink:command_execution:main.rs:33",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 33,
+      "extractor": "rust_syn_phase9",
+      "call_id": "call:main.rs:33:0",
+      "category": "command_execution",
+      "rule_id": "rust.command_execution",
+      "sink_name": "std::process::Command::new(...).arg(...).arg",
+      "severity_base": "high",
+      "reason": "Executes external commands via std::process::Command",
+      "conditions": {},
+      "confidence": "high"
+    },
+    {
+      "type": "sink",
+      "id": "sink:command_execution:main.rs:33",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 33,
+      "extractor": "rust_syn_phase9",
+      "call_id": "call:main.rs:33:0",
+      "category": "command_execution",
+      "rule_id": "rust.command_execution",
+      "sink_name": "std::process::Command::new(...).arg",
+      "severity_base": "high",
+      "reason": "Executes external commands via std::process::Command",
+      "conditions": {},
+      "confidence": "high"
+    },
+    {
+      "type": "sink",
+      "id": "sink:command_execution:main.rs:33",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 33,
+      "extractor": "rust_syn_phase9",
+      "call_id": "call:main.rs:33:0",
+      "category": "command_execution",
+      "rule_id": "rust.command_execution",
+      "sink_name": "std::process::Command::new",
+      "severity_base": "high",
+      "reason": "Executes external commands via std::process::Command",
+      "conditions": {},
+      "confidence": "high"
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:39:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 39,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:exec_shell",
+      "callee": "Ok",
+      "normalized_callee": "Ok",
+      "column": 0,
+      "end_line": 39,
+      "snippet": "",
+      "args": [
+        {
+          "index": 0,
+          "expr": "String::from_utf8_lossy(...).to_string(...)",
+          "kind": "positional"
+        }
+      ],
+      "kwargs": {},
+      "resolution": null
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:39:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 39,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:exec_shell",
+      "callee": "String::from_utf8_lossy(...).to_string",
+      "normalized_callee": "String::from_utf8_lossy(...).to_string",
+      "column": 0,
+      "end_line": 39,
+      "snippet": "",
+      "args": [],
+      "kwargs": {},
+      "resolution": null
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:39:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 39,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:exec_shell",
+      "callee": "String::from_utf8_lossy",
+      "normalized_callee": "String::from_utf8_lossy",
+      "column": 0,
+      "end_line": 39,
+      "snippet": "",
+      "args": [
+        {
+          "index": 0,
+          "expr": "&output.stdout",
+          "kind": "positional"
+        }
+      ],
+      "kwargs": {},
+      "resolution": null
+    },
+    {
+      "type": "entrypoint",
+      "id": "entry:main.rs:load_config",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 42,
+      "extractor": "rust_syn_phase9",
+      "kind": "mcp_tool",
+      "name": "load_config",
+      "function_id": "rust:main.rs:load_config",
+      "evidence": {
+        "kind": "attribute_macro",
+        "text": "#[tool(...)]"
+      },
+      "params": [
+        "config_json"
+      ],
+      "confidence": "high"
+    },
+    {
+      "type": "function",
+      "id": "rust:main.rs:load_config",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 42,
+      "extractor": "rust_syn_phase9",
+      "language": "rust",
+      "name": "load_config",
+      "qualified_name": "load_config",
+      "end_line": 1,
+      "params": [
+        {
+          "name": "config_json",
+          "annotation": "String",
+          "default": null
+        }
+      ],
+      "decorators": [
+        "doc",
+        "doc",
+        "doc",
+        "doc",
+        "doc",
+        "#[tool(...)]"
+      ],
+      "docstring": "Load configuration from a JSON string.\n\nVULNERABILITY: Deserialization RCE\n- User-controlled JSON is deserialized without schema validation\n- serde_json::from_str can trigger arbitrary code via #[serde] tricks",
+      "return_type": "Result<String, String>",
+      "enclosing_class": null
+    },
+    {
+      "type": "source",
+      "id": "source:main.rs:load_config:config_json",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 42,
+      "extractor": "rust_syn_phase9",
+      "kind": "mcp_tool_parameter",
+      "function_id": "rust:main.rs:load_config",
+      "name": "config_json",
+      "confidence": "high"
+    },
+    {
+      "type": "assign",
+      "id": "assign:main.rs:50:config",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 50,
+      "extractor": "rust_syn_phase9",
+      "function_id": "rust:main.rs:load_config",
+      "target": "config",
+      "value": "<Expr::Try { attrs: [], expr: Expr::MethodCall { attrs: [], receiver: Expr::Call { attrs: [], func: Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: parse_config, span: bytes(2719..2731) }, arguments: PathArguments::None }] } }, paren_token: Paren, args: [Expr::Reference { attrs: [], and_token: And, mutability: None, expr: Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: config_json, span: bytes(2733..2744) }, arguments: PathArguments::None }] } } }] }, dot_token: Dot, method: Ident { sym: map_err, span: bytes(2755..2762) }, turbofish: None, paren_token: Paren, args: [Expr::Closure { attrs: [], lifetimes: None, constness: None, movability: None, asyncness: None, capture: None, or1_token: Or, inputs: [Pat::Ident { attrs: [], by_ref: None, mutability: None, ident: Ident { sym: e, span: bytes(2764..2765) }, subpat: None }], or2_token: Or, output: ReturnType::Default, body: Expr::Macro { attrs: [], mac: Macro { path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: format, span: bytes(2767..2773) }, arguments: PathArguments::None }] }, bang_token: Not, delimiter: MacroDelimiter::Paren(Paren), tokens: TokenStream [Literal { lit: \"Config parse error: {}\", span: bytes(2775..2799) }, Punct { char: ',', spacing: Alone, span: bytes(2799..2800) }, Ident { sym: e, span: bytes(2801..2802) }] } } }] }, question_token: Question }>",
+      "snippet": ""
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:50:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 50,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:load_config",
+      "callee": "parse_config(...).map_err",
+      "normalized_callee": "parse_config(...).map_err",
+      "column": 0,
+      "end_line": 50,
+      "snippet": "",
+      "args": [
+        {
+          "index": 0,
+          "expr": "<closure>",
+          "kind": "positional"
+        }
+      ],
+      "kwargs": {},
+      "resolution": null
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:50:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 50,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:load_config",
+      "callee": "parse_config",
+      "normalized_callee": "helpers::parse_config",
+      "column": 0,
+      "end_line": 50,
+      "snippet": "",
+      "args": [
+        {
+          "index": 0,
+          "expr": "&config_json",
+          "kind": "positional"
+        }
+      ],
+      "kwargs": {},
+      "resolution": {
+        "import_alias": "parse_config",
+        "confidence": "high"
+      }
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:53:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 53,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:load_config",
+      "callee": "Ok",
+      "normalized_callee": "Ok",
+      "column": 0,
+      "end_line": 53,
+      "snippet": "",
+      "args": [
+        {
+          "index": 0,
+          "expr": "format!(...)",
+          "kind": "positional"
+        }
+      ],
+      "kwargs": {},
+      "resolution": null
+    },
+    {
+      "type": "entrypoint",
+      "id": "entry:main.rs:unsafe_copy",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 56,
+      "extractor": "rust_syn_phase9",
+      "kind": "mcp_tool",
+      "name": "unsafe_copy",
+      "function_id": "rust:main.rs:unsafe_copy",
+      "evidence": {
+        "kind": "attribute_macro",
+        "text": "#[tool(...)]"
+      },
+      "params": [
+        "data",
+        "dest_path"
+      ],
+      "confidence": "high"
+    },
+    {
+      "type": "function",
+      "id": "rust:main.rs:unsafe_copy",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 56,
+      "extractor": "rust_syn_phase9",
+      "language": "rust",
+      "name": "unsafe_copy",
+      "qualified_name": "unsafe_copy",
+      "end_line": 1,
+      "params": [
+        {
+          "name": "data",
+          "annotation": "String",
+          "default": null
+        },
+        {
+          "name": "dest_path",
+          "annotation": "String",
+          "default": null
+        }
+      ],
+      "decorators": [
+        "doc",
+        "doc",
+        "doc",
+        "doc",
+        "doc",
+        "#[tool(...)]"
+      ],
+      "docstring": "Copy data to a file using unsafe pointer operations.\n\nVULNERABILITY: Unsafe block + File Write\n- Uses unsafe pointer copy (memory safety violation)\n- Writes to a user-controlled path",
+      "return_type": "Result<String, String>",
+      "enclosing_class": null
+    },
+    {
+      "type": "source",
+      "id": "source:main.rs:unsafe_copy:data",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 56,
+      "extractor": "rust_syn_phase9",
+      "kind": "mcp_tool_parameter",
+      "function_id": "rust:main.rs:unsafe_copy",
+      "name": "data",
+      "confidence": "high"
+    },
+    {
+      "type": "source",
+      "id": "source:main.rs:unsafe_copy:dest_path",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 56,
+      "extractor": "rust_syn_phase9",
+      "kind": "mcp_tool_parameter",
+      "function_id": "rust:main.rs:unsafe_copy",
+      "name": "dest_path",
+      "confidence": "high"
+    },
+    {
+      "type": "assign",
+      "id": "assign:main.rs:63:bytes",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 63,
+      "extractor": "rust_syn_phase9",
+      "function_id": "rust:main.rs:unsafe_copy",
+      "target": "bytes",
+      "value": "data.as_bytes(...)",
+      "snippet": ""
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:63:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 63,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:unsafe_copy",
+      "callee": "data.as_bytes",
+      "normalized_callee": "data.as_bytes",
+      "column": 0,
+      "end_line": 63,
+      "snippet": "",
+      "args": [],
+      "kwargs": {},
+      "resolution": null
+    },
+    {
+      "type": "assign",
+      "id": "assign:main.rs:64:len",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 64,
+      "extractor": "rust_syn_phase9",
+      "function_id": "rust:main.rs:unsafe_copy",
+      "target": "len",
+      "value": "bytes.len(...)",
+      "snippet": ""
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:64:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 64,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:unsafe_copy",
+      "callee": "bytes.len",
+      "normalized_callee": "bytes.len",
+      "column": 0,
+      "end_line": 64,
+      "snippet": "",
+      "args": [],
+      "kwargs": {},
+      "resolution": null
+    },
+    {
+      "type": "assign",
+      "id": "assign:main.rs:67:copied",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 67,
+      "extractor": "rust_syn_phase9",
+      "function_id": "rust:main.rs:unsafe_copy",
+      "target": "copied",
+      "value": "<Expr::Unsafe { attrs: [], unsafe_token: Unsafe, block: Block { brace_token: Brace, stmts: [Stmt::Local { attrs: [], let_token: Let, pat: Pat::Ident { attrs: [], by_ref: None, mutability: None, ident: Ident { sym: src, span: bytes(3305..3308) }, subpat: None }, init: Some(LocalInit { eq_token: Eq, expr: Expr::MethodCall { attrs: [], receiver: Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: bytes, span: bytes(3311..3316) }, arguments: PathArguments::None }] } }, dot_token: Dot, method: Ident { sym: as_ptr, span: bytes(3317..3323) }, turbofish: None, paren_token: Paren, args: [] }, diverge: None }), semi_token: Semi }, Stmt::Local { attrs: [], let_token: Let, pat: Pat::Ident { attrs: [], by_ref: None, mutability: Some(Mut), ident: Ident { sym: buf, span: bytes(3343..3346) }, subpat: None }, init: Some(LocalInit { eq_token: Eq, expr: Expr::Call { attrs: [], func: Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: Vec, span: bytes(3349..3352) }, arguments: PathArguments::None }, PathSep, PathSegment { ident: Ident { sym: with_capacity, span: bytes(3354..3367) }, arguments: PathArguments::None }] } }, paren_token: Paren, args: [Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: len, span: bytes(3368..3371) }, arguments: PathArguments::None }] } }] }, diverge: None }), semi_token: Semi }, Stmt::Local { attrs: [], let_token: Let, pat: Pat::Ident { attrs: [], by_ref: None, mutability: None, ident: Ident { sym: dst, span: bytes(3386..3389) }, subpat: None }, init: Some(LocalInit { eq_token: Eq, expr: Expr::MethodCall { attrs: [], receiver: Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: buf, span: bytes(3392..3395) }, arguments: PathArguments::None }] } }, dot_token: Dot, method: Ident { sym: as_mut_ptr, span: bytes(3396..3406) }, turbofish: None, paren_token: Paren, args: [] }, diverge: None }), semi_token: Semi }, Stmt::Expr(Expr::Call { attrs: [], func: Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: std, span: bytes(3418..3421) }, arguments: PathArguments::None }, PathSep, PathSegment { ident: Ident { sym: ptr, span: bytes(3423..3426) }, arguments: PathArguments::None }, PathSep, PathSegment { ident: Ident { sym: copy_nonoverlapping, span: bytes(3428..3447) }, arguments: PathArguments::None }] } }, paren_token: Paren, args: [Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: src, span: bytes(3448..3451) }, arguments: PathArguments::None }] } }, Comma, Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: dst, span: bytes(3453..3456) }, arguments: PathArguments::None }] } }, Comma, Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: len, span: bytes(3458..3461) }, arguments: PathArguments::None }] } }] }, Some(Semi)), Stmt::Expr(Expr::MethodCall { attrs: [], receiver: Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: buf, span: bytes(3472..3475) }, arguments: PathArguments::None }] } }, dot_token: Dot, method: Ident { sym: set_len, span: bytes(3476..3483) }, turbofish: None, paren_token: Paren, args: [Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: len, span: bytes(3484..3487) }, arguments: PathArguments::None }] } }] }, Some(Semi)), Stmt::Expr(Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: buf, span: bytes(3498..3501) }, arguments: PathArguments::None }] } }, None)] } }>",
+      "snippet": ""
+    },
+    {
+      "type": "sink",
+      "id": "sink:unsafe_block:main.rs:67",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 67,
+      "extractor": "rust_syn_phase9",
+      "call_id": "call:main.rs:67:0",
+      "category": "unsafe_block",
+      "rule_id": "rust.unsafe_block",
+      "sink_name": "unsafe",
+      "severity_base": "medium",
+      "reason": "Unsafe block can bypass Rust's memory safety guarantees",
+      "conditions": {},
+      "confidence": "high"
+    },
+    {
+      "type": "assign",
+      "id": "assign:main.rs:68:src",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 68,
+      "extractor": "rust_syn_phase9",
+      "function_id": "rust:main.rs:unsafe_copy",
+      "target": "src",
+      "value": "bytes.as_ptr(...)",
+      "snippet": ""
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:68:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 68,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:unsafe_copy",
+      "callee": "bytes.as_ptr",
+      "normalized_callee": "bytes.as_ptr",
+      "column": 0,
+      "end_line": 68,
+      "snippet": "",
+      "args": [],
+      "kwargs": {},
+      "resolution": null
+    },
+    {
+      "type": "assign",
+      "id": "assign:main.rs:69:buf",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 69,
+      "extractor": "rust_syn_phase9",
+      "function_id": "rust:main.rs:unsafe_copy",
+      "target": "buf",
+      "value": "Vec::with_capacity(...)",
+      "snippet": ""
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:69:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 69,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:unsafe_copy",
+      "callee": "Vec::with_capacity",
+      "normalized_callee": "Vec::with_capacity",
+      "column": 0,
+      "end_line": 69,
+      "snippet": "",
+      "args": [
+        {
+          "index": 0,
+          "expr": "len",
+          "kind": "positional"
+        }
+      ],
+      "kwargs": {},
+      "resolution": null
+    },
+    {
+      "type": "assign",
+      "id": "assign:main.rs:70:dst",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 70,
+      "extractor": "rust_syn_phase9",
+      "function_id": "rust:main.rs:unsafe_copy",
+      "target": "dst",
+      "value": "buf.as_mut_ptr(...)",
+      "snippet": ""
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:70:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 70,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:unsafe_copy",
+      "callee": "buf.as_mut_ptr",
+      "normalized_callee": "buf.as_mut_ptr",
+      "column": 0,
+      "end_line": 70,
+      "snippet": "",
+      "args": [],
+      "kwargs": {},
+      "resolution": null
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:71:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 71,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:unsafe_copy",
+      "callee": "std::ptr::copy_nonoverlapping",
+      "normalized_callee": "std::ptr::copy_nonoverlapping",
+      "column": 0,
+      "end_line": 71,
+      "snippet": "",
+      "args": [
+        {
+          "index": 0,
+          "expr": "src",
+          "kind": "positional"
+        },
+        {
+          "index": 1,
+          "expr": "dst",
+          "kind": "positional"
+        },
+        {
+          "index": 2,
+          "expr": "len",
+          "kind": "positional"
+        }
+      ],
+      "kwargs": {},
+      "resolution": null
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:72:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 72,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:unsafe_copy",
+      "callee": "buf.set_len",
+      "normalized_callee": "buf.set_len",
+      "column": 0,
+      "end_line": 72,
+      "snippet": "",
+      "args": [
+        {
+          "index": 0,
+          "expr": "len",
+          "kind": "positional"
+        }
+      ],
+      "kwargs": {},
+      "resolution": null
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:77:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 77,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:unsafe_copy",
+      "callee": "fs::write(...).map_err",
+      "normalized_callee": "std::fs::write(...).map_err",
+      "column": 0,
+      "end_line": 77,
+      "snippet": "",
+      "args": [
+        {
+          "index": 0,
+          "expr": "<closure>",
+          "kind": "positional"
+        }
+      ],
+      "kwargs": {},
+      "resolution": {
+        "import_alias": "fs",
+        "confidence": "high"
+      }
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:77:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 77,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:unsafe_copy",
+      "callee": "fs::write",
+      "normalized_callee": "std::fs::write",
+      "column": 0,
+      "end_line": 77,
+      "snippet": "",
+      "args": [
+        {
+          "index": 0,
+          "expr": "&dest_path",
+          "kind": "positional"
+        },
+        {
+          "index": 1,
+          "expr": "&copied",
+          "kind": "positional"
+        }
+      ],
+      "kwargs": {},
+      "resolution": {
+        "import_alias": "fs",
+        "confidence": "high"
+      }
+    },
+    {
+      "type": "sink",
+      "id": "sink:file_write:main.rs:77",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 77,
+      "extractor": "rust_syn_phase9",
+      "call_id": "call:main.rs:77:0",
+      "category": "file_write",
+      "rule_id": "rust.file_write",
+      "sink_name": "std::fs::write",
+      "severity_base": "medium",
+      "reason": "File write can modify filesystem contents",
+      "conditions": {},
+      "confidence": "high"
+    },
+    {
+      "type": "call",
+      "id": "call:main.rs:80:0",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 80,
+      "extractor": "rust_syn_phase9",
+      "caller": "rust:main.rs:unsafe_copy",
+      "callee": "Ok",
+      "normalized_callee": "Ok",
+      "column": 0,
+      "end_line": 80,
+      "snippet": "",
+      "args": [
+        {
+          "index": 0,
+          "expr": "format!(...)",
+          "kind": "positional"
+        }
+      ],
+      "kwargs": {},
+      "resolution": null
+    },
+    {
+      "type": "function",
+      "id": "rust:main.rs:main",
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 83,
+      "extractor": "rust_syn_phase9",
+      "language": "rust",
+      "name": "main",
+      "qualified_name": "main",
+      "end_line": 1,
+      "params": [],
+      "decorators": [],
+      "docstring": null,
+      "return_type": null,
+      "enclosing_class": null
+    },
+    {
+      "type": "dataflow",
+      "id": "dataflow:source:main.rs:exec_shell:command:sink:command_execution:main.rs:33",
+      "file": "",
+      "line": 0,
+      "extractor": "rust_taint_phase10_11",
+      "source_id": "source:main.rs:exec_shell:command",
+      "sink_id": "sink:command_execution:main.rs:33",
+      "path": [],
+      "confidence": "medium"
+    },
+    {
+      "type": "dataflow",
+      "id": "dataflow:source:main.rs:unsafe_copy:data:sink:file_write:main.rs:77",
+      "file": "",
+      "line": 0,
+      "extractor": "rust_taint_phase10_11",
+      "source_id": "source:main.rs:unsafe_copy:data",
+      "sink_id": "sink:file_write:main.rs:77",
+      "path": [],
+      "confidence": "medium"
+    },
+    {
+      "type": "dataflow",
+      "id": "dataflow:source:main.rs:unsafe_copy:dest_path:sink:file_write:main.rs:77",
+      "file": "",
+      "line": 0,
+      "extractor": "rust_taint_phase10_11",
+      "source_id": "source:main.rs:unsafe_copy:dest_path",
+      "sink_id": "sink:file_write:main.rs:77",
+      "path": [],
+      "confidence": "medium"
+    },
+    {
+      "type": "dataflow",
+      "id": "dataflow:source:main.rs:load_config:config_json:sink:deserialization:helpers.rs:25",
+      "file": "",
+      "line": 0,
+      "extractor": "rust_taint_phase10_11",
+      "source_id": "source:main.rs:load_config:config_json",
+      "sink_id": "sink:deserialization:helpers.rs:25",
+      "path": [],
+      "confidence": "medium"
+    }
+  ],
+  "rule_results": [
+    {
+      "result_id": "rule-result:command_execution:1",
+      "rule_id": "command_execution",
+      "category": "command_execution",
+      "owasp_mcp": null,
+      "file": "../test-targets/rust-mcp-server/src/helpers.rs",
+      "line": 6,
+      "matched_text": "std::process::Command",
+      "evidence": [
+        "../test-targets/rust-mcp-server/src/helpers.rs:6:std::process::Command",
+        "../test-targets/rust-mcp-server/src/main.rs:15:std::process::Command",
+        "../test-targets/rust-mcp-server/src/main.rs:36:.output()"
+      ],
+      "severity": "high",
+      "confidence": "medium",
+      "recommendation": null,
+      "related_facts_exist": false
+    },
+    {
+      "result_id": "rule-result:deserialization:2",
+      "rule_id": "deserialization",
+      "category": "deserialization",
+      "owasp_mcp": null,
+      "file": "../test-targets/rust-mcp-server/src/helpers.rs",
+      "line": 25,
+      "matched_text": "serde_json::from_str",
+      "evidence": [
+        "../test-targets/rust-mcp-server/src/helpers.rs:25:serde_json::from_str"
+      ],
+      "severity": "high",
+      "confidence": "medium",
+      "recommendation": null,
+      "related_facts_exist": false
+    },
+    {
+      "result_id": "rule-result:unsafe_block:3",
+      "rule_id": "unsafe_block",
+      "category": "unsafe_block",
+      "owasp_mcp": null,
+      "file": "../test-targets/rust-mcp-server/src/main.rs",
+      "line": 67,
+      "matched_text": "unsafe {",
+      "evidence": [
+        "../test-targets/rust-mcp-server/src/main.rs:67:unsafe {"
+      ],
+      "severity": "high",
+      "confidence": "low",
+      "recommendation": null,
+      "related_facts_exist": false
+    }
+  ],
+  "taint_results": [
+    {
+      "result_id": "taint:source:main.rs:exec_shell:command:sink:command_execution:main.rs:33",
+      "source_id": "source:main.rs:exec_shell:command",
+      "source_kind": "mcp_tool_parameter",
+      "entrypoint_id": "entry:main.rs:exec_shell",
+      "sink_id": "sink:command_execution:main.rs:33",
+      "sink_kind": "command_execution",
+      "call_chain": [],
+      "dataflow_path": [],
+      "evidence": [],
+      "taint_confidence": "medium",
+      "entrypoint_is_mcp": true,
+      "backward_trace_found_root": true
+    },
+    {
+      "result_id": "taint:source:main.rs:unsafe_copy:data:sink:file_write:main.rs:77",
+      "source_id": "source:main.rs:unsafe_copy:data",
+      "source_kind": "mcp_tool_parameter",
+      "entrypoint_id": "entry:main.rs:unsafe_copy",
+      "sink_id": "sink:file_write:main.rs:77",
+      "sink_kind": "file_write",
+      "call_chain": [],
+      "dataflow_path": [],
+      "evidence": [],
+      "taint_confidence": "medium",
+      "entrypoint_is_mcp": true,
+      "backward_trace_found_root": true
+    },
+    {
+      "result_id": "taint:source:main.rs:unsafe_copy:dest_path:sink:file_write:main.rs:77",
+      "source_id": "source:main.rs:unsafe_copy:dest_path",
+      "source_kind": "mcp_tool_parameter",
+      "entrypoint_id": "entry:main.rs:unsafe_copy",
+      "sink_id": "sink:file_write:main.rs:77",
+      "sink_kind": "file_write",
+      "call_chain": [],
+      "dataflow_path": [],
+      "evidence": [],
+      "taint_confidence": "medium",
+      "entrypoint_is_mcp": true,
+      "backward_trace_found_root": true
+    },
+    {
+      "result_id": "taint:source:main.rs:load_config:config_json:sink:deserialization:helpers.rs:25",
+      "source_id": "source:main.rs:load_config:config_json",
+      "source_kind": "mcp_tool_parameter",
+      "entrypoint_id": "entry:main.rs:load_config",
+      "sink_id": "sink:deserialization:helpers.rs:25",
+      "sink_kind": "deserialization",
+      "call_chain": [],
+      "dataflow_path": [],
+      "evidence": [],
+      "taint_confidence": "medium",
+      "entrypoint_is_mcp": true,
+      "backward_trace_found_root": true
+    }
+  ],
+  "agent_results": [],
+  "codeql_results": [],
+  "fused_findings": [
+    {
+      "finding_id": "1544bd4a-9a9e-4d1e-bd39-65433f3b672a",
+      "title": "taint: mcp_tool_parameter → file_write",
+      "category": "file_write",
+      "owasp_mcp": null,
+      "severity": "medium",
+      "confidence": "medium",
+      "status": "potential",
+      "supported_by": [
+        "taint"
+      ],
+      "related_rule_result_ids": [],
+      "related_taint_result_ids": [
+        "taint:source:main.rs:unsafe_copy:data:sink:file_write:main.rs:77",
+        "taint:source:main.rs:unsafe_copy:dest_path:sink:file_write:main.rs:77"
+      ],
+      "related_agent_result_ids": [],
+      "related_codeql_result_ids": [],
+      "evidence": [],
+      "call_chain": [],
+      "dataflow_path": [],
+      "recommendation": null,
+      "conflict_notes": []
+    },
+    {
+      "finding_id": "24780aab-7ee7-4014-bda3-9b67acee84a1",
+      "title": "std::process::Command",
+      "category": "command_execution",
+      "owasp_mcp": null,
+      "severity": "high",
+      "confidence": "medium",
+      "status": "potential",
+      "supported_by": [
+        "rule"
+      ],
+      "related_rule_result_ids": [
+        "rule-result:command_execution:1"
+      ],
+      "related_taint_result_ids": [],
+      "related_agent_result_ids": [],
+      "related_codeql_result_ids": [],
+      "evidence": [
+        "../test-targets/rust-mcp-server/src/helpers.rs:6:std::process::Command",
+        "../test-targets/rust-mcp-server/src/main.rs:15:std::process::Command",
+        "../test-targets/rust-mcp-server/src/main.rs:36:.output()"
+      ],
+      "call_chain": [],
+      "dataflow_path": [],
+      "recommendation": null,
+      "conflict_notes": []
+    },
+    {
+      "finding_id": "9ba1aea6-bd4a-4d77-abe2-627cf0f196d7",
+      "title": "serde_json::from_str",
+      "category": "deserialization",
+      "owasp_mcp": null,
+      "severity": "high",
+      "confidence": "medium",
+      "status": "potential",
+      "supported_by": [
+        "rule"
+      ],
+      "related_rule_result_ids": [
+        "rule-result:deserialization:2"
+      ],
+      "related_taint_result_ids": [],
+      "related_agent_result_ids": [],
+      "related_codeql_result_ids": [],
+      "evidence": [
+        "../test-targets/rust-mcp-server/src/helpers.rs:25:serde_json::from_str"
+      ],
+      "call_chain": [],
+      "dataflow_path": [],
+      "recommendation": null,
+      "conflict_notes": []
+    },
+    {
+      "finding_id": "da192adf-58f9-498c-9958-45beabc6f755",
+      "title": "unsafe {",
+      "category": "unsafe_block",
+      "owasp_mcp": null,
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "supported_by": [
+        "rule"
+      ],
+      "related_rule_result_ids": [
+        "rule-result:unsafe_block:3"
+      ],
+      "related_taint_result_ids": [],
+      "related_agent_result_ids": [],
+      "related_codeql_result_ids": [],
+      "evidence": [
+        "../test-targets/rust-mcp-server/src/main.rs:67:unsafe {"
+      ],
+      "call_chain": [],
+      "dataflow_path": [],
+      "recommendation": null,
+      "conflict_notes": []
+    },
+    {
+      "finding_id": "3d3eb305-1aa3-48c6-8471-45c8104cbd12",
+      "title": "taint: mcp_tool_parameter → command_execution",
+      "category": "command_execution",
+      "owasp_mcp": null,
+      "severity": "medium",
+      "confidence": "medium",
+      "status": "potential",
+      "supported_by": [
+        "taint"
+      ],
+      "related_rule_result_ids": [],
+      "related_taint_result_ids": [
+        "taint:source:main.rs:exec_shell:command:sink:command_execution:main.rs:33"
+      ],
+      "related_agent_result_ids": [],
+      "related_codeql_result_ids": [],
+      "evidence": [],
+      "call_chain": [],
+      "dataflow_path": [],
+      "recommendation": null,
+      "conflict_notes": []
+    },
+    {
+      "finding_id": "0bddaadd-ca8a-45de-a6b3-448caf61d347",
+      "title": "taint: mcp_tool_parameter → deserialization",
+      "category": "deserialization",
+      "owasp_mcp": null,
+      "severity": "medium",
+      "confidence": "medium",
+      "status": "potential",
+      "supported_by": [
+        "taint"
+      ],
+      "related_rule_result_ids": [],
+      "related_taint_result_ids": [
+        "taint:source:main.rs:load_config:config_json:sink:deserialization:helpers.rs:25"
+      ],
+      "related_agent_result_ids": [],
+      "related_codeql_result_ids": [],
+      "evidence": [],
+      "call_chain": [],
+      "dataflow_path": [],
+      "recommendation": null,
+      "conflict_notes": []
+    }
+  ],
+  "summary": {
+    "target": "../test-targets/rust-mcp-server",
+    "fact_count": 67,
+    "rule_result_count": 3,
+    "taint_result_count": 4,
+    "agent_result_count": 0,
+    "codeql_result_count": 0,
+    "codeql_fused_count": 0,
+    "fused_finding_count": 6,
+    "highest_severity": "high",
+    "risk_level": "high"
+  },
+  "config_snapshot": {
+    "runtime": {
+      "scan": {
+        "targets": [
+          "../test-targets/rust-mcp-server"
+        ],
+        "exclude": [
+          "target"
+        ],
+        "languages": [
+          "rust"
+        ]
+      },
+      "static": {
+        "enabled": true,
+        "save_facts": true,
+        "rule": {
+          "enabled": true,
+          "rule_paths": [
+            "rules/mcp",
+            "rules/languages"
+          ]
+        },
+        "taint": {
+          "enabled": true,
+          "forward": true,
+          "backward": true,
+          "max_depth": 8,
+          "entrypoint_required": false
+        },
+        "agent": {
+          "enabled": false,
+          "provider": "claude",
+          "prompt_template_path": null,
+          "max_turns": 30,
+          "timeout_seconds": 600,
+          "extra_args": []
+        },
+        "codeql": {
+          "enabled": false,
+          "query_pack_path": null,
+          "binary": "codeql",
+          "timeout_seconds": 1200,
+          "extra_args": []
+        }
+      },
+      "dynamic": {
+        "enabled": false,
+        "sandbox": "existing_python_runtime",
+        "timeout_seconds": 120
+      },
+      "fusion": {
+        "enabled": true,
+        "require_confirmed_by": 1,
+        "boost_when_multiple_lines_agree": true,
+        "agent_only_as_advisory": true,
+        "line_proximity": 5,
+        "rule_weight": 3,
+        "taint_weight": 2,
+        "agent_weight": 1,
+        "codeql_weight": 4
+      },
+      "report": {
+        "formats": [
+          "json",
+          "markdown"
+        ],
+        "output": "/home/xiao/Project/mcp-sec-audit/rust/docs/<timestamp>",
+        "include_fused_results": true,
+        "include_raw_rule_results": true,
+        "include_raw_taint_results": true,
+        "include_raw_agent_results": false,
+        "include_raw_codeql_results": false,
+        "include_facts": true
+      }
+    },
+    "rulebook_paths": [
+      "rules/mcp",
+      "rules/languages"
+    ]
+  }
+}

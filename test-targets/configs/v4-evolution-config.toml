@@ -1,0 +1,100 @@
+# v4.0 两阶段差分进化 — 端到端测试配置
+#
+# 目标：用真实存在漏洞的 Python MCP server 验证 v4.0 的「双阶段、双线路、差分反馈、
+#       可回滚进化」闭环是否完整跑通（M3 编排 + M4 插桩）。
+#
+# 触发条件（缺一不可）：
+#   1. [static.agent].enabled = true     —— B 线（agent/Claude）产出 model_candidates
+#   2. 候选过 G1 信号门控（Hot/Warm）+ G2 可表达性门控（MadSink/TaintModel）
+#   3. [static].learned_dir 已设        —— promote 分支把校验通过的 delta 固化到 learned/
+#
+# 运行（在 rust/ 目录下，config 是位置参数，不是 `scan static` 子命令）：
+#   cargo run -- ../test-targets/configs/v4-evolution-config.toml
+#
+# 观测点（配合 [logging.scopes]，见 rust/docs/v4.0/SELF_CHECK_AND_TEST_PLAN.md）：
+#   [evolution] 逐候选 gate 判定（Hot/Warm/Cold + MadSink/TaintModel/SemanticOnly）
+#   [facts]     每文件 fact 计数 + 语义推断 sink 计数
+#   [taint]     每条 source→…→sink 路径
+#   [diff]      差分分区 c / a / b 计数
+#   [validate]  跨阶段迁移结果（b1/a1 确认、新增误报、仍混沌）
+#   [codeql]    query pack 解析 + MaD 模型包编译（CLI ≥ 2.26.3 才生效）
+
+[scan]
+targets = ["../test-targets/excel-mcp-server"]
+languages = ["python"]
+exclude = ["__pycache__", ".venv", ".mypy_cache", ".pytest_cache", ".git"]
+
+[static]
+enabled = true
+save_facts = true
+# models_dir = "models/custom"   # 可选：额外手工 sink 模型目录
+learned_dir = "models/learned"   # 冷持久化目录：校验通过的 delta 固化到这里
+
+[static.rule]
+enabled = true
+rule_paths = ["rules/mcp", "rules/languages"]
+
+[static.taint]
+enabled = true          # 必须开：语义推断（recon + 模型装配）跑在 taint 的 fact 抽取里
+forward = true
+backward = true
+max_depth = 8
+entrypoint_required = true
+
+[static.agent]
+enabled = true          # B 线：产出 findings + model_candidates（sink/source/sanitizer）
+provider = "claude"
+max_turns = 30
+timeout_seconds = 600
+extra_args = []
+
+[static.codeql]
+enabled = true          # A 线主力：进化重心
+binary = "/home/xiao/App/codeql/codeql/codeql"
+timeout_seconds = 1200
+extra_args = []
+
+[fusion]
+enabled = true
+require_confirmed_by = 1
+boost_when_multiple_lines_agree = true
+agent_only_as_advisory = true
+line_proximity = 5
+rule_weight = 3
+taint_weight = 2
+agent_weight = 1
+codeql_weight = 4
+
+[logging]
+level = "info"
+format = "compact"
+ansi = true
+show_timestamps = true
+show_progress = true
+# log_file = "logs/v4-evolution.log"   # 可选：全量落盘
+
+# v4.0 完整 scope 集（13 个 target，见 cli/src/logging.rs SCOPE_TARGETS）
+[logging.scopes]
+pipeline = "info"
+rule = "debug"
+taint = "info"
+agent = "info"
+codeql = "debug"
+fusion = "info"
+learning = "trace"
+facts = "info"
+infer = "info"
+diff = "info"
+validate = "info"
+evolution = "trace"
+component = "info"
+
+[report]
+output = "/home/xiao/Project/mcp-sec-audit/rust/docs/result/v4/<timestamp>"
+formats = ["markdown"]
+include_fused_results = true
+include_raw_rule_results = true
+include_raw_taint_results = true
+include_raw_agent_results = true
+include_raw_codeql_results = true
+include_facts = true
