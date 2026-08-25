@@ -1,5 +1,6 @@
 //! Shared core types and utilities for the Rust MCP Security Auditor rewrite.
 
+pub mod batch;
 pub mod config;
 pub mod fixtures;
 pub mod model;
@@ -9,6 +10,10 @@ pub mod rules;
 pub mod runctx;
 pub mod static_analysis;
 
+pub use batch::{
+    BatchConfig, BatchSettings, LimitsConfig, RepoConfig, load_batch_config, merge_repo_config,
+    parse_batch_config_toml,
+};
 pub use config::{
     DynamicConfig, FusionConfig, LogFormat, LogLevel, LoggingConfig, ReportConfig, RuntimeConfig,
     ScanConfig, StaticAgentConfig, StaticConfig, StaticRuleConfig, StaticTaintConfig,
