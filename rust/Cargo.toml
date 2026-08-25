@@ -31,6 +31,8 @@ swc_core = { version = "0.101", features = [
     "ecma_visit",
     "common",
 ] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "sync", "time", "signal"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json"] }

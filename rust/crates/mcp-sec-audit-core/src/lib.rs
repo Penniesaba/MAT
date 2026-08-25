@@ -6,6 +6,7 @@ pub mod model;
 pub mod models;
 pub mod reporting;
 pub mod rules;
+pub mod runctx;
 pub mod static_analysis;
 
 pub use config::{
@@ -28,6 +29,7 @@ pub use reporting::{
     render_markdown, resolve_output_path,
 };
 pub use rules::{CapabilityRule, IndicatorRule, RuleBook, load_rulebook, parse_rulebook_toml};
+pub use runctx::{Progress, RunContext, RunId};
 pub use static_analysis::{
     DiscoveredFile, DiscoverySummary, ExtractionDiagnostic, JsTsDiagnostic, JsTsExtractionResult,
     PythonExtractionResult, RustExtractionResult, ScanLanguage, StaticScanContext, detect_language,
