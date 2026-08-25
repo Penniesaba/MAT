@@ -2,8 +2,8 @@
 //!
 //! Loads the batch config, initializes logging, and hands off to the v5
 //! parallel multi-repository orchestrator. Logging is configured from the
-//! batch file's shared `[logging]` section (carried by
-//! [`BatchConfig::runtime`], which is the flattened single-repo base).
+//! batch file's shared `[logging]` section, carried by the flattened
+//! single-repo base on the loaded batch config.
 
 use std::path::Path;
 

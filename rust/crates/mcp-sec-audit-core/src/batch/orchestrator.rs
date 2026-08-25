@@ -309,7 +309,16 @@ pub async fn run_batch(cfg: BatchConfig, cancel: CancellationToken) -> Result<Ba
         }
     }
 
-    write_batch_summary(&summary, &cfg.runtime.report)?;
+    // A failed summary write is a reporting I/O problem, not a batch outcome:
+    // the batch ran, so `run_batch` must still return `Ok(summary)` and let the
+    // repo outcomes (and the caller's exit code) reflect what actually happened.
+    if let Err(e) = write_batch_summary(&summary, &cfg.runtime.report) {
+        tracing::error!(
+            target: "mcp_sec_audit::batch",
+            error = %e,
+            "failed to write batch summary"
+        );
+    }
 
     Ok(summary)
 }

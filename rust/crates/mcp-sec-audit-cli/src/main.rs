@@ -153,9 +153,12 @@ fn main() -> Result<()> {
                 let cancel = cancel.clone();
                 let ctrl_c = ctrl_c.clone();
                 rt.spawn(async move {
-                    let _ = tokio::signal::ctrl_c().await;
-                    ctrl_c.cancel();
-                    cancel.cancel();
+                    // Only treat a clean signal delivery as a user interrupt;
+                    // a failed `ctrl_c()` setup must not spuriously cancel.
+                    if tokio::signal::ctrl_c().await.is_ok() {
+                        ctrl_c.cancel();
+                        cancel.cancel();
+                    }
                 });
             }
             let summary = rt.block_on(batch::run(&args.config, cancel.clone()));
