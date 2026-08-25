@@ -14,7 +14,7 @@ pub use ids::{
 };
 pub use js_ts::{JsTsDiagnostic, JsTsExtractionResult, extract_js_ts_facts};
 pub use pipeline::extract_static_facts;
-pub(crate) use pipeline::{extract_static_facts_with_catalog, load_catalog};
+pub(crate) use pipeline::{extract_static_facts_with_catalog, load_catalog_with_learned};
 pub use python::extract_python_facts;
 pub use rust::{RustExtractionResult, extract_rust_facts};
 

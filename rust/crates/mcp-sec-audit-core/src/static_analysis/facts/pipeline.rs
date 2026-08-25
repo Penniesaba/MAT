@@ -14,7 +14,23 @@ pub fn extract_static_facts(ctx: &StaticScanContext) -> Result<Vec<Fact>> {
 }
 
 /// 装配完整 sink 模型目录：内置 + `models_dir` + `learned_dir`（学到的模型下次运行载回）。
+///
+/// 单仓库路径：从 `ctx.config.static_.learned_dir` 读回既有学习成果。退化包装见
+/// [`load_catalog_with_learned`]（快照路径）——两者在 `learned = None` 时行为一致。
 pub(crate) fn load_catalog(ctx: &StaticScanContext) -> Result<ModelCatalog> {
+    load_catalog_with_learned(ctx, None)
+}
+
+/// 装配完整 sink 模型目录：内置 + `models_dir` + 学习成果。
+///
+/// `learned` 为 `Some` 时（多仓库模式），用它替换磁盘 `learned_dir` 的读取——
+/// 快照在运行开始前取自学习总线，运行期间不再变化，保住两阶段进化的确定性
+/// （设计文档 §7.1）。`learned` 为 `None` 时退化为读磁盘 `learned_dir`，与 v4 单仓库
+/// 行为逐字节一致。
+pub(crate) fn load_catalog_with_learned(
+    ctx: &StaticScanContext,
+    learned: Option<&ModelCatalog>,
+) -> Result<ModelCatalog> {
     let mut catalog = default_catalog();
     if let Some(dir) = &ctx.config.static_.models_dir {
         let extra = load_models_dir(std::path::Path::new(dir))?;
@@ -26,7 +42,14 @@ pub(crate) fn load_catalog(ctx: &StaticScanContext) -> Result<ModelCatalog> {
         );
         catalog.merge(extra);
     }
-    if let Some(dir) = &ctx.config.static_.learned_dir {
+    if let Some(learned) = learned {
+        catalog.merge(learned.clone());
+        tracing::info!(
+            target: "mcp_sec_audit::facts",
+            loaded = learned.sink_count(),
+            "loaded learned sink models from learning-bus snapshot"
+        );
+    } else if let Some(dir) = &ctx.config.static_.learned_dir {
         let extra = load_models_dir(std::path::Path::new(dir))?;
         tracing::info!(
             target: "mcp_sec_audit::facts",

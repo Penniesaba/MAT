@@ -202,8 +202,10 @@ pub struct RunContext {
     pub cancel: CancellationToken,
     /// Placeholder until Task 9 replaces it with `Option<crate::batch::ResourceGovernor>`.
     pub governor: Option<()>,
-    /// Placeholder until Task 10 replaces it with `Option<crate::batch::LearningBusHandle>`.
-    pub learning_bus: Option<()>,
+    /// The shared learning bus, when this run participates in cross-repo
+    /// learning. `None` (single-repo mode) keeps the v4 two-phase promote path
+    /// unchanged.
+    pub learning_bus: Option<crate::batch::LearningBusHandle>,
 }
 
 impl RunContext {

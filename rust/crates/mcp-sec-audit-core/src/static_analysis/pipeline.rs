@@ -9,12 +9,12 @@ use anyhow::{Context, Result, bail};
 use crate::model::CodeqlOutput;
 use crate::{
     AgentOutput, ConfigSnapshot, EvolutionReport, Fact, FusedFinding, ModelCandidate, Progress,
-    RuleAnalysisResult, RuleBook, RunContext, RunId, RuntimeConfig, Severity, StaticAnalysisResult,
-    StaticAnalysisSummary, TaintAnalysisResult, load_rulebook,
+    PromoteRequest, RuleAnalysisResult, RuleBook, RunContext, RunId, RuntimeConfig, Severity,
+    StaticAnalysisResult, StaticAnalysisSummary, TaintAnalysisResult, load_rulebook,
 };
 
 use super::component::Component;
-use super::facts::load_catalog;
+use super::facts::load_catalog_with_learned;
 use super::{
     DiscoveredFile, agent, codeql, component, diff, discover_files, fusion, learning, rule, taint,
     validate,
@@ -193,7 +193,14 @@ pub async fn run_static_scan_async(
         run_ctx.run_id.clone(),
     );
 
-    let base_catalog = load_catalog(&ctx)?;
+    // 入场快照（§7.1）：多仓库模式在阶段 1 之前从学习总线取一次快照，运行期间不再
+    // 接收总线更新——保住 v4 阶段 1/2 用 base_catalog / evolved_catalog 之差判定污染
+    // 并决定回滚的确定性。单仓库模式（learning_bus = None）快照为 None，退化为读盘。
+    let learned = match &run_ctx.learning_bus {
+        Some(bus) => Some(bus.snapshot().await?),
+        None => None,
+    };
+    let base_catalog = load_catalog_with_learned(&ctx, learned.as_ref())?;
 
     // 基线组件指纹：四线路的能力决定性部件统一为 Component 抽象，记录各自
     // tool + fingerprint 作跨阶段对比的可观测锚点。
@@ -717,8 +724,12 @@ pub async fn run_static_scan_async(
     let promoted_n = delta.model_count();
     // `promoted`/`promoted_count` must reflect actual persistence: promote() is
     // only invoked (and only persists) when not rolled back, the delta is
-    // non-empty, AND a learned_dir is configured. Otherwise we overpromise.
-    let persisted = !rolled_back && promoted_n > 0 && ctx.config.static_.learned_dir.is_some();
+    // non-empty, AND a learning target is configured (learned_dir in single-repo
+    // mode, or the shared learning bus in multi-repo mode). Otherwise we
+    // overpromise.
+    let learning_target =
+        ctx.config.static_.learned_dir.is_some() || run_ctx.learning_bus.is_some();
+    let persisted = !rolled_back && promoted_n > 0 && learning_target;
     let (final_taint, final_agent, final_codeql, final_facts) = if rolled_back {
         base_component.rollback(&staging_dir)?;
         tracing::warn!(
@@ -728,9 +739,6 @@ pub async fn run_static_scan_async(
         (taint_results_1, agent_output_1, codeql_output_1, facts_1)
     } else {
         if promoted_n > 0 {
-            if let Some(dir) = &ctx.config.static_.learned_dir {
-                base_component.promote(&delta, std::path::Path::new(dir))?;
-            }
             tracing::info!(
                 target: "mcp_sec_audit::evolution",
                 learned = promoted_n,
@@ -742,67 +750,16 @@ pub async fn run_static_scan_async(
                 "nothing to promote — empty delta"
             );
         }
-        // Persist adjudication-derived models (sink/source/sanitizer) to learned_dir.
-        if let Some(dir) = &ctx.config.static_.learned_dir {
-            let (sinks, sources, sanitizers): (Vec<_>, Vec<_>, Vec<_>) =
-                actions.iter().fold(
-                    (Vec::new(), Vec::new(), Vec::new()),
-                    |(mut s, mut so, mut sa), a| {
-                        match a {
-                            agent::PromoteAction::Sink(m) => s.push(m.clone()),
-                            agent::PromoteAction::Source(m) => so.push(m.clone()),
-                            agent::PromoteAction::Sanitizer(m) => sa.push(m.clone()),
-                            _ => {}
-                        }
-                        (s, so, sa)
-                    },
-                );
-            // Load prior learned models once so each class merges (not
-            // overwrites) its accumulated evidence (corroboration/pollution
-            // counts and last_seen_run) instead of resetting on every run.
-            let existing_catalog = if !Path::new(dir).exists() {
-                // Fresh run: no learned dir yet, start from empty (benign).
-                crate::models::ModelCatalog::default()
-            } else {
-                match crate::models::load_models_dir(Path::new(dir)) {
-                    Ok(cat) => cat,
-                    Err(e) => {
-                        tracing::warn!(
-                            target: "mcp_sec_audit::evolution",
-                            error = %e,
-                            "failed to load learned models; promotion will not merge prior evidence"
-                        );
-                        crate::models::ModelCatalog::default()
-                    }
-                }
-            };
-            if !sinks.is_empty() {
-                let existing_sinks = ["python", "javascript", "rust"]
-                    .iter()
-                    .flat_map(|lang| existing_catalog.sinks_for_language(lang).to_vec())
-                    .collect::<Vec<_>>();
-                let merged = learning::merge_sink_models(&existing_sinks, &sinks);
-                learning::write_learned_sinks(Path::new(dir), &merged)?;
-            }
-            if !sources.is_empty() {
-                let existing_sources = ["python", "javascript", "rust"]
-                    .iter()
-                    .flat_map(|lang| existing_catalog.sources_for_language(lang).to_vec())
-                    .collect::<Vec<_>>();
-                let merged = learning::merge_source_models(&existing_sources, &sources);
-                learning::write_learned_sources(Path::new(dir), &merged)?;
-            }
-            if !sanitizers.is_empty() {
-                let existing_sanitizers = ["python", "javascript", "rust"]
-                    .iter()
-                    .flat_map(|lang| existing_catalog.sanitizers_for_language(lang).to_vec())
-                    .collect::<Vec<_>>();
-                let merged = learning::merge_sanitizer_models(&existing_sanitizers, &sanitizers);
-                learning::write_learned_sanitizers(Path::new(dir), &merged)?;
-            }
-            learning::write_learned_rules(Path::new(dir), &rules)?;
-            learning::write_learned_prompt(Path::new(dir), &prompt_extra)?;
-        }
+        persist_promotion(
+            &ctx,
+            run_ctx,
+            &delta,
+            &actions,
+            &rules,
+            &prompt_extra,
+            &base_component,
+        )
+        .await?;
         (taint_results_2, agent_output_2, codeql_output_2, facts_2)
     };
 
@@ -835,6 +792,138 @@ pub async fn run_static_scan_async(
         evolution,
         progress,
     )
+}
+
+/// 收集本次固化要写出的三类模型：暂存 delta（差分信号 b1/a1 证实的模型）+ 裁决
+/// 产生的模型（sink/source/sanitizer）。多仓库模式下整包交给学习总线一次 merge；
+/// 单仓库模式下 delta 与裁决模型分别由 [`persist_promotion_local`] 按旧语义固化。
+fn collect_promotion_models(
+    delta: &component::ComponentDelta,
+    actions: &[agent::PromoteAction],
+) -> (
+    Vec<crate::models::SinkModel>,
+    Vec<crate::models::SourceModel>,
+    Vec<crate::models::SanitizerModel>,
+) {
+    let mut sinks = delta.sinks.clone();
+    let mut sources = delta.sources.clone();
+    let mut sanitizers = delta.sanitizers.clone();
+    for action in actions {
+        match action {
+            agent::PromoteAction::Sink(m) => sinks.push(m.clone()),
+            agent::PromoteAction::Source(m) => sources.push(m.clone()),
+            agent::PromoteAction::Sanitizer(m) => sanitizers.push(m.clone()),
+            _ => {}
+        }
+    }
+    (sinks, sources, sanitizers)
+}
+
+/// 固化（promote）：把验证通过的 delta 与裁决成果持久化为学习成果。
+///
+/// 路由（设计文档 §7.3 隐患 1/4）：`learning_bus` 为 `Some` 时，delta 与裁决模型
+/// 合并成一条 [`PromoteRequest`] 发给学习总线（actor 恒 merge，修复 delta 固化直接
+/// 覆写 `corroboration_count = 0` 的旧缺陷）；为 `None` 时（单仓库），逐字执行
+/// v4 旧代码。
+async fn persist_promotion(
+    ctx: &StaticScanContext,
+    run_ctx: &RunContext,
+    delta: &component::ComponentDelta,
+    actions: &[agent::PromoteAction],
+    rules: &[String],
+    prompt_extra: &str,
+    base_component: &component::TaintComponent,
+) -> Result<()> {
+    if let Some(bus) = &run_ctx.learning_bus {
+        let (sinks, sources, sanitizers) = collect_promotion_models(delta, actions);
+        bus.promote(PromoteRequest {
+            repo: scan_identifier(ctx),
+            sinks,
+            sources,
+            sanitizers,
+            rules: rules.to_vec(),
+            prompt_extra: prompt_extra.to_string(),
+        })
+        .await
+    } else {
+        persist_promotion_local(ctx, delta, actions, rules, prompt_extra, base_component)
+    }
+}
+
+/// v4 单仓库固化路径（逐字保留原行为）：delta 经 [`component::Component::promote`]
+/// 覆写写出，裁决模型读既有证据后 merge 写回，规则/prompt 累积追加。
+fn persist_promotion_local(
+    ctx: &StaticScanContext,
+    delta: &component::ComponentDelta,
+    actions: &[agent::PromoteAction],
+    rules: &[String],
+    prompt_extra: &str,
+    base_component: &component::TaintComponent,
+) -> Result<()> {
+    if delta.model_count() > 0
+        && let Some(dir) = &ctx.config.static_.learned_dir
+    {
+        base_component.promote(delta, Path::new(dir))?;
+    }
+    if let Some(dir) = &ctx.config.static_.learned_dir {
+        let (sinks, sources, sanitizers): (Vec<_>, Vec<_>, Vec<_>) = actions.iter().fold(
+            (Vec::new(), Vec::new(), Vec::new()),
+            |(mut s, mut so, mut sa), a| {
+                match a {
+                    agent::PromoteAction::Sink(m) => s.push(m.clone()),
+                    agent::PromoteAction::Source(m) => so.push(m.clone()),
+                    agent::PromoteAction::Sanitizer(m) => sa.push(m.clone()),
+                    _ => {}
+                }
+                (s, so, sa)
+            },
+        );
+        // Load prior learned models once so each class merges (not overwrites)
+        // its accumulated evidence instead of resetting on every run.
+        let existing_catalog = if !Path::new(dir).exists() {
+            // Fresh run: no learned dir yet, start from empty (benign).
+            crate::models::ModelCatalog::default()
+        } else {
+            match crate::models::load_models_dir(Path::new(dir)) {
+                Ok(cat) => cat,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "mcp_sec_audit::evolution",
+                        error = %e,
+                        "failed to load learned models; promotion will not merge prior evidence"
+                    );
+                    crate::models::ModelCatalog::default()
+                }
+            }
+        };
+        if !sinks.is_empty() {
+            let existing_sinks = ["python", "javascript", "rust"]
+                .iter()
+                .flat_map(|lang| existing_catalog.sinks_for_language(lang).to_vec())
+                .collect::<Vec<_>>();
+            let merged = learning::merge_sink_models(&existing_sinks, &sinks);
+            learning::write_learned_sinks(Path::new(dir), &merged)?;
+        }
+        if !sources.is_empty() {
+            let existing_sources = ["python", "javascript", "rust"]
+                .iter()
+                .flat_map(|lang| existing_catalog.sources_for_language(lang).to_vec())
+                .collect::<Vec<_>>();
+            let merged = learning::merge_source_models(&existing_sources, &sources);
+            learning::write_learned_sources(Path::new(dir), &merged)?;
+        }
+        if !sanitizers.is_empty() {
+            let existing_sanitizers = ["python", "javascript", "rust"]
+                .iter()
+                .flat_map(|lang| existing_catalog.sanitizers_for_language(lang).to_vec())
+                .collect::<Vec<_>>();
+            let merged = learning::merge_sanitizer_models(&existing_sanitizers, &sanitizers);
+            learning::write_learned_sanitizers(Path::new(dir), &merged)?;
+        }
+        learning::write_learned_rules(Path::new(dir), rules)?;
+        learning::write_learned_prompt(Path::new(dir), prompt_extra)?;
+    }
+    Ok(())
 }
 
 /// L2 语义解释回填：把 agent 对某 file:line 的 reasoning_summary 贴到对应混沌项上。

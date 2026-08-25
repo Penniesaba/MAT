@@ -253,6 +253,16 @@ pub fn merge_sanitizer_models(
     map.into_values().collect()
 }
 
+/// Write `contents` to `path` atomically: write to a sibling temp file in the
+/// same directory, then `fs::rename` over the target. A reader never observes
+/// a partially-written file. The target's directory must already exist.
+pub(crate) fn atomic_write(path: &Path, contents: &str) -> anyhow::Result<()> {
+    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    std::fs::write(&tmp, contents)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
 /// Append learned models to a directory as one TOML file per model (sorted by
 /// name for determinism). Creates the directory if absent.
 pub fn write_learned_sinks(dir: &Path, models: &[SinkModel]) -> anyhow::Result<()> {
@@ -280,7 +290,7 @@ pub fn write_learned_sinks(dir: &Path, models: &[SinkModel]) -> anyhow::Result<(
         if let Some(run) = &m.last_seen_run {
             text.push_str(&format!("last_seen_run = {:?}\n", run));
         }
-        std::fs::write(dir.join(format!("learned-{safe}.toml")), text)?;
+        atomic_write(&dir.join(format!("learned-{safe}.toml")), &text)?;
     }
     Ok(())
 }
@@ -308,7 +318,7 @@ pub fn write_learned_sources(dir: &Path, models: &[SourceModel]) -> anyhow::Resu
         if let Some(run) = &m.last_seen_run {
             text.push_str(&format!("last_seen_run = {:?}\n", run));
         }
-        std::fs::write(dir.join(format!("learned-{safe}.toml")), text)?;
+        atomic_write(&dir.join(format!("learned-{safe}.toml")), &text)?;
     }
     Ok(())
 }
@@ -336,7 +346,7 @@ pub fn write_learned_sanitizers(dir: &Path, models: &[SanitizerModel]) -> anyhow
         if let Some(run) = &m.last_seen_run {
             text.push_str(&format!("last_seen_run = {:?}\n", run));
         }
-        std::fs::write(dir.join(format!("learned-{safe}.toml")), text)?;
+        atomic_write(&dir.join(format!("learned-{safe}.toml")), &text)?;
     }
     Ok(())
 }
@@ -380,7 +390,7 @@ pub fn write_learned_rules(dir: &Path, capabilities: &[String]) -> anyhow::Resul
         .map(|c| format!("- {c}"))
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(&path, text)?;
+    atomic_write(&path, &text)?;
     Ok(())
 }
 
@@ -402,7 +412,7 @@ pub fn write_learned_prompt(dir: &Path, text: &str) -> anyhow::Result<()> {
         content.push('\n');
     }
     content.push_str(text);
-    std::fs::write(&path, content)?;
+    atomic_write(&path, &content)?;
     Ok(())
 }
 

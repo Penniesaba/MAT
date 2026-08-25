@@ -8,9 +8,11 @@
 
 mod config;
 mod governor;
+pub mod learning_bus;
 
 pub use config::{
     BatchConfig, BatchSettings, LimitsConfig, RepoConfig, load_batch_config, merge_repo_config,
     parse_batch_config_toml,
 };
 pub use governor::{ResourceClass, ResourceGovernor};
+pub use learning_bus::{BusMsg, LearningBusHandle, PromoteRequest, spawn};

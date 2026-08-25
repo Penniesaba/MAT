@@ -11,8 +11,8 @@ pub mod runctx;
 pub mod static_analysis;
 
 pub use batch::{
-    BatchConfig, BatchSettings, LimitsConfig, RepoConfig, ResourceClass, ResourceGovernor,
-    load_batch_config, merge_repo_config, parse_batch_config_toml,
+    BatchConfig, BatchSettings, BusMsg, LearningBusHandle, LimitsConfig, PromoteRequest, RepoConfig,
+    ResourceClass, ResourceGovernor, load_batch_config, merge_repo_config, parse_batch_config_toml,
 };
 pub use config::{
     DynamicConfig, FusionConfig, LogFormat, LogLevel, LoggingConfig, ReportConfig, RuntimeConfig,
