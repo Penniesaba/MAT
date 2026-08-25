@@ -356,15 +356,23 @@ pub fn render_markdown(result: &StaticAnalysisResult, options: &MarkdownRenderOp
 
 /// Resolve a `[report].output` path template by replacing the `<timestamp>`
 /// placeholder with the current local timestamp (`%Y%m%d-%H%M%S`, e.g.
-/// `20260819-131244`). Paths without the placeholder are returned unchanged.
+/// `20260819-131244`) and, when `repo` is `Some`, the `<repo>` placeholder with
+/// a filename-sanitized repository name. Paths without a placeholder are
+/// returned unchanged.
 ///
 /// The timestamp is generated once per call, so a single resolved value shared
 /// across all report formats keeps `.md`/`.json`/`.jsonl` on the same second.
-pub fn resolve_output_path(output: &str) -> String {
-    if !output.contains("<timestamp>") {
-        return output.to_string();
+/// The `<repo>` placeholder is left verbatim when `repo` is `None` (a single
+/// repo path that never mentions it), matching the per-repo vs. batch split.
+pub fn resolve_output_path(output: &str, repo: Option<&str>) -> String {
+    let mut resolved = output.to_string();
+    if resolved.contains("<timestamp>") {
+        resolved = resolved.replace("<timestamp>", &current_local_timestamp());
     }
-    output.replace("<timestamp>", &current_local_timestamp())
+    if let Some(repo) = repo {
+        resolved = resolved.replace("<repo>", &crate::runctx::sanitize(repo));
+    }
+    resolved
 }
 
 /// Current local time formatted as `YYYYMMDD-HHMMSS`.
@@ -564,7 +572,7 @@ mod tests {
 
     #[test]
     fn resolve_output_path_replaces_timestamp_placeholder() {
-        let resolved = resolve_output_path("/tmp/report-<timestamp>");
+        let resolved = resolve_output_path("/tmp/report-<timestamp>", None);
         assert!(!resolved.contains("<timestamp>"));
         assert!(resolved.starts_with("/tmp/report-"));
         // Local format is `YYYYMMDD-HHMMSS`.
@@ -587,8 +595,30 @@ mod tests {
 
     #[test]
     fn resolve_output_path_ignores_missing_placeholder() {
-        assert_eq!(resolve_output_path("/tmp/report"), "/tmp/report");
-        assert_eq!(resolve_output_path("report"), "report");
+        assert_eq!(resolve_output_path("/tmp/report", None), "/tmp/report");
+        assert_eq!(resolve_output_path("report", None), "report");
+    }
+
+    #[test]
+    fn resolve_output_path_substitutes_repo() {
+        let out = resolve_output_path("docs/result/batch-<timestamp>/<repo>", Some("excel"));
+        assert!(out.ends_with("/excel"));
+        assert!(!out.contains("<timestamp>"));
+    }
+
+    #[test]
+    fn resolve_output_path_leaves_repo_placeholder_when_absent() {
+        let out = resolve_output_path("docs/result/<repo>/report", None);
+        assert_eq!(out, "docs/result/<repo>/report");
+    }
+
+    #[test]
+    fn repo_name_is_sanitized_for_filenames() {
+        let out = resolve_output_path("r/<repo>", Some("MCTS/examples"));
+        assert!(
+            !out.trim_start_matches("r/").contains('/'),
+            "must not create nested dirs"
+        );
     }
 
     #[test]

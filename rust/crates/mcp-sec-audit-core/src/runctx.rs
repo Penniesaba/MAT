@@ -57,7 +57,10 @@ impl Default for RunId {
 
 /// Replaces `/`, `\`, `:` and spaces with `-` so a repository path can be
 /// embedded in a single path segment.
-fn sanitize(repo: &str) -> String {
+///
+/// Shared with [`crate::reporting::resolve_output_path`] so the `<repo>`
+/// placeholder sanitizes exactly like [`RunId::for_repo`] does.
+pub(crate) fn sanitize(repo: &str) -> String {
     repo.chars()
         .map(|c| match c {
             '/' | '\\' | ':' | ' ' => '-',

@@ -9,6 +9,7 @@
 mod config;
 mod governor;
 pub mod learning_bus;
+mod summary;
 
 pub use config::{
     BatchConfig, BatchSettings, LimitsConfig, RepoConfig, load_batch_config, merge_repo_config,
@@ -16,3 +17,7 @@ pub use config::{
 };
 pub use governor::{ResourceClass, ResourceGovernor};
 pub use learning_bus::{BusMsg, LearningBusHandle, PromoteRequest, spawn};
+pub use summary::{
+    BatchRepoSummary, BatchSummary, RepoStatus, render_batch_summary_json,
+    render_batch_summary_markdown,
+};

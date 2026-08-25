@@ -188,7 +188,8 @@ fn write_report_files(
         return Ok(Vec::new());
     }
 
-    let output = mcp_sec_audit_core::resolve_output_path(&report.output);
+    let output =
+        mcp_sec_audit_core::resolve_output_path(&report.output, Some(&result.summary.target));
 
     let mut written = Vec::new();
     for fmt in &report.formats {
