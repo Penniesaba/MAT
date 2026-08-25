@@ -157,6 +157,12 @@ impl Progress {
     }
 }
 
+/// Every `kind` a scan run passes to [`RunId::temp_dir`]. Kept in one place so
+/// [`RunContext::cleanup`] enumerates exactly the directories this crate mints
+/// without drifting from the call sites that create them. The path format
+/// itself stays in [`RunId::temp_dir`] (the single source of truth).
+const TEMP_KINDS: &[&str] = &["codeql", "sarif", "mad", "staging"];
+
 /// Per-run state carried through the asynchronous pipeline.
 pub struct RunContext {
     pub run_id: RunId,
@@ -180,6 +186,28 @@ impl RunContext {
             cancel: CancellationToken::new(),
             governor: None,
             learning_bus: None,
+        }
+    }
+
+    /// Removes every run-scoped temporary directory created for this run's
+    /// [`RunId`] (the `codeql`, `sarif`, `mad`, and `staging` kinds).
+    ///
+    /// Best-effort: a missing directory is not an error, and every kind is
+    /// attempted even if one fails. Returns the first real error encountered,
+    /// or `Ok(())` when all directories are gone (or never existed).
+    pub fn cleanup(&self) -> Result<(), std::io::Error> {
+        let mut first_error = None;
+        for kind in TEMP_KINDS {
+            if let Err(e) = std::fs::remove_dir_all(self.run_id.temp_dir(kind))
+                && e.kind() != std::io::ErrorKind::NotFound
+                && first_error.is_none()
+            {
+                first_error = Some(e);
+            }
+        }
+        match first_error {
+            Some(e) => Err(e),
+            None => Ok(()),
         }
     }
 }
@@ -338,5 +366,25 @@ mod tests {
         assert!(ctx.governor.is_none());
         assert!(ctx.learning_bus.is_none());
         assert!(!ctx.cancel.is_cancelled());
+    }
+
+    #[test]
+    fn cleanup_removes_run_temp_dirs() {
+        let ctx = RunContext::single(RunId::new());
+        // Create content in every run-scoped temp dir the pipeline mints. The
+        // `sarif` kind is the parent directory `create_dir_all` makes for the
+        // SARIF output file, so a marker there exercises that exact path.
+        for kind in TEMP_KINDS {
+            let dir = ctx.run_id.temp_dir(kind);
+            std::fs::create_dir_all(&dir).expect("create temp dir");
+            std::fs::write(dir.join("marker.txt"), "x").expect("write marker");
+        }
+        ctx.cleanup().expect("cleanup should succeed");
+        for kind in TEMP_KINDS {
+            let dir = ctx.run_id.temp_dir(kind);
+            assert!(!dir.exists(), "temp dir for kind {kind:?} should be removed");
+        }
+        // Idempotent: removing already-gone dirs is not an error.
+        ctx.cleanup().expect("second cleanup should be a no-op success");
     }
 }
