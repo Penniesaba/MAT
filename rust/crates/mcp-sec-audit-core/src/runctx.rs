@@ -25,8 +25,16 @@ impl RunId {
     }
 
     /// Derives a deterministic run id from a batch id and a repository path.
+    ///
+    /// The sanitized repo path keeps the id human-readable, but sanitization
+    /// alone is not injective (`MCTS/examples` and `MCTS-examples` both
+    /// sanitize to `MCTS-examples`). A short stable hash of the *raw* repo
+    /// string is appended so two repos in one batch can never share an id (and
+    /// therefore never share a [`RunId::temp_dir`]).
     pub fn for_repo(batch_id: &str, repo: &str) -> Self {
-        Self(format!("{batch_id}-{}", sanitize(repo)))
+        let digest = crate::static_analysis::learning::stable_hash(repo);
+        let short = &digest[..8];
+        Self(format!("{batch_id}-{}-{short}", sanitize(repo)))
     }
 
     /// Returns the run id as a string slice.
@@ -137,6 +145,10 @@ impl Progress {
     /// In channel form the prefix renders as `"[repo] "`; in tracing form the
     /// repo is attached as a `repo` field on the log record; in noop form it is
     /// ignored.
+    ///
+    /// Scoping is single-level: calling `scoped` on an already-scoped reporter
+    /// *overwrites* the previous prefix rather than accumulating it
+    /// (`scoped("outer").scoped("inner")` reports as `inner` only).
     pub fn scoped(&self, repo: &str) -> Self {
         Self {
             kind: self.kind.clone(),
@@ -199,6 +211,36 @@ mod tests {
     }
 
     #[test]
+    fn for_repo_is_deterministic() {
+        let a = RunId::for_repo("batch-1", "MCTS/examples");
+        let b = RunId::for_repo("batch-1", "MCTS/examples");
+        assert_eq!(a, b, "same inputs must produce the same run id");
+    }
+
+    #[test]
+    fn for_repo_distinguishes_sanitized_collisions() {
+        // Each pair sanitizes to the same string, so only the raw-string hash
+        // keeps them apart. If any pair collides, two repos in one batch would
+        // silently share a temp dir.
+        let pairs = [
+            ("MCTS/examples", "MCTS-examples"),
+            ("a b", "a:b"),
+            ("a b", "a-b"),
+            ("a:b", "a-b"),
+        ];
+        for (x, y) in pairs {
+            let id_x = RunId::for_repo("batch-1", x);
+            let id_y = RunId::for_repo("batch-1", y);
+            assert_ne!(id_x, id_y, "{x:?} and {y:?} must not collide");
+            assert_ne!(
+                id_x.temp_dir("codeql"),
+                id_y.temp_dir("codeql"),
+                "{x:?} and {y:?} must not share a temp dir"
+            );
+        }
+    }
+
+    #[test]
     fn default_run_id_delegates_to_new() {
         let a = RunId::default();
         let b = RunId::default();
@@ -227,13 +269,71 @@ mod tests {
     }
 
     #[test]
+    fn tracing_progress_scoped_attaches_repo_field() {
+        use std::sync::{Arc, Mutex};
+        use tracing::{Event, Metadata, Subscriber, field, span};
+
+        #[derive(Default)]
+        struct Capture {
+            fields: Arc<Mutex<Vec<(String, String)>>>,
+        }
+
+        impl Subscriber for Capture {
+            fn enabled(&self, _: &Metadata<'_>) -> bool {
+                true
+            }
+            fn new_span(&self, _: &span::Attributes<'_>) -> span::Id {
+                span::Id::from_u64(1)
+            }
+            fn record(&self, _: &span::Id, _: &span::Record<'_>) {}
+            fn record_follows_from(&self, _: &span::Id, _: &span::Id) {}
+            fn event(&self, event: &Event<'_>) {
+                let mut recorder = Recorder::default();
+                event.record(&mut recorder);
+                self.fields.lock().unwrap().extend(recorder.fields);
+            }
+            fn enter(&self, _: &span::Id) {}
+            fn exit(&self, _: &span::Id) {}
+        }
+
+        #[derive(Default)]
+        struct Recorder {
+            fields: Vec<(String, String)>,
+        }
+        impl field::Visit for Recorder {
+            fn record_debug(&mut self, f: &field::Field, value: &dyn std::fmt::Debug) {
+                self.fields.push((f.name().to_string(), format!("{value:?}")));
+            }
+            fn record_str(&mut self, f: &field::Field, value: &str) {
+                self.fields.push((f.name().to_string(), value.to_string()));
+            }
+        }
+
+        let capture = Capture::default();
+        let captured = capture.fields.clone();
+        tracing::subscriber::with_default(capture, || {
+            Progress::tracing().scoped("excel").report("hi");
+        });
+
+        let fields = captured.lock().unwrap();
+        assert!(
+            fields.iter().any(|(k, v)| k == "repo" && v.contains("excel")),
+            "expected repo=excel field, got {fields:?}"
+        );
+        assert!(
+            fields.iter().any(|(k, v)| k == "message" && v.contains("hi")),
+            "expected message=hi field, got {fields:?}"
+        );
+    }
+
+    #[test]
     fn progress_is_send_sync_clone_static() {
         fn assert_send_sync<T: Send + Sync + Clone + 'static>() {}
         assert_send_sync::<Progress>();
     }
 
     #[test]
-    fn run_context_single_uses_tracing_progress() {
+    fn run_context_single_initializes_placeholders_and_cancel() {
         let ctx = RunContext::single(RunId::new());
         assert!(ctx.governor.is_none());
         assert!(ctx.learning_bus.is_none());
