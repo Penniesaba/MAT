@@ -37,11 +37,25 @@ impl StaticScanContext {
         rulebook_paths: Vec<String>,
         discovered_files: Vec<DiscoveredFile>,
     ) -> Self {
+        Self::with_run_id(config, rulebook_paths, discovered_files, RunId::new())
+    }
+
+    /// Builds a scan context that reuses a caller-provided [`RunId`].
+    ///
+    /// The async pipeline passes `run_ctx.run_id` here so a scan's temporary
+    /// paths and `scan_identifier` provenance share the single run id carried
+    /// by [`RunContext`] — the same id [`RunContext::cleanup`] keys on.
+    pub(crate) fn with_run_id(
+        config: RuntimeConfig,
+        rulebook_paths: Vec<String>,
+        discovered_files: Vec<DiscoveredFile>,
+        run_id: RunId,
+    ) -> Self {
         Self {
             config,
             rulebook_paths,
             discovered_files,
-            run_id: RunId::new(),
+            run_id,
         }
     }
 }
@@ -172,10 +186,11 @@ pub async fn run_static_scan_async(
         None
     };
 
-    let ctx = StaticScanContext::new(
+    let ctx = StaticScanContext::with_run_id(
         effective_config.clone(),
         rulebook_paths_to_strings(&effective_rulebook_paths),
         discovery.discovered_files,
+        run_ctx.run_id.clone(),
     );
 
     let base_catalog = load_catalog(&ctx)?;
@@ -1182,6 +1197,24 @@ mod tests {
     }
 
     #[test]
+    fn scan_context_with_run_id_reuses_the_given_id() {
+        let id = RunId::for_repo("ctx-id", "MCTS/examples");
+        let ctx = StaticScanContext::with_run_id(
+            RuntimeConfig::default(),
+            Vec::new(),
+            Vec::new(),
+            id.clone(),
+        );
+        assert_eq!(ctx.run_id, id);
+        assert!(
+            ctx.run_id
+                .temp_dir("staging")
+                .to_string_lossy()
+                .contains(id.as_str())
+        );
+    }
+
+    #[test]
     fn progress_bridge_forwards_messages_to_the_legacy_closure() {
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let captured = seen.clone();
@@ -1630,6 +1663,69 @@ printf '%s\n' '{"findings":[],"model_candidates":[{"kind":"sink","name":"openpyx
                 .collect::<Vec<_>>()
         );
 
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    /// A scan driven through `run_static_scan_async` with a known [`RunContext`]
+    /// run id must key its temp paths and `scan_identifier` provenance by that
+    /// SAME id (not a freshly minted one), so [`RunContext::cleanup`] removes
+    /// exactly the directories the scan actually created.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn async_scan_keys_temp_paths_by_run_context_run_id() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_dir("async-run-id");
+        let rules = write_rulebook(&root, "rules.toml", "command_exec");
+        fs::write(root.join("server.py"), "import openpyxl\n").expect("write file");
+
+        // Stub agent proposing `openpyxl.load_workbook` as a `file_read` sink so
+        // the evolution path stages a candidate and `write_staging` mints the
+        // staging dir keyed by the scan's run id.
+        let stub = root.join("stub-agent.sh");
+        fs::write(
+            &stub,
+            r#"#!/bin/sh
+printf '%s\n' '{"findings":[],"model_candidates":[{"kind":"sink","name":"openpyxl.load_workbook","category":"file_read","language":"python","argument":0,"confidence":"medium","evidence_snippets":[]}]}'
+"#,
+        )
+        .expect("write stub");
+        let mut perms = fs::metadata(&stub).expect("stub metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&stub, perms).expect("chmod stub");
+
+        let mut config = RuntimeConfig::default();
+        config.static_.taint.enabled = true;
+        config.static_.agent.enabled = true;
+        config.static_.agent.provider = stub.display().to_string();
+
+        // A deterministic, known run id so the exact staging path is observable.
+        let repo = root.display().to_string();
+        let run_id = RunId::for_repo("async-run-id", &repo);
+        let run_ctx = RunContext::with_progress(run_id.clone(), Progress::noop());
+
+        let result = run_static_scan_async(&config, &[rules], Some(&[root.clone()]), &run_ctx)
+            .await
+            .expect("run async scan");
+
+        // The evolution path must have staged a candidate ...
+        assert!(
+            !result.model_candidates.is_empty(),
+            "agent stub should surface a model candidate"
+        );
+        // ... and `write_staging` must have keyed the staging dir by the SAME run
+        // id the RunContext carries. `temp_dir` embeds the full id string, so a
+        // freshly-minted scan id would land the dir at a different path and this
+        // existence check would fail.
+        let staging = run_ctx.run_id.temp_dir("staging");
+        assert!(
+            staging.exists(),
+            "staging dir must be keyed by run_ctx.run_id ({}); got {}",
+            run_ctx.run_id.as_str(),
+            staging.display()
+        );
+
+        fs::remove_dir_all(&staging).expect("cleanup staging");
         fs::remove_dir_all(root).expect("cleanup");
     }
 
