@@ -31,7 +31,7 @@ max_depth = 8
 entrypoint_required = false
 
 [static.agent]
-enabled =true    # 需要 Claude API，首次跑关闭以保持快速/确定性；需要时改 true
+enabled =true    
 
 [static.codeql]
 enabled = true          # A 线主力（MCP query pack + 标准安全套件）
