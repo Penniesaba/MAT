@@ -249,15 +249,17 @@ fn mask_scan_id(s: &str) -> String {
 fn assert_golden(name: &str, actual: &Value) {
     let path = fixture_path(name);
     if std::env::var_os("GOLDEN_REGEN").is_some() {
-        eprintln!(
-            "GOLDEN_REGEN: rewrote {} — this is a regeneration, NOT a pass; \
-             review the diff before committing",
-            path.display()
-        );
         std::fs::create_dir_all(path.parent().expect("fixture dir")).expect("create fixtures dir");
         let pretty = serde_json::to_string_pretty(actual).expect("pretty serialize");
         std::fs::write(&path, format!("{pretty}\n")).expect("write fixture");
-        return;
+        // Regeneration must never masquerade as a passing run: panic so the run
+        // is unmissably red, and so the rewritten path appears in libtest's
+        // default (failure) output rather than being captured-and-suppressed.
+        panic!(
+            "GOLDEN_REGEN: rewrote {} — this was a fixture REGENERATION, NOT a \
+             verification; re-run without GOLDEN_REGEN to confirm green",
+            path.display()
+        );
     }
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
