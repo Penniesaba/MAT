@@ -9,7 +9,7 @@ use crate::model::AgentOutput;
 
 use super::pipeline::StaticScanContext;
 use prompt::FileSummary;
-use provider::{AgentProvider, AgentRunConfig, CliAgentProvider};
+use provider::{AgentRunConfig, CliAgentProvider};
 
 // 两阶段编排（M3 Task 4）在 pipeline 里渲染 prompt' 并调用 run_with_prompt；
 // 故把 prompt 的验证提示词原语 re-export 到 agent 模块面。
@@ -154,7 +154,7 @@ pub(crate) fn run_with_prompt(
         extra_args: agent_config.extra_args.clone(),
     };
 
-    let output = provider.run(&run_config)?;
+    let output = provider.run_blocking(&run_config)?;
 
     // Parse results
     let metadata = parser::AgentMetadata {

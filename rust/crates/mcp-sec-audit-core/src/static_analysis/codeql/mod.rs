@@ -13,7 +13,7 @@ use crate::Progress;
 
 use super::pipeline::StaticScanContext;
 use models::MadPack;
-use provider::{CliCodeqlProvider, CodeqlProvider, DatabaseInfo};
+use provider::{CliCodeqlProvider, DatabaseInfo};
 use queries::{QueryPack, resolve_query_pack};
 
 /// Hardcoded constants (not user-configurable).
@@ -132,7 +132,7 @@ impl CodeqlSession {
                 language = %language,
                 "creating CodeQL database"
             );
-            let db = match provider.create_database(std::path::Path::new(&target_root), language) {
+            let db = match provider.create_database_blocking(std::path::Path::new(&target_root), language) {
                 Ok(db) => db,
                 Err(e) => {
                     diagnostics.push(format!(
@@ -186,7 +186,7 @@ impl CodeqlSession {
                 "running CodeQL analysis"
             );
             progress.report(format!("CodeQL: analyzing {} database...", language));
-            match self.provider.run_analysis(
+            match self.provider.run_analysis_blocking(
                 db,
                 query_pack,
                 self.config.timeout_seconds,
@@ -431,7 +431,7 @@ mod tests {
     #[ignore = "requires CodeQL CLI >= 2.26.3 on PATH"]
     fn mad_pack_isolation_end_to_end_no_cross_language_error() {
         use super::models::MadPack;
-        use super::provider::{CliCodeqlProvider, CodeqlProvider};
+        use super::provider::CliCodeqlProvider;
         use super::queries::QueryPack;
 
         let provider = CliCodeqlProvider::new("codeql".to_string(), crate::RunId::new());
@@ -453,7 +453,7 @@ mod tests {
         )
         .expect("write main.py");
         let db = provider
-            .create_database(&src, "python")
+            .create_database_blocking(&src, "python")
             .expect("create python DB");
 
         // Compile the FULL catalog (python + javascript sinks) into per-language
@@ -473,7 +473,7 @@ mod tests {
             query_files: Vec::new(),
             suite_refs: vec!["codeql/python-queries".to_string()],
         };
-        match provider.run_analysis(&db, &query_pack, 600, &[], &python_pack) {
+        match provider.run_analysis_blocking(&db, &query_pack, 600, &[], &python_pack) {
             Ok(_sarif) => {}
             Err(e) => panic!("MaD cross-language pollution (or analyze failure): {e}"),
         }

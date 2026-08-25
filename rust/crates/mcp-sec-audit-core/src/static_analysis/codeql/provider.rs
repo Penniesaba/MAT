@@ -1,10 +1,8 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::mpsc;
-use std::thread;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
+use tokio::process::Command;
 
 use crate::RunId;
 
@@ -17,25 +15,6 @@ pub struct DatabaseInfo {
     pub path: PathBuf,
     /// Language the database was created for.
     pub language: String,
-}
-
-/// Pluggable CodeQL backend.
-pub trait CodeqlProvider {
-    /// Check whether the CodeQL CLI is available.
-    fn check_available(&self) -> bool;
-
-    /// Create a CodeQL database from source files.
-    fn create_database(&self, source_dir: &Path, language: &str) -> Result<DatabaseInfo>;
-
-    /// Run CodeQL analysis on a database and return SARIF JSON.
-    fn run_analysis(
-        &self,
-        db: &DatabaseInfo,
-        queries: &QueryPack,
-        timeout_seconds: u64,
-        extra_args: &[String],
-        model_packs: &[&MadPack],
-    ) -> Result<String>;
 }
 
 /// Default provider: shells out to the `codeql` CLI.
@@ -60,9 +39,20 @@ impl CliCodeqlProvider {
         self.run_id.temp_dir("sarif").join(format!("{language}.sarif"))
     }
 
+    /// Check whether the CodeQL CLI is available.
+    pub(crate) fn check_available(&self) -> bool {
+        std::process::Command::new(&self.binary)
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
     /// Parse the installed CodeQL CLI version from `codeql --version`.
     pub(crate) fn codeql_version(&self) -> Option<(u32, u32, u32)> {
-        let output = Command::new(&self.binary)
+        let output = std::process::Command::new(&self.binary)
             .arg("--version")
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
@@ -73,36 +63,13 @@ impl CliCodeqlProvider {
         }
         parse_codeql_version(&String::from_utf8_lossy(&output.stdout))
     }
-}
 
-/// Parse a `(major, minor, patch)` tuple from the first line of
-/// `codeql --version` output (e.g. "CodeQL command-line toolchain release 2.26.3.").
-pub(crate) fn parse_codeql_version(stdout: &str) -> Option<(u32, u32, u32)> {
-    let line = stdout.lines().next()?;
-    let after_release = line.split("release ").nth(1)?;
-    let version = after_release
-        .split_whitespace()
-        .next()?
-        .trim_end_matches('.');
-    let mut parts = version.split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next()?.parse().ok()?;
-    let patch = parts.next().unwrap_or("0").parse().ok()?;
-    Some((major, minor, patch))
-}
-
-impl CodeqlProvider for CliCodeqlProvider {
-    fn check_available(&self) -> bool {
-        Command::new(&self.binary)
-            .arg("--version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
-
-    fn create_database(&self, source_dir: &Path, language: &str) -> Result<DatabaseInfo> {
+    /// Create a CodeQL database from source files.
+    pub(crate) async fn create_database(
+        &self,
+        source_dir: &Path,
+        language: &str,
+    ) -> Result<DatabaseInfo> {
         let db_dir = self.db_dir(language);
 
         std::fs::create_dir_all(&db_dir)?;
@@ -119,6 +86,7 @@ impl CodeqlProvider for CliCodeqlProvider {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .output()
+            .await
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
                     anyhow::anyhow!(
@@ -147,7 +115,20 @@ impl CodeqlProvider for CliCodeqlProvider {
         })
     }
 
-    fn run_analysis(
+    /// Synchronous shell around [`Self::create_database`].
+    pub(crate) fn create_database_blocking(
+        &self,
+        source_dir: &Path,
+        language: &str,
+    ) -> Result<DatabaseInfo> {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(self.create_database(source_dir, language))
+    }
+
+    /// Run CodeQL analysis on a database and return SARIF JSON.
+    pub(crate) async fn run_analysis(
         &self,
         db: &DatabaseInfo,
         queries: &QueryPack,
@@ -196,33 +177,23 @@ impl CodeqlProvider for CliCodeqlProvider {
 
         cmd.stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true); // ← key: timeout branch reaps the child
 
-        let mut child = cmd
+        let child = cmd
             .spawn()
             .map_err(|e| anyhow::anyhow!("failed to spawn codeql analyze: {}", e))?;
 
-        let (tx, rx) = mpsc::channel();
-        thread::spawn(move || {
-            let mut stdout = String::new();
-            let mut stderr = String::new();
-            if let Some(mut out) = child.stdout.take() {
-                use std::io::Read;
-                let _ = out.read_to_string(&mut stdout);
-            }
-            if let Some(mut err) = child.stderr.take() {
-                use std::io::Read;
-                let _ = err.read_to_string(&mut stderr);
-            }
-            let status = child.wait();
-            let exit_code = status.ok().and_then(|s| s.code()).unwrap_or(-1);
-            let _ = tx.send((stdout, stderr, exit_code));
-        });
-
-        let timeout = Duration::from_secs(timeout_seconds);
-        match rx.recv_timeout(timeout) {
-            Ok((_stdout, stderr, exit_code)) => {
+        match tokio::time::timeout(
+            Duration::from_secs(timeout_seconds),
+            child.wait_with_output(),
+        )
+        .await
+        {
+            Ok(Ok(output)) => {
+                let exit_code = output.status.code().unwrap_or(-1);
                 if exit_code != 0 {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
                     bail!(
                         "codeql analyze failed (exit code {}): {}",
                         exit_code,
@@ -239,14 +210,47 @@ impl CodeqlProvider for CliCodeqlProvider {
                 let _ = std::fs::remove_file(&output_path);
                 Ok(sarif)
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                bail!("codeql analyze timed out after {}s", timeout_seconds)
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                bail!("codeql analyze process communication channel disconnected")
-            }
+            Ok(Err(e)) => bail!("codeql analyze process failed: {e}"),
+            Err(_elapsed) => bail!("codeql analyze timed out after {}s", timeout_seconds),
         }
     }
+
+    /// Synchronous shell around [`Self::run_analysis`].
+    pub(crate) fn run_analysis_blocking(
+        &self,
+        db: &DatabaseInfo,
+        queries: &QueryPack,
+        timeout_seconds: u64,
+        extra_args: &[String],
+        model_packs: &[&MadPack],
+    ) -> Result<String> {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(self.run_analysis(
+                db,
+                queries,
+                timeout_seconds,
+                extra_args,
+                model_packs,
+            ))
+    }
+}
+
+/// Parse a `(major, minor, patch)` tuple from the first line of
+/// `codeql --version` output (e.g. "CodeQL command-line toolchain release 2.26.3.").
+pub(crate) fn parse_codeql_version(stdout: &str) -> Option<(u32, u32, u32)> {
+    let line = stdout.lines().next()?;
+    let after_release = line.split("release ").nth(1)?;
+    let version = after_release
+        .split_whitespace()
+        .next()?
+        .trim_end_matches('.');
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next().unwrap_or("0").parse().ok()?;
+    Some((major, minor, patch))
 }
 
 #[cfg(test)]
@@ -276,7 +280,7 @@ mod tests {
         let tmp = std::env::temp_dir().join("mcp-sec-audit-codeql-test-missing");
         std::fs::create_dir_all(&tmp).expect("create tmp dir");
         let err = provider
-            .create_database(&tmp, "python")
+            .create_database_blocking(&tmp, "python")
             .expect_err("codeql database create should fail when CLI not found");
         assert!(
             err.to_string().contains("codeql CLI not found"),

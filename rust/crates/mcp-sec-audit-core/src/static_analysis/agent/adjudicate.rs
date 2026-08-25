@@ -13,7 +13,7 @@ use crate::AdjudicationItem;
 use crate::Confidence;
 use crate::models::{SanitizerModel, SinkModel, SourceModel};
 use crate::static_analysis::pipeline::StaticScanContext;
-use super::provider::{AgentProvider, AgentRunConfig, CliAgentProvider};
+use super::provider::{AgentRunConfig, CliAgentProvider};
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Abstraction {
@@ -215,7 +215,7 @@ pub fn run_adjudication(
             timeout_seconds: agent_config.timeout_seconds,
             extra_args: agent_config.extra_args.clone(),
         };
-        let output = CliAgentProvider.run(&cfg)?;
+        let output = CliAgentProvider.run_blocking(&cfg)?;
         rounds.push(parse_verdicts(&output.stdout)?);
     }
     Ok(rounds)
