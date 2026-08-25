@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 use tokio::process::Command;
+use tokio_util::sync::CancellationToken;
 
 use crate::RunId;
 
@@ -65,17 +66,24 @@ impl CliCodeqlProvider {
     }
 
     /// Create a CodeQL database from source files.
+    ///
+    /// Spawns `codeql database create` with `kill_on_drop(true)` and waits for
+    /// it under a wall-clock timeout, so a stuck `database create` cannot leak a
+    /// multi-GB orphan (design §2.3). `cancel` is the batch `CancellationToken`
+    /// (a never-cancelled token on the single-repo path).
     pub(crate) async fn create_database(
         &self,
         source_dir: &Path,
         language: &str,
+        timeout_seconds: u64,
+        cancel: &CancellationToken,
     ) -> Result<DatabaseInfo> {
         let db_dir = self.db_dir(language);
 
         std::fs::create_dir_all(&db_dir)?;
 
-        let output = Command::new(&self.binary)
-            .arg("database")
+        let mut cmd = Command::new(&self.binary);
+        cmd.arg("database")
             .arg("create")
             .arg(&db_dir)
             .arg("--language")
@@ -83,22 +91,44 @@ impl CliCodeqlProvider {
             .arg("--source-root")
             .arg(source_dir)
             .arg("--overwrite")
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .output()
-            .await
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    anyhow::anyhow!(
-                        "codeql CLI not found at '{}'. Set [static.codeql].binary or add it to \
-                         PATH. Install CodeQL: \
-                         https://github.com/github/codeql-cli-binaries/releases",
-                        self.binary
-                    )
-                } else {
-                    anyhow::anyhow!("failed to spawn codeql: {}", e)
-                }
-            })?;
+            .kill_on_drop(true); // ← key: timeout/cancel branch reaps the child
+
+        let child = cmd.spawn().map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                anyhow::anyhow!(
+                    "codeql CLI not found at '{}'. Set [static.codeql].binary or add it to \
+                     PATH. Install CodeQL: \
+                     https://github.com/github/codeql-cli-binaries/releases",
+                    self.binary
+                )
+            } else {
+                anyhow::anyhow!("failed to spawn codeql: {}", e)
+            }
+        })?;
+
+        // Wait for the child to exit, the timeout to fire, or the batch
+        // cancellation token to be cancelled. On timeout/cancel the `child`
+        // future is dropped and `kill_on_drop(true)` reaps the subprocess.
+        let output = tokio::select! {
+            res = tokio::time::timeout(
+                Duration::from_secs(timeout_seconds),
+                child.wait_with_output(),
+            ) => res,
+            _ = cancel.cancelled() => {
+                bail!("cancelled");
+            }
+        };
+
+        let output = match output {
+            Ok(Ok(output)) => output,
+            Ok(Err(e)) => bail!("codeql database create process failed: {e}"),
+            Err(_elapsed) => {
+                bail!("codeql database create timed out after {}s", timeout_seconds)
+            }
+        };
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -122,11 +152,17 @@ impl CliCodeqlProvider {
         &self,
         source_dir: &Path,
         language: &str,
+        timeout_seconds: u64,
     ) -> Result<DatabaseInfo> {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?
-            .block_on(self.create_database(source_dir, language))
+            .block_on(self.create_database(
+                source_dir,
+                language,
+                timeout_seconds,
+                &CancellationToken::new(),
+            ))
     }
 
     /// Run CodeQL analysis on a database and return SARIF JSON.
@@ -137,6 +173,7 @@ impl CliCodeqlProvider {
         timeout_seconds: u64,
         extra_args: &[String],
         model_packs: &[&MadPack],
+        cancel: &CancellationToken,
     ) -> Result<String> {
         // `--output=-` (SARIF to stdout) is unreliable across CodeQL versions,
         // so write to a temp file and read it back instead.
@@ -186,12 +223,20 @@ impl CliCodeqlProvider {
             .spawn()
             .map_err(|e| anyhow::anyhow!("failed to spawn codeql analyze: {}", e))?;
 
-        match tokio::time::timeout(
-            Duration::from_secs(timeout_seconds),
-            child.wait_with_output(),
-        )
-        .await
-        {
+        // Wait for the child to exit, the timeout to fire, or the batch
+        // cancellation token to be cancelled. On timeout/cancel the `child`
+        // future is dropped and `kill_on_drop(true)` reaps the subprocess.
+        let result = tokio::select! {
+            res = tokio::time::timeout(
+                Duration::from_secs(timeout_seconds),
+                child.wait_with_output(),
+            ) => res,
+            _ = cancel.cancelled() => {
+                bail!("cancelled");
+            }
+        };
+
+        match result {
             Ok(Ok(output)) => {
                 let exit_code = output.status.code().unwrap_or(-1);
                 if exit_code != 0 {
@@ -237,6 +282,7 @@ impl CliCodeqlProvider {
                 timeout_seconds,
                 extra_args,
                 model_packs,
+                &CancellationToken::new(),
             ))
     }
 }
@@ -284,13 +330,112 @@ mod tests {
         let tmp = std::env::temp_dir().join("mcp-sec-audit-codeql-test-missing");
         std::fs::create_dir_all(&tmp).expect("create tmp dir");
         let err = provider
-            .create_database_blocking(&tmp, "python")
+            .create_database_blocking(&tmp, "python", 60)
             .expect_err("codeql database create should fail when CLI not found");
         assert!(
             err.to_string().contains("codeql CLI not found"),
             "unexpected error message: {}",
             err
         );
+    }
+
+    /// Mirror of the agent provider's `agent_timeout_kills_the_child_process`:
+    /// a `codeql database create` that never finishes (a stub binary that
+    /// `exec sleep 30`) must be killed when the 1s timeout fires, not leaked as
+    /// an orphan (design §2.3).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn create_database_timeout_kills_the_child_process() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!(
+            "mcp-sec-audit-codeql-timeout-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos(),
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        // `exec` replaces the stub shell with `sleep 30`, so `kill_on_drop`
+        // kills the sleeper directly rather than leaving it orphaned under the
+        // shell.
+        let stub = dir.join("codeql-stub.sh");
+        std::fs::write(&stub, "#!/bin/sh\nexec sleep 30\n").expect("write stub");
+        let mut perms = std::fs::metadata(&stub).expect("stub metadata").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&stub, perms).expect("chmod stub");
+
+        let provider = CliCodeqlProvider::new(stub.display().to_string(), RunId::new());
+        let started = std::time::Instant::now();
+        let err = provider
+            .create_database(&dir, "python", 1, &CancellationToken::new())
+            .await
+            .expect_err("database create should time out");
+        assert!(
+            err.to_string().contains("timed out"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            started.elapsed().as_secs() < 5,
+            "must not wait for the child"
+        );
+
+        // The child must have been reclaimed by `kill_on_drop` (see the agent
+        // timeout test for why the `[3]0` bracket form is used).
+        let ps = std::process::Command::new("pgrep")
+            .arg("-f")
+            .arg("sleep [3]0")
+            .output()
+            .expect("pgrep");
+        assert!(
+            ps.stdout.is_empty(),
+            "child leaked after timeout: {}",
+            String::from_utf8_lossy(&ps.stdout)
+        );
+
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn pre_cancelled_token_cancels_create_database_promptly() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!(
+            "mcp-sec-audit-codeql-cancel-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos(),
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let stub = dir.join("codeql-stub.sh");
+        std::fs::write(&stub, "#!/bin/sh\nexec sleep 30\n").expect("write stub");
+        let mut perms = std::fs::metadata(&stub).expect("stub metadata").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&stub, perms).expect("chmod stub");
+
+        let provider = CliCodeqlProvider::new(stub.display().to_string(), RunId::new());
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        let started = std::time::Instant::now();
+        let err = provider
+            .create_database(&dir, "python", 30, &cancel)
+            .await
+            .expect_err("pre-cancelled token must yield an error");
+        assert!(
+            err.to_string().contains("cancelled"),
+            "expected a cancellation error, got: {err}"
+        );
+        assert!(
+            started.elapsed().as_secs() < 5,
+            "must return promptly, not wait for the child"
+        );
+
+        std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
     #[test]

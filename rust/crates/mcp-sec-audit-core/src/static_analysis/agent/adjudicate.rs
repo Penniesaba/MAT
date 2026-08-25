@@ -8,6 +8,7 @@
 
 use anyhow::Result;
 use serde::Deserialize;
+use tokio_util::sync::CancellationToken;
 
 use crate::AdjudicationItem;
 use crate::Confidence;
@@ -195,6 +196,7 @@ const ROUNDS: u32 = 3;
 pub(crate) async fn run_adjudication_async(
     ctx: &StaticScanContext,
     items: &[AdjudicationItem],
+    cancel: &CancellationToken,
 ) -> Result<Vec<Vec<AdjudicationVerdict>>> {
     let agent_config = &ctx.config.static_.agent;
     let prompt = render_adjudication_prompt(items);
@@ -215,7 +217,7 @@ pub(crate) async fn run_adjudication_async(
             timeout_seconds: agent_config.timeout_seconds,
             extra_args: agent_config.extra_args.clone(),
         };
-        let output = CliAgentProvider.run(&cfg).await?;
+        let output = CliAgentProvider.run(&cfg, cancel).await?;
         rounds.push(parse_verdicts(&output.stdout)?);
     }
     Ok(rounds)

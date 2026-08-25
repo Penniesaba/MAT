@@ -4,6 +4,7 @@ mod prompt;
 pub mod provider;
 
 use anyhow::Result;
+use tokio_util::sync::CancellationToken;
 
 use crate::model::AgentOutput;
 
@@ -75,18 +76,22 @@ pub fn run(ctx: &StaticScanContext) -> Result<AgentOutput> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(run_async(ctx))
+        .block_on(run_async(ctx, &CancellationToken::new()))
 }
 
 /// Async agent line entry point (阶段 1) for the async pipeline (Task 7).
-pub(crate) async fn run_async(ctx: &StaticScanContext) -> Result<AgentOutput> {
-    run_with_prompt_async(ctx, None).await
+pub(crate) async fn run_async(
+    ctx: &StaticScanContext,
+    cancel: &CancellationToken,
+) -> Result<AgentOutput> {
+    run_with_prompt_async(ctx, None, cancel).await
 }
 
 /// 跑 agent，可选地在渲染好的基础 prompt 之后追加一段验证提示词（阶段 2 的 prompt'）。
 pub(crate) async fn run_with_prompt_async(
     ctx: &StaticScanContext,
     prompt_extra: Option<&str>,
+    cancel: &CancellationToken,
 ) -> Result<AgentOutput> {
     let agent_config = &ctx.config.static_.agent;
 
@@ -163,7 +168,7 @@ pub(crate) async fn run_with_prompt_async(
         extra_args: agent_config.extra_args.clone(),
     };
 
-    let output = provider.run(&run_config).await?;
+    let output = provider.run(&run_config, cancel).await?;
 
     // Parse results
     let metadata = parser::AgentMetadata {

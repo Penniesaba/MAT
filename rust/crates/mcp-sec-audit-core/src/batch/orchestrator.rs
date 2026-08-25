@@ -125,6 +125,13 @@ struct Shared {
 /// started are recorded as `Cancelled` instead of beginning new work (the
 /// providers already reap child processes on drop/timeout, bounding cleanup).
 pub async fn run_batch(cfg: BatchConfig, cancel: CancellationToken) -> Result<BatchSummary> {
+    // An empty repository list is a configuration error, not a valid
+    // (empty) batch: reject it before any setup so the CLI maps it to exit
+    // code 2 (design §10 "仓库清单为空" → 2).
+    if cfg.batch.repos.is_empty() {
+        bail!("batch config has no repos");
+    }
+
     let batch_id = RunId::new();
     let started_at = crate::reporting::current_local_timestamp();
 
@@ -607,5 +614,17 @@ mod tests {
         assert_eq!(summary.succeeded, 1);
         assert_eq!(summary.failed, 1);
         assert!(summary.repos.iter().any(|r| r.error.is_some()));
+    }
+
+    #[tokio::test]
+    async fn empty_repo_list_is_an_error() {
+        let cfg = batch_config_for(&[]);
+        let err = run_batch(cfg, CancellationToken::new())
+            .await
+            .expect_err("an empty repo list must be rejected as a config error");
+        assert!(
+            err.to_string().contains("no repos"),
+            "unexpected error: {err}"
+        );
     }
 }

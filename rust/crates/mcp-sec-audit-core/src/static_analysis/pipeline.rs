@@ -347,7 +347,7 @@ pub async fn run_static_scan_async(
         // A transient agent failure (e.g. auth, unparseable output) must not
         // abort the whole scan: degrade to "no agent findings" with a warning.
         let _agent_permit = acquire_permit(run_ctx, ResourceClass::Agent).await;
-        let output = match agent::run_async(&ctx).await {
+        let output = match agent::run_async(&ctx, &run_ctx.cancel).await {
             Ok(output) => output,
             Err(e) => {
                 tracing::warn!(
@@ -389,7 +389,7 @@ pub async fn run_static_scan_async(
         });
         let start = std::time::Instant::now();
         let _codeql_permit = acquire_permit(run_ctx, ResourceClass::Codeql).await;
-        let output = codeql::run_async(&ctx, &base_catalog, progress).await?;
+        let output = codeql::run_async(&ctx, &base_catalog, progress, &run_ctx.cancel).await?;
         tracing::info!(
             target: "mcp_sec_audit::codeql",
             findings = output.results.len(),
@@ -574,7 +574,10 @@ pub async fn run_static_scan_async(
         progress.report("Running agent analysis (phase 2)...");
         let start = std::time::Instant::now();
         let _agent_permit = acquire_permit(run_ctx, ResourceClass::Agent).await;
-        let output = match agent::run_with_prompt_async(&ctx, prompt_extra.as_deref()).await {
+        let output =
+            match agent::run_with_prompt_async(&ctx, prompt_extra.as_deref(), &run_ctx.cancel)
+                .await
+            {
             Ok(output) => output,
             Err(e) => {
                 tracing::warn!(
@@ -612,7 +615,7 @@ pub async fn run_static_scan_async(
         progress.report("Running CodeQL analysis (phase 2)...");
         let start = std::time::Instant::now();
         let _codeql_permit = acquire_permit(run_ctx, ResourceClass::Codeql).await;
-        let output = codeql::run_async(&ctx, &evolved_catalog, progress).await?;
+        let output = codeql::run_async(&ctx, &evolved_catalog, progress, &run_ctx.cancel).await?;
         tracing::info!(
             target: "mcp_sec_audit::codeql",
             findings = output.results.len(),
@@ -657,7 +660,9 @@ pub async fn run_static_scan_async(
         let explanation_extra = agent::render_explanation_prompt(&items);
         {
             let _agent_permit = acquire_permit(run_ctx, ResourceClass::Agent).await;
-            match agent::run_with_prompt_async(&ctx, Some(&explanation_extra)).await {
+            match agent::run_with_prompt_async(&ctx, Some(&explanation_extra), &run_ctx.cancel)
+                .await
+            {
                 Ok(out) => attach_explanations(&mut ambiguous, &out.findings),
                 Err(e) => tracing::warn!(
                     target: "mcp_sec_audit::agent",
@@ -693,7 +698,7 @@ pub async fn run_static_scan_async(
         }
         if !items.is_empty() {
             let _agent_permit = acquire_permit(run_ctx, ResourceClass::Agent).await;
-            match agent::run_adjudication_async(&ctx, &items).await {
+            match agent::run_adjudication_async(&ctx, &items, &run_ctx.cancel).await {
                 Ok(rounds) => {
                     let resolved = agent::vote(&rounds);
                     for r in &resolved {

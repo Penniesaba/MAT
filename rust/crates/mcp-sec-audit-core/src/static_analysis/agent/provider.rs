@@ -1,9 +1,10 @@
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use tokio::process::Command;
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 
 /// Configuration for a single agent run.
 pub struct AgentRunConfig {
@@ -58,10 +59,16 @@ impl CliAgentProvider {
     /// Execute an agent run with the given configuration.
     ///
     /// Spawns the CLI as a `tokio::process::Child` with `kill_on_drop(true)`,
-    /// so that when the wall-clock timeout fires and the `Child` is dropped
-    /// (by the `timeout` future being cancelled), the OS reaps the child
-    /// rather than leaking it as an orphan.
-    pub(crate) async fn run(&self, config: &AgentRunConfig) -> Result<AgentRunOutput> {
+    /// so that when the wall-clock timeout fires (or `cancel` is cancelled) and
+    /// the `Child` future is dropped, the OS reaps the child rather than
+    /// leaking it as an orphan. `cancel` is the batch `CancellationToken`; the
+    /// single-repo path passes a never-cancelled token so its behavior is
+    /// byte-identical to v4.
+    pub(crate) async fn run(
+        &self,
+        config: &AgentRunConfig,
+        cancel: &CancellationToken,
+    ) -> Result<AgentRunOutput> {
         let start = Instant::now();
 
         let mut cmd = Command::new(&config.provider_binary);
@@ -105,12 +112,21 @@ impl CliAgentProvider {
             }
         })?;
 
-        match timeout(
-            Duration::from_secs(config.timeout_seconds),
-            child.wait_with_output(),
-        )
-        .await
-        {
+        // Wait for the child to exit, the wall-clock timeout to fire, or the
+        // batch cancellation token to be cancelled — whichever happens first.
+        // On timeout or cancellation the `child` future is dropped, and
+        // `kill_on_drop(true)` reaps the subprocess (design §10 / §2.3).
+        let result = tokio::select! {
+            res = timeout(
+                Duration::from_secs(config.timeout_seconds),
+                child.wait_with_output(),
+            ) => res,
+            _ = cancel.cancelled() => {
+                bail!("cancelled");
+            }
+        };
+
+        match result {
             Ok(Ok(output)) => {
                 let duration = start.elapsed();
                 Ok(AgentRunOutput {
@@ -144,7 +160,7 @@ impl CliAgentProvider {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?
-            .block_on(self.run(config))
+            .block_on(self.run(config, &CancellationToken::new()))
     }
 }
 
@@ -205,7 +221,10 @@ mod tests {
             ..minimal_agent_run_config()
         };
         let started = std::time::Instant::now();
-        let out = provider.run(&config).await.expect("run");
+        let out = provider
+            .run(&config, &CancellationToken::new())
+            .await
+            .expect("run");
         assert!(out.timed_out);
         assert!(started.elapsed().as_secs() < 5, "must not wait for the child");
 
@@ -225,6 +244,35 @@ mod tests {
             ps.stdout.is_empty(),
             "child leaked after timeout: {}",
             String::from_utf8_lossy(&ps.stdout)
+        );
+    }
+
+    #[tokio::test]
+    async fn pre_cancelled_token_returns_cancellation_error_promptly() {
+        let provider = CliAgentProvider;
+        let config = AgentRunConfig {
+            provider_binary: "sleep".into(),
+            extra_args: vec!["30".into()],
+            // A generous timeout: the cancellation branch must win long before
+            // this would fire, proving the token is actually consulted.
+            timeout_seconds: 30,
+            ..minimal_agent_run_config()
+        };
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        let started = std::time::Instant::now();
+        let err = provider
+            .run(&config, &cancel)
+            .await
+            .expect_err("pre-cancelled token must yield an error");
+        assert!(
+            err.to_string().contains("cancelled"),
+            "expected a cancellation error, got: {err}"
+        );
+        assert!(
+            started.elapsed().as_secs() < 5,
+            "must return promptly, not wait for the child"
         );
     }
 }

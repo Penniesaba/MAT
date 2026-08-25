@@ -6,6 +6,7 @@ mod queries;
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Result, bail};
+use tokio_util::sync::CancellationToken;
 
 use crate::config::StaticCodeqlConfig;
 use crate::model::CodeqlOutput;
@@ -58,11 +59,14 @@ impl CodeqlSession {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?
-            .block_on(Self::create_async(ctx))
+            .block_on(Self::create_async(ctx, &CancellationToken::new()))
     }
 
     /// Async form of [`Self::create`] for the async pipeline (Task 7).
-    pub(crate) async fn create_async(ctx: &StaticScanContext) -> Result<Option<Self>> {
+    pub(crate) async fn create_async(
+        ctx: &StaticScanContext,
+        cancel: &CancellationToken,
+    ) -> Result<Option<Self>> {
         let codeql_config = &ctx.config.static_.codeql;
 
         if !codeql_config.enabled {
@@ -145,7 +149,12 @@ impl CodeqlSession {
                 "creating CodeQL database"
             );
             let db = match provider
-                .create_database(std::path::Path::new(&target_root), language)
+                .create_database(
+                    std::path::Path::new(&target_root),
+                    language,
+                    codeql_config.timeout_seconds,
+                    cancel,
+                )
                 .await
             {
                 Ok(db) => db,
@@ -177,6 +186,7 @@ impl CodeqlSession {
         &self,
         model_packs: &[MadPack],
         progress: &Progress,
+        cancel: &CancellationToken,
     ) -> Result<CodeqlOutput> {
         let mut all_results = Vec::new();
         let mut all_diagnostics = self.diagnostics.clone();
@@ -209,6 +219,7 @@ impl CodeqlSession {
                     self.config.timeout_seconds,
                     &self.config.extra_args,
                     &language_packs,
+                    cancel,
                 )
                 .await
             {
@@ -272,7 +283,7 @@ pub fn run(
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(run_async(ctx, catalog, progress))
+        .block_on(run_async(ctx, catalog, progress, &CancellationToken::new()))
 }
 
 /// Async CodeQL line entry point for the async pipeline (Task 7).
@@ -284,8 +295,9 @@ pub(crate) async fn run_async(
     ctx: &StaticScanContext,
     catalog: &crate::models::ModelCatalog,
     progress: &Progress,
+    cancel: &CancellationToken,
 ) -> Result<CodeqlOutput> {
-    let Some(session) = CodeqlSession::create_async(ctx).await? else {
+    let Some(session) = CodeqlSession::create_async(ctx, cancel).await? else {
         // `create` returned `None`: either CodeQL is disabled, or no supported
         // language files were found. Reproduce the skip behavior here (where
         // the progress callback and output are available).
@@ -345,7 +357,7 @@ pub(crate) async fn run_async(
         Vec::new()
     };
 
-    session.analyze_async(&model_packs, progress).await
+    session.analyze_async(&model_packs, progress, cancel).await
 }
 
 #[cfg(test)]
@@ -488,7 +500,7 @@ mod tests {
         )
         .expect("write main.py");
         let db = provider
-            .create_database_blocking(&src, "python")
+            .create_database_blocking(&src, "python", 600)
             .expect("create python DB");
 
         // Compile the FULL catalog (python + javascript sinks) into per-language
