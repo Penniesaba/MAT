@@ -1113,6 +1113,7 @@ def fetch_url(url):
 
     fn context_with_files(discovered_files: Vec<DiscoveredFile>) -> StaticScanContext {
         StaticScanContext {
+            run_id: crate::RunId::new(),
             config: RuntimeConfig::default(),
             rulebook_paths: Vec::new(),
             discovered_files,

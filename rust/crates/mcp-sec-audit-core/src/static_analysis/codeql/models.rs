@@ -220,6 +220,7 @@ mod tests {
     fn write_model_pack_dir_writes_per_language_packs() {
         let catalog = crate::models::default_catalog();
         let ctx = StaticScanContext {
+            run_id: crate::RunId::new(),
             config: crate::RuntimeConfig::default(),
             rulebook_paths: Vec::new(),
             discovered_files: Vec::new(),

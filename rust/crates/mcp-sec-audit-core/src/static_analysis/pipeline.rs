@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 use crate::model::CodeqlOutput;
 use crate::{
     AgentOutput, ConfigSnapshot, EvolutionReport, Fact, FusedFinding, ModelCandidate,
-    RuleAnalysisResult, RuleBook, RuntimeConfig, Severity, StaticAnalysisResult,
+    RuleAnalysisResult, RuleBook, RunId, RuntimeConfig, Severity, StaticAnalysisResult,
     StaticAnalysisSummary, TaintAnalysisResult, load_rulebook,
 };
 
@@ -25,6 +25,25 @@ pub struct StaticScanContext {
     pub config: RuntimeConfig,
     pub rulebook_paths: Vec<String>,
     pub discovered_files: Vec<DiscoveredFile>,
+    pub run_id: RunId,
+}
+
+impl StaticScanContext {
+    /// Builds a scan context for a single analysis run, minting a fresh
+    /// [`RunId`] so the run owns a distinct temporary directory even when
+    /// several repositories are analysed concurrently.
+    pub fn new(
+        config: RuntimeConfig,
+        rulebook_paths: Vec<String>,
+        discovered_files: Vec<DiscoveredFile>,
+    ) -> Self {
+        Self {
+            config,
+            rulebook_paths,
+            discovered_files,
+            run_id: RunId::new(),
+        }
+    }
 }
 
 pub fn run_static_scan(
@@ -91,11 +110,11 @@ pub fn run_static_scan_with_progress(
         None
     };
 
-    let ctx = StaticScanContext {
-        config: effective_config.clone(),
-        rulebook_paths: rulebook_paths_to_strings(&effective_rulebook_paths),
-        discovered_files: discovery.discovered_files,
-    };
+    let ctx = StaticScanContext::new(
+        effective_config.clone(),
+        rulebook_paths_to_strings(&effective_rulebook_paths),
+        discovery.discovered_files,
+    );
 
     let base_catalog = load_catalog(&ctx)?;
 
@@ -1081,6 +1100,12 @@ mod tests {
 
     use super::*;
     use crate::Fact;
+
+    #[test]
+    fn scan_context_carries_a_run_id() {
+        let ctx = StaticScanContext::new(RuntimeConfig::default(), Vec::new(), Vec::new());
+        assert!(!ctx.run_id.as_str().is_empty());
+    }
 
     #[test]
     fn disabled_static_scan_returns_empty_result() {

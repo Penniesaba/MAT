@@ -202,6 +202,7 @@ def run_command(command: str):
         .expect("write Python file");
 
         let ctx = StaticScanContext {
+            run_id: crate::RunId::new(),
             config: RuntimeConfig::default(),
             rulebook_paths: Vec::new(),
             discovered_files: vec![DiscoveredFile {
@@ -229,6 +230,7 @@ def run_command(command: str):
         fs::write(&file, "def broken(:\n    pass\n").expect("write Python file");
 
         let ctx = StaticScanContext {
+            run_id: crate::RunId::new(),
             config: RuntimeConfig::default(),
             rulebook_paths: Vec::new(),
             discovered_files: vec![DiscoveredFile {
@@ -270,6 +272,7 @@ async fn run_command(command: String) -> Result<String, String> {
         .expect("write Rust file");
 
         let ctx = StaticScanContext {
+            run_id: crate::RunId::new(),
             config: RuntimeConfig::default(),
             rulebook_paths: Vec::new(),
             discovered_files: vec![DiscoveredFile {
@@ -337,6 +340,7 @@ async fn run_command(command: String) -> Result<String, String> {
         let mut config = RuntimeConfig::default();
         config.static_.models_dir = Some(models_dir.display().to_string());
         let ctx = StaticScanContext {
+            run_id: crate::RunId::new(),
             config,
             rulebook_paths: Vec::new(),
             discovered_files: vec![DiscoveredFile {
@@ -368,6 +372,7 @@ async fn run_command(command: String) -> Result<String, String> {
         let mut config = RuntimeConfig::default();
         config.static_.learned_dir = Some(learned_dir.display().to_string());
         let ctx = StaticScanContext {
+            run_id: crate::RunId::new(),
             config,
             rulebook_paths: Vec::new(),
             discovered_files: Vec::new(),
@@ -400,6 +405,7 @@ def read_workbook(path: str):
         .expect("write Python file");
 
         let ctx = StaticScanContext {
+            run_id: crate::RunId::new(),
             config: RuntimeConfig::default(),
             rulebook_paths: Vec::new(),
             discovered_files: vec![DiscoveredFile {

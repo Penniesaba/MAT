@@ -194,6 +194,7 @@ mod tests {
     #[test]
     fn disabled_agent_returns_empty() {
         let ctx = StaticScanContext {
+            run_id: crate::RunId::new(),
             config: RuntimeConfig::default(), // agent disabled by default
             rulebook_paths: Vec::new(),
             discovered_files: Vec::new(),
@@ -208,6 +209,7 @@ mod tests {
         let mut config = RuntimeConfig::default();
         config.static_.agent.enabled = true;
         let ctx = StaticScanContext {
+            run_id: crate::RunId::new(),
             config,
             rulebook_paths: Vec::new(),
             discovered_files: Vec::new(),
@@ -230,6 +232,7 @@ mod tests {
         let mut config = RuntimeConfig::default();
         config.scan.targets = vec![root.to_string_lossy().to_string()];
         let ctx = StaticScanContext {
+            run_id: crate::RunId::new(),
             config,
             rulebook_paths: Vec::new(),
             // First discovered file lives in subdir `a` — the buggy behavior

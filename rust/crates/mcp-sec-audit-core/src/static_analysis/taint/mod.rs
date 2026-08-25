@@ -938,6 +938,7 @@ mod tests {
         use crate::static_analysis::DiscoveredFile;
 
         let ctx = StaticScanContext {
+            run_id: crate::RunId::new(),
             config: RuntimeConfig::default(), // taint disabled by default
             rulebook_paths: Vec::new(),
             discovered_files: Vec::<DiscoveredFile>::new(),

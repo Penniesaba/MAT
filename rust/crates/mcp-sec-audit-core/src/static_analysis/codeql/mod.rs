@@ -320,6 +320,7 @@ mod tests {
     #[test]
     fn disabled_codeql_returns_empty() {
         let ctx = StaticScanContext {
+            run_id: crate::RunId::new(),
             config: RuntimeConfig::default(), // codeql disabled by default
             rulebook_paths: Vec::new(),
             discovered_files: Vec::new(),
@@ -336,6 +337,7 @@ mod tests {
         let mut config = RuntimeConfig::default();
         config.static_.codeql.enabled = true;
         let ctx = StaticScanContext {
+            run_id: crate::RunId::new(),
             config,
             rulebook_paths: Vec::new(),
             discovered_files: Vec::new(),
@@ -354,6 +356,7 @@ mod tests {
         let mut config = RuntimeConfig::default();
         config.static_.codeql.enabled = true;
         let ctx = StaticScanContext {
+            run_id: crate::RunId::new(),
             config,
             rulebook_paths: Vec::new(),
             discovered_files: vec![DiscoveredFile {
@@ -379,6 +382,7 @@ mod tests {
         // A supported-language file is required to reach the CLI availability
         // check: empty/unsupported discovered files return Ok(None) before it.
         let ctx = StaticScanContext {
+            run_id: crate::RunId::new(),
             config,
             rulebook_paths: Vec::new(),
             discovered_files: vec![DiscoveredFile {
@@ -448,6 +452,7 @@ mod tests {
         // Compile the FULL catalog (python + javascript sinks) into per-language
         // packs, then analyze the python DB with ONLY the python pack.
         let ctx = StaticScanContext {
+            run_id: crate::RunId::new(),
             config: RuntimeConfig::default(),
             rulebook_paths: Vec::new(),
             discovered_files: Vec::new(),
