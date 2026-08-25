@@ -77,13 +77,13 @@ impl RepoOutcome {
         }
     }
 
-    fn panicked(idx: usize, repo: &RepoConfig) -> Self {
+    fn failed(idx: usize, repo: &RepoConfig, error: impl Into<String>) -> Self {
         Self {
             idx,
             name: repo.name.clone(),
             path: repo.path.clone(),
             status: RepoStatus::Failed,
-            error: Some("panicked".to_string()),
+            error: Some(error.into()),
             duration_ms: 0,
             risk_level: None,
             fused_finding_count: None,
@@ -142,7 +142,8 @@ pub async fn run_batch(cfg: BatchConfig, cancel: CancellationToken) -> Result<Ba
     let governor = ResourceGovernor::new(&cfg.batch.limits);
     // Repo-level concurrency: one permit per repo for the whole task. Distinct
     // from the governor's per-class permits (see module doc).
-    let max_parallel = Arc::new(Semaphore::new(cfg.batch.max_parallel.max(1)));
+    let max_parallel_limit = cfg.batch.max_parallel.max(1);
+    let max_parallel = Arc::new(Semaphore::new(max_parallel_limit));
 
     // Progress hub (design §5): repos report into one channel, a dedicated task
     // drains it into `tracing` with the `[repo]` prefix already attached by
@@ -161,64 +162,91 @@ pub async fn run_batch(cfg: BatchConfig, cancel: CancellationToken) -> Result<Ba
         cancel: cancel.clone(),
     };
 
-    // Dispatch every repo task up front on the blocking pool, each on its own
-    // current-thread runtime. The async pipeline future is `!Send` (it holds a
+    // Lazily dispatch repos on the blocking pool, each on its own current-thread
+    // runtime. The async pipeline future is `!Send` (it holds a
     // `tracing::EnteredSpan` across `.await` points, and `EnteredSpan` is
     // deliberately `!Send`), so it cannot be driven by a multi-thread runtime's
     // `spawn`/`JoinSet::spawn`. A dedicated current-thread runtime per repo
     // preserves full parallelism: the CPU-bound phases are already offloaded
     // via `spawn_blocking`, and the codeql/agent providers spawn child
-    // processes, so the only serialization is in `max_parallel` below.
+    // processes.
     //
-    // Each repo acquires a `max_parallel` permit before doing any work, so
-    // concurrency is bounded even though all tasks are spawned. The permit,
-    // combined with the pre- and post-acquire cancel checks, is what "stops
-    // scheduling new work" after a fail-fast cancel.
+    // The repo-level `max_parallel` permit is acquired in this loop, *before*
+    // each `spawn_blocking`, and moved into the task (held for its whole run).
+    // That bounds the number of concurrently-running blocking tasks — and hence
+    // the number of parked blocking threads — to `max_parallel`, not to the
+    // repo count. When `cancel` fires (fail_fast), repos that have not yet been
+    // dispatched are recorded as `Cancelled` instead of spawning new work.
+    let mut outcomes: Vec<Option<RepoOutcome>> =
+        (0..cfg.batch.repos.len()).map(|_| None).collect();
+    let mut join_error_labels: Vec<&'static str> = Vec::new();
     let mut set = JoinSet::new();
-    for (idx, repo) in cfg.batch.repos.iter().cloned().enumerate() {
-        let repo_id = RunId::for_repo(batch_id.as_str(), &repo.name);
-        let base = cfg.runtime.clone();
-        let shared = shared.clone();
-        let cancel = shared.cancel.clone();
-        let permit = max_parallel.clone();
-        set.spawn_blocking(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("build per-repo current-thread runtime");
-            rt.block_on(async move {
-                if cancel.is_cancelled() {
-                    return RepoOutcome::cancelled(idx, &repo, 0);
-                }
-                let _slot = permit
-                    .acquire_owned()
-                    .await
-                    .expect("max_parallel semaphore closed");
-                if cancel.is_cancelled() {
-                    return RepoOutcome::cancelled(idx, &repo, 0);
-                }
-                run_repo(idx, repo, base, repo_id, shared).await
-            })
-        });
-    }
-
-    // Collect outcomes in completion order. A panicked repo task loses its
-    // return value (no `catch_unwind`, design §10): its slot stays `None` and
-    // is synthesized as `Failed { error: "panicked" }` after the loop. Any
-    // other `JoinError` (cancelled task) is handled the same way.
-    let mut outcomes: Vec<Option<RepoOutcome>> = (0..cfg.batch.repos.len()).map(|_| None).collect();
+    let mut next = 0usize;
+    let mut in_flight = 0usize;
     let mut fail_fast_fired = false;
-    while let Some(joined) = set.join_next().await {
+
+    loop {
+        // Fill available concurrency slots, one `max_parallel` permit at a time.
+        while in_flight < max_parallel_limit && next < cfg.batch.repos.len() {
+            if cancel.is_cancelled() {
+                for (idx, repo) in cfg.batch.repos.iter().enumerate().skip(next) {
+                    outcomes[idx] = Some(RepoOutcome::cancelled(idx, repo, 0));
+                }
+                next = cfg.batch.repos.len();
+                break;
+            }
+            let idx = next;
+            let repo = cfg.batch.repos[idx].clone();
+            next += 1;
+
+            let slot = max_parallel
+                .clone()
+                .acquire_owned()
+                .await
+                .expect("max_parallel semaphore closed");
+            in_flight += 1;
+
+            let repo_id = RunId::for_repo(batch_id.as_str(), &repo.name);
+            let base = cfg.runtime.clone();
+            let shared = shared.clone();
+            set.spawn_blocking(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("build per-repo current-thread runtime");
+                let _slot = slot; // held until the repo task finishes
+                rt.block_on(run_repo(idx, repo, base, repo_id, shared))
+            });
+        }
+
+        if in_flight == 0 {
+            break;
+        }
+
+        let joined = set
+            .join_next()
+            .await
+            .expect("in_flight > 0 implies a pending repo task");
+        in_flight -= 1;
+
         let (outcome, failed) = match joined {
             Ok(outcome) => {
                 let failed = outcome.status == RepoStatus::Failed;
                 (Some(outcome), failed)
             }
             Err(e) => {
-                let is_panic = e.is_panic();
+                // A panicked task loses its return value (no `catch_unwind`,
+                // design §10); its slot stays `None` and is synthesized after
+                // the loop. A non-panic `JoinError` (an aborted task) is
+                // labelled distinctly rather than as a panic.
+                join_error_labels.push(if e.is_panic() {
+                    "panicked"
+                } else {
+                    "task join error"
+                });
                 tracing::warn!(
                     target: "mcp_sec_audit::batch",
-                    is_panic,
+                    is_panic = e.is_panic(),
                     error = %e,
                     "repo task aborted"
                 );
@@ -248,12 +276,16 @@ pub async fn run_batch(cfg: BatchConfig, cancel: CancellationToken) -> Result<Ba
     let cross_repo_learned = cross_repo_learned_from(&bus).await;
     drop(bus);
 
+    let mut join_errors = join_error_labels.into_iter();
     let repos: Vec<BatchRepoSummary> = outcomes
         .into_iter()
         .enumerate()
         .map(|(idx, o)| match o {
             Some(o) => o.into(),
-            None => RepoOutcome::panicked(idx, &cfg.batch.repos[idx]).into(),
+            None => {
+                let error = join_errors.next().unwrap_or("panicked");
+                RepoOutcome::failed(idx, &cfg.batch.repos[idx], error).into()
+            }
         })
         .collect();
 
