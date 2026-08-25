@@ -45,6 +45,26 @@ fn absolute_path(path: &std::path::Path) -> std::path::PathBuf {
     })
 }
 
+/// Resolve the scan target root (an absolute directory that contains every
+/// discovered file). Prefers the first configured scan target — a directory
+/// target is used as-is, a file target contributes its parent — and falls back
+/// to the first discovered file's parent when no target is configured.
+fn scan_target_root(ctx: &StaticScanContext) -> Option<String> {
+    if let Some(target) = ctx.config.scan.targets.first() {
+        let abs = absolute_path(std::path::Path::new(target));
+        let dir = if abs.is_dir() {
+            abs
+        } else {
+            abs.parent()?.to_path_buf()
+        };
+        return Some(dir.display().to_string());
+    }
+    ctx.discovered_files
+        .first()
+        .and_then(|df| df.path.parent())
+        .map(|p| absolute_path(p).display().to_string())
+}
+
 /// Agent line entry point (阶段 1).
 ///
 /// Prepares file context, renders the prompt template, invokes the
@@ -95,14 +115,13 @@ pub(crate) fn run_with_prompt(
         });
     }
 
-    // Determine target root from the first file's parent (canonicalized so the
-    // agent subprocess runs in a valid absolute directory).
-    let target_root = ctx
-        .discovered_files
-        .first()
-        .and_then(|df| df.path.parent())
-        .map(|p| absolute_path(p).display().to_string())
-        .unwrap_or_else(|| ".".to_string());
+    // Determine the scan target root (canonicalized) — used both as the agent
+    // subprocess cwd and as the prompt's `{target_root}`. It MUST be the scan
+    // target directory, not the first *file's* parent: claude's headless
+    // permission model refuses to read files outside its cwd, so pinning the
+    // cwd to one subdir makes every sibling target file unreadable and the
+    // agent silently returns zero findings.
+    let target_root = scan_target_root(ctx).unwrap_or_else(|| ".".to_string());
 
     // Render the prompt (base template + optional verification extra)
     let mut prompt = prompt::render(
@@ -170,6 +189,7 @@ pub(crate) fn run_with_prompt(
 mod tests {
     use super::*;
     use crate::RuntimeConfig;
+    use crate::static_analysis::{DiscoveredFile, ScanLanguage};
 
     #[test]
     fn disabled_agent_returns_empty() {
@@ -195,5 +215,41 @@ mod tests {
         let output = run(&ctx).expect("run agent with no files");
         assert!(output.findings.is_empty());
         assert!(output.model_candidates.is_empty());
+    }
+
+    #[test]
+    fn target_root_is_scan_target_not_first_file_parent() {
+        let root = std::env::temp_dir().join(format!("mcp-agent-root-{}", std::process::id()));
+        let sub_a = root.join("a");
+        let sub_b = root.join("b");
+        std::fs::create_dir_all(&sub_a).expect("create subdir a");
+        std::fs::create_dir_all(&sub_b).expect("create subdir b");
+        std::fs::write(sub_a.join("server.py"), "x = 1\n").expect("write a/server.py");
+        std::fs::write(sub_b.join("server.py"), "y = 2\n").expect("write b/server.py");
+
+        let mut config = RuntimeConfig::default();
+        config.scan.targets = vec![root.to_string_lossy().to_string()];
+        let ctx = StaticScanContext {
+            config,
+            rulebook_paths: Vec::new(),
+            // First discovered file lives in subdir `a` — the buggy behavior
+            // would return `a/` (its parent) instead of the scan root.
+            discovered_files: vec![
+                DiscoveredFile {
+                    path: sub_a.join("server.py"),
+                    language: ScanLanguage::Python,
+                },
+                DiscoveredFile {
+                    path: sub_b.join("server.py"),
+                    language: ScanLanguage::Python,
+                },
+            ],
+        };
+
+        let got = scan_target_root(&ctx).expect("scan target root");
+        let want = root.canonicalize().expect("canonicalize root");
+        assert_eq!(got, want.to_string_lossy());
+
+        std::fs::remove_dir_all(&root).expect("cleanup temp root");
     }
 }

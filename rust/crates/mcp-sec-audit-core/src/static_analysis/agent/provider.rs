@@ -72,6 +72,13 @@ impl AgentProvider for CliAgentProvider {
                 .arg(config.max_turns.to_string())
                 .arg("--output-format")
                 .arg("text");
+            if !config.working_dir.is_empty() {
+                // Grant the agent read access to the scan root. claude's
+                // headless permission model blocks reads outside the cwd /
+                // --add-dir set; pinning --add-dir to the scan root keeps every
+                // target file readable even across sibling directories.
+                cmd.arg("--add-dir").arg(&config.working_dir);
+            }
         }
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
