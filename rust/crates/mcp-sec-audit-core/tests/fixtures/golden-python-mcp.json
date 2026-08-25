@@ -1,0 +1,1423 @@
+{
+  "agent_results": [],
+  "codeql_results": [],
+  "config_snapshot": {
+    "rulebook_paths": [
+      "<RULEBOOK>"
+    ],
+    "runtime": {
+      "dynamic": {
+        "enabled": false,
+        "sandbox": "existing_python_runtime",
+        "timeout_seconds": 120
+      },
+      "fusion": {
+        "agent_only_as_advisory": true,
+        "agent_weight": 1,
+        "boost_when_multiple_lines_agree": true,
+        "codeql_weight": 4,
+        "enabled": true,
+        "line_proximity": 5,
+        "require_confirmed_by": 1,
+        "rule_weight": 3,
+        "taint_weight": 2
+      },
+      "logging": {
+        "ansi": true,
+        "format": "compact",
+        "level": "info",
+        "log_file": null,
+        "scopes": {},
+        "show_progress": true,
+        "show_timestamps": true
+      },
+      "report": {
+        "formats": [
+          "json",
+          "markdown"
+        ],
+        "include_facts": false,
+        "include_fused_results": true,
+        "include_raw_agent_results": true,
+        "include_raw_codeql_results": true,
+        "include_raw_rule_results": true,
+        "include_raw_taint_results": true,
+        "output": "report"
+      },
+      "scan": {
+        "exclude": [
+          ".venv",
+          "dist",
+          "node_modules",
+          "target"
+        ],
+        "languages": [
+          "javascript",
+          "python",
+          "rust",
+          "typescript"
+        ],
+        "targets": [
+          "<ROOT>"
+        ]
+      },
+      "static": {
+        "agent": {
+          "enabled": false,
+          "extra_args": [],
+          "max_turns": 30,
+          "prompt_template_path": null,
+          "provider": "claude",
+          "timeout_seconds": 600
+        },
+        "codeql": {
+          "binary": "codeql",
+          "enabled": false,
+          "extra_args": [],
+          "query_pack_path": null,
+          "timeout_seconds": 1200
+        },
+        "enabled": true,
+        "learned_dir": null,
+        "models_dir": null,
+        "rule": {
+          "enabled": true,
+          "rule_paths": [
+            "rules/languages",
+            "rules/mcp"
+          ]
+        },
+        "save_facts": true,
+        "taint": {
+          "backward": true,
+          "enabled": true,
+          "entrypoint_required": true,
+          "forward": true,
+          "max_depth": 8
+        }
+      }
+    }
+  },
+  "evolution": {
+    "a1_confirmed": 0,
+    "a2_confirmed": 0,
+    "adjudicated": 0,
+    "b0_count": 0,
+    "b1_confirmed": 0,
+    "b2_confirmed": 0,
+    "b_still_ambiguous": 0,
+    "promoted": false,
+    "promoted_count": 0,
+    "promoted_from_adjudication": 0,
+    "retired": 0,
+    "retired_count": 0,
+    "rolled_back": false
+  },
+  "facts": [
+    {
+      "alias": "sp",
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/helpers.py",
+      "id": "import:helpers.py:7:subprocess",
+      "imported_name": null,
+      "kind": "import_as",
+      "language": "python",
+      "line": 7,
+      "module": "subprocess",
+      "type": "import"
+    },
+    {
+      "alias": "sp",
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "import:server.py:19:subprocess",
+      "imported_name": null,
+      "kind": "import_as",
+      "language": "python",
+      "line": 19,
+      "module": "subprocess",
+      "type": "import"
+    },
+    {
+      "alias": null,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/helpers.py",
+      "id": "import:helpers.py:8:Path",
+      "imported_name": "Path",
+      "kind": "from_import",
+      "language": "python",
+      "line": 8,
+      "module": "pathlib",
+      "type": "import"
+    },
+    {
+      "alias": null,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "import:server.py:20:Path",
+      "imported_name": "Path",
+      "kind": "from_import",
+      "language": "python",
+      "line": 20,
+      "module": "pathlib",
+      "type": "import"
+    },
+    {
+      "alias": null,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "import:server.py:22:requests",
+      "imported_name": null,
+      "kind": "import",
+      "language": "python",
+      "line": 22,
+      "module": "requests",
+      "type": "import"
+    },
+    {
+      "args": [],
+      "callee": "MockMCP",
+      "caller": "",
+      "column": 6,
+      "end_line": 33,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "call:server.py:33:6",
+      "kwargs": {},
+      "line": 33,
+      "normalized_callee": "MockMCP",
+      "resolution": null,
+      "snippet": "MockMCP()",
+      "type": "call"
+    },
+    {
+      "args": [],
+      "callee": "command.strip",
+      "caller": "python:server.py:run_shell",
+      "column": 19,
+      "end_line": 84,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "call:server.py:84:19",
+      "kwargs": {},
+      "line": 84,
+      "normalized_callee": "command.strip",
+      "resolution": null,
+      "snippet": "command.strip()",
+      "type": "call"
+    },
+    {
+      "args": [],
+      "callee": "open(...).read",
+      "caller": "python:server.py:read_log",
+      "column": 14,
+      "end_line": 101,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "call:server.py:101:14",
+      "kwargs": {},
+      "line": 101,
+      "normalized_callee": "open(...).read",
+      "resolution": null,
+      "snippet": "open(full_path, \"r\").read()",
+      "type": "call"
+    },
+    {
+      "args": [],
+      "callee": "user_input.strip",
+      "caller": "python:helpers.py:normalize_path",
+      "column": 11,
+      "end_line": 18,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/helpers.py",
+      "id": "call:helpers.py:18:11",
+      "kwargs": {},
+      "line": 18,
+      "normalized_callee": "user_input.strip",
+      "resolution": null,
+      "snippet": "user_input.strip()",
+      "type": "call"
+    },
+    {
+      "args": [],
+      "callee": "user_input.strip",
+      "caller": "python:server.py:normalize_path",
+      "column": 11,
+      "end_line": 47,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "call:server.py:47:11",
+      "kwargs": {},
+      "line": 47,
+      "normalized_callee": "user_input.strip",
+      "resolution": null,
+      "snippet": "user_input.strip()",
+      "type": "call"
+    },
+    {
+      "args": [
+        {
+          "expr": "/var/log",
+          "index": 0,
+          "kind": "positional"
+        }
+      ],
+      "callee": "Path",
+      "caller": "python:server.py:read_log",
+      "column": 14,
+      "end_line": 99,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "call:server.py:99:14",
+      "kwargs": {},
+      "line": 99,
+      "normalized_callee": "pathlib.Path",
+      "resolution": {
+        "confidence": "high",
+        "import_alias": "Path"
+      },
+      "snippet": "Path(\"/var/log\")",
+      "type": "call"
+    },
+    {
+      "args": [
+        {
+          "expr": "cmd_string",
+          "index": 0,
+          "kind": "positional"
+        }
+      ],
+      "callee": "runner",
+      "caller": "python:server.py:run_shell",
+      "column": 13,
+      "end_line": 86,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "call:server.py:86:13",
+      "kwargs": {
+        "capture_output": {
+          "expr": "True",
+          "value": null
+        },
+        "shell": {
+          "expr": "True",
+          "value": null
+        },
+        "text": {
+          "expr": "True",
+          "value": null
+        }
+      },
+      "line": 86,
+      "normalized_callee": "subprocess.run",
+      "resolution": {
+        "confidence": "high",
+        "import_alias": "runner"
+      },
+      "snippet": "runner(cmd_string, shell=True, capture_output=True, text=True)",
+      "type": "call"
+    },
+    {
+      "args": [
+        {
+          "expr": "command_text",
+          "index": 0,
+          "kind": "positional"
+        }
+      ],
+      "callee": "build_command",
+      "caller": "python:server.py:run_shell",
+      "column": 17,
+      "end_line": 85,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "call:server.py:85:17",
+      "kwargs": {},
+      "line": 85,
+      "normalized_callee": "build_command",
+      "resolution": null,
+      "snippet": "build_command(command_text)",
+      "type": "call"
+    },
+    {
+      "args": [
+        {
+          "expr": "filename",
+          "index": 0,
+          "kind": "positional"
+        }
+      ],
+      "callee": "normalize_path",
+      "caller": "python:server.py:read_log",
+      "column": 16,
+      "end_line": 98,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "call:server.py:98:16",
+      "kwargs": {},
+      "line": 98,
+      "normalized_callee": "normalize_path",
+      "resolution": null,
+      "snippet": "normalize_path(filename)",
+      "type": "call"
+    },
+    {
+      "args": [
+        {
+          "expr": "full_path",
+          "index": 0,
+          "kind": "positional"
+        },
+        {
+          "expr": "r",
+          "index": 1,
+          "kind": "positional"
+        }
+      ],
+      "callee": "open",
+      "caller": "python:server.py:read_log",
+      "column": 14,
+      "end_line": 101,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "call:server.py:101:14",
+      "kwargs": {},
+      "line": 101,
+      "normalized_callee": "open",
+      "resolution": null,
+      "snippet": "open(full_path, \"r\")",
+      "type": "call"
+    },
+    {
+      "args": [
+        {
+          "expr": "full_path",
+          "index": 0,
+          "kind": "positional"
+        }
+      ],
+      "callee": "str",
+      "caller": "python:server.py:read_log",
+      "column": 40,
+      "end_line": 102,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "call:server.py:102:40",
+      "kwargs": {},
+      "line": 102,
+      "normalized_callee": "str",
+      "resolution": null,
+      "snippet": "str(full_path)",
+      "type": "call"
+    },
+    {
+      "args": [
+        {
+          "expr": "url",
+          "index": 0,
+          "kind": "positional"
+        }
+      ],
+      "callee": "is_safe_url",
+      "caller": "python:server.py:fetch_url",
+      "column": 11,
+      "end_line": 113,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "call:server.py:113:11",
+      "kwargs": {},
+      "line": 113,
+      "normalized_callee": "is_safe_url",
+      "resolution": null,
+      "snippet": "is_safe_url(url)",
+      "type": "call"
+    },
+    {
+      "args": [
+        {
+          "expr": "url",
+          "index": 0,
+          "kind": "positional"
+        }
+      ],
+      "callee": "requests.get",
+      "caller": "python:server.py:fetch_url",
+      "column": 15,
+      "end_line": 115,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "call:server.py:115:15",
+      "kwargs": {
+        "timeout": {
+          "expr": "5",
+          "value": null
+        }
+      },
+      "line": 115,
+      "normalized_callee": "requests.get",
+      "resolution": {
+        "confidence": "high",
+        "import_alias": "requests"
+      },
+      "snippet": "requests.get(url, timeout=5)",
+      "type": "call"
+    },
+    {
+      "call_id": "call:server.py:101:14",
+      "category": "file_read",
+      "conditions": {
+        "callee": "open",
+        "normalized_callee": "open",
+        "snippet": "open(full_path, \"r\")"
+      },
+      "confidence": "high",
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "sink:file_read:server.py:101",
+      "line": 101,
+      "reason": "Python open call reads a file path that may be attacker-controlled (path traversal)",
+      "rule_id": "python.file_read",
+      "severity_base": "medium",
+      "sink_name": "open",
+      "type": "sink"
+    },
+    {
+      "call_id": "call:server.py:115:15",
+      "category": "network_request",
+      "conditions": {
+        "callee": "requests.get",
+        "normalized_callee": "requests.get",
+        "snippet": "requests.get(url, timeout=5)"
+      },
+      "confidence": "medium",
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "sink:network_request:server.py:115",
+      "line": 115,
+      "reason": "Python network request call can reach attacker-controlled URLs (SSRF)",
+      "rule_id": "python.network_request",
+      "severity_base": "medium",
+      "sink_name": "requests.get",
+      "type": "sink"
+    },
+    {
+      "call_id": "call:server.py:115:15",
+      "confidence": "medium",
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "function_id": "python:server.py:fetch_url",
+      "id": "source:model:call:server.py:115:15:network_request",
+      "kind": "network_request",
+      "line": 115,
+      "name": "requests.get",
+      "type": "source"
+    },
+    {
+      "call_id": "call:server.py:86:13",
+      "category": "command_execution",
+      "conditions": {
+        "callee": "runner",
+        "normalized_callee": "subprocess.run",
+        "snippet": "runner(cmd_string, shell=True, capture_output=True, text=True)"
+      },
+      "confidence": "high",
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "sink:command_execution:server.py:86",
+      "line": 86,
+      "reason": "Python command execution call can execute attacker-controlled commands",
+      "rule_id": "python.command_execution",
+      "severity_base": "high",
+      "sink_name": "subprocess.run",
+      "type": "sink"
+    },
+    {
+      "confidence": "high",
+      "evidence": {
+        "kind": "decorator",
+        "text": "mcp.tool()"
+      },
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "function_id": "python:server.py:fetch_url",
+      "id": "entry:server.py:fetch_url",
+      "kind": "mcp_tool",
+      "line": 106,
+      "name": "fetch_url",
+      "params": [
+        "url"
+      ],
+      "type": "entrypoint"
+    },
+    {
+      "confidence": "high",
+      "evidence": {
+        "kind": "decorator",
+        "text": "mcp.tool()"
+      },
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "function_id": "python:server.py:read_log",
+      "id": "entry:server.py:read_log",
+      "kind": "mcp_tool",
+      "line": 91,
+      "name": "read_log",
+      "params": [
+        "filename"
+      ],
+      "type": "entrypoint"
+    },
+    {
+      "confidence": "high",
+      "evidence": {
+        "kind": "decorator",
+        "text": "mcp.tool()"
+      },
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "function_id": "python:server.py:run_shell",
+      "id": "entry:server.py:run_shell",
+      "kind": "mcp_tool",
+      "line": 73,
+      "name": "run_shell",
+      "params": [
+        "command"
+      ],
+      "type": "entrypoint"
+    },
+    {
+      "confidence": "high",
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "function_id": "python:server.py:fetch_url",
+      "id": "source:server.py:fetch_url:url",
+      "kind": "mcp_tool_parameter",
+      "line": 106,
+      "name": "url",
+      "type": "source"
+    },
+    {
+      "confidence": "high",
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "function_id": "python:server.py:read_log",
+      "id": "source:server.py:read_log:filename",
+      "kind": "mcp_tool_parameter",
+      "line": 91,
+      "name": "filename",
+      "type": "source"
+    },
+    {
+      "confidence": "high",
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "function_id": "python:server.py:run_shell",
+      "id": "source:server.py:run_shell:command",
+      "kind": "mcp_tool_parameter",
+      "line": 73,
+      "name": "command",
+      "type": "source"
+    },
+    {
+      "confidence": "low",
+      "extractor": "rust_taint_phase10_11",
+      "file": "server.py",
+      "id": "dataflow:source:server.py:read_log:filename:sink:file_read:server.py:101",
+      "line": 98,
+      "path": [
+        {
+          "arg_index": 0,
+          "call_id": "call:server.py:101:14",
+          "from": "python:server.py:read_log\u0000full_path",
+          "function": null,
+          "kind": "call_arg",
+          "line": 101,
+          "name": "full_path",
+          "snippet": null,
+          "to": "call:server.py:101:14"
+        },
+        {
+          "arg_index": 0,
+          "call_id": "call:server.py:98:16",
+          "from": null,
+          "function": "python:server.py:read_log",
+          "kind": "param",
+          "line": 98,
+          "name": "filename",
+          "snippet": "normalize_path(...)",
+          "to": null
+        },
+        {
+          "arg_index": null,
+          "call_id": "call:server.py:98:16",
+          "from": "call:server.py:98:16",
+          "function": null,
+          "kind": "return",
+          "line": 98,
+          "name": "safe_path",
+          "snippet": null,
+          "to": "python:server.py:read_log\u0000safe_path"
+        },
+        {
+          "arg_index": null,
+          "call_id": null,
+          "from": "python:server.py:read_log\u0000safe_path",
+          "function": "python:server.py:read_log",
+          "kind": "assign",
+          "line": 0,
+          "name": "full_path",
+          "snippet": "full_path = safe_path",
+          "to": "python:server.py:read_log\u0000full_path"
+        }
+      ],
+      "sink_id": "sink:file_read:server.py:101",
+      "source_id": "source:server.py:read_log:filename",
+      "type": "dataflow"
+    },
+    {
+      "confidence": "low",
+      "extractor": "rust_taint_phase10_11",
+      "file": "server.py",
+      "id": "dataflow:source:server.py:run_shell:command:sink:command_execution:server.py:86",
+      "line": 0,
+      "path": [
+        {
+          "arg_index": 0,
+          "call_id": "call:server.py:85:17",
+          "from": "python:server.py:run_shell\u0000command_text",
+          "function": null,
+          "kind": "call_arg",
+          "line": 85,
+          "name": "command_text",
+          "snippet": null,
+          "to": "call:server.py:85:17"
+        },
+        {
+          "arg_index": 0,
+          "call_id": "call:server.py:86:13",
+          "from": "python:server.py:run_shell\u0000cmd_string",
+          "function": null,
+          "kind": "call_arg",
+          "line": 86,
+          "name": "cmd_string",
+          "snippet": null,
+          "to": "call:server.py:86:13"
+        },
+        {
+          "arg_index": null,
+          "call_id": "call:server.py:85:17",
+          "from": "call:server.py:85:17",
+          "function": null,
+          "kind": "return",
+          "line": 85,
+          "name": "cmd_string",
+          "snippet": null,
+          "to": "python:server.py:run_shell\u0000cmd_string"
+        },
+        {
+          "arg_index": null,
+          "call_id": null,
+          "from": "python:server.py:run_shell\u0000command",
+          "function": "python:server.py:run_shell",
+          "kind": "assign",
+          "line": 0,
+          "name": "command_text",
+          "snippet": "command_text = command",
+          "to": "python:server.py:run_shell\u0000command_text"
+        },
+        {
+          "arg_index": null,
+          "call_id": null,
+          "from": "source:server.py:run_shell:command",
+          "function": "python:server.py:run_shell",
+          "kind": "assign",
+          "line": 0,
+          "name": "command",
+          "snippet": "command = command",
+          "to": "python:server.py:run_shell\u0000command"
+        }
+      ],
+      "sink_id": "sink:command_execution:server.py:86",
+      "source_id": "source:server.py:run_shell:command",
+      "type": "dataflow"
+    },
+    {
+      "confidence": "medium",
+      "extractor": "rust_taint_phase10_11",
+      "file": "server.py",
+      "id": "dataflow:source:model:call:server.py:115:15:network_request:sink:network_request:server.py:115",
+      "line": 0,
+      "path": [],
+      "sink_id": "sink:network_request:server.py:115",
+      "source_id": "source:model:call:server.py:115:15:network_request",
+      "type": "dataflow"
+    },
+    {
+      "confidence": "medium",
+      "extractor": "rust_taint_phase10_11",
+      "file": "server.py",
+      "id": "dataflow:source:server.py:fetch_url:url:sink:network_request:server.py:115",
+      "line": 115,
+      "path": [
+        {
+          "arg_index": 0,
+          "call_id": "call:server.py:115:15",
+          "from": null,
+          "function": "python:server.py:fetch_url",
+          "kind": "param",
+          "line": 115,
+          "name": "url",
+          "snippet": "requests.get(...)",
+          "to": null
+        }
+      ],
+      "sink_id": "sink:network_request:server.py:115",
+      "source_id": "source:server.py:fetch_url:url",
+      "type": "dataflow"
+    },
+    {
+      "decorators": [
+        "mcp.tool()"
+      ],
+      "docstring": "Execute a shell command.\n\n    Vulnerability: Command Injection\n    - User input flows directly to subprocess execution\n    - Uses import alias: sp.run\n    - Uses assignment alias: runner = sp.run\n    - Crosses function boundary: build_command()\n    ",
+      "enclosing_class": null,
+      "end_line": 87,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "python:server.py:run_shell",
+      "language": "python",
+      "line": 73,
+      "name": "run_shell",
+      "params": [
+        {
+          "annotation": "str",
+          "default": null,
+          "name": "command"
+        }
+      ],
+      "qualified_name": "run_shell",
+      "return_type": null,
+      "type": "function"
+    },
+    {
+      "decorators": [
+        "mcp.tool()"
+      ],
+      "docstring": "Fetch content from a URL.\n\n    Vulnerability: SSRF (Server-Side Request Forgery)\n    - User-controlled URL passed directly to requests.get()\n    - is_safe_url() is a deliberately broken validator that always returns True\n    ",
+      "enclosing_class": null,
+      "end_line": 116,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "python:server.py:fetch_url",
+      "language": "python",
+      "line": 106,
+      "name": "fetch_url",
+      "params": [
+        {
+          "annotation": "str",
+          "default": null,
+          "name": "url"
+        }
+      ],
+      "qualified_name": "fetch_url",
+      "return_type": null,
+      "type": "function"
+    },
+    {
+      "decorators": [
+        "mcp.tool()"
+      ],
+      "docstring": "Read a log file.\n\n    Vulnerability: Path Traversal\n    - User input flows to file open() through normalize_path()\n    - normalize_path() is a cross-function call that doesn't sanitize\n    ",
+      "enclosing_class": null,
+      "end_line": 102,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "python:server.py:read_log",
+      "language": "python",
+      "line": 91,
+      "name": "read_log",
+      "params": [
+        {
+          "annotation": "str",
+          "default": null,
+          "name": "filename"
+        }
+      ],
+      "qualified_name": "read_log",
+      "return_type": null,
+      "type": "function"
+    },
+    {
+      "decorators": [],
+      "docstring": "Build a shell command string from user input.\n\n    DELIBERATELY VULNERABLE: wraps user input in a shell command with no escaping.\n    ",
+      "enclosing_class": null,
+      "end_line": 26,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/helpers.py",
+      "id": "python:helpers.py:build_command",
+      "language": "python",
+      "line": 21,
+      "name": "build_command",
+      "params": [
+        {
+          "annotation": "str",
+          "default": null,
+          "name": "cmd"
+        }
+      ],
+      "qualified_name": "build_command",
+      "return_type": null,
+      "type": "function"
+    },
+    {
+      "decorators": [],
+      "docstring": "Build a shell command string from user input.\n\n    DELIBERATELY VULNERABLE: wraps user input in a shell command with no escaping.\n    ",
+      "enclosing_class": null,
+      "end_line": 55,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "python:server.py:build_command",
+      "language": "python",
+      "line": 50,
+      "name": "build_command",
+      "params": [
+        {
+          "annotation": "str",
+          "default": null,
+          "name": "cmd"
+        }
+      ],
+      "qualified_name": "build_command",
+      "return_type": null,
+      "type": "function"
+    },
+    {
+      "decorators": [],
+      "docstring": "Check if a URL is 'safe' to fetch.\n\n    DELIBERATELY BROKEN: always returns True, simulating a flawed security check.\n    Tests that taint analysis doesn't get blocked by 'validator' functions.\n    ",
+      "enclosing_class": null,
+      "end_line": 36,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/helpers.py",
+      "id": "python:helpers.py:is_safe_url",
+      "language": "python",
+      "line": 29,
+      "name": "is_safe_url",
+      "params": [
+        {
+          "annotation": "str",
+          "default": null,
+          "name": "url"
+        }
+      ],
+      "qualified_name": "is_safe_url",
+      "return_type": null,
+      "type": "function"
+    },
+    {
+      "decorators": [],
+      "docstring": "Check if a URL is 'safe' to fetch.\n\n    DELIBERATELY BROKEN: always returns True, simulating a flawed security check.\n    Tests that taint analysis doesn't get blocked by 'validator' functions.\n    ",
+      "enclosing_class": null,
+      "end_line": 65,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "python:server.py:is_safe_url",
+      "language": "python",
+      "line": 58,
+      "name": "is_safe_url",
+      "params": [
+        {
+          "annotation": "str",
+          "default": null,
+          "name": "url"
+        }
+      ],
+      "qualified_name": "is_safe_url",
+      "return_type": null,
+      "type": "function"
+    },
+    {
+      "decorators": [],
+      "docstring": "Normalize a file path from user input.\n\n    DELIBERATELY VULNERABLE: passes user input through without sanitization.\n    This function exists specifically to test cross-function taint propagation.\n    ",
+      "enclosing_class": null,
+      "end_line": 18,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/helpers.py",
+      "id": "python:helpers.py:normalize_path",
+      "language": "python",
+      "line": 11,
+      "name": "normalize_path",
+      "params": [
+        {
+          "annotation": "str",
+          "default": null,
+          "name": "user_input"
+        }
+      ],
+      "qualified_name": "normalize_path",
+      "return_type": null,
+      "type": "function"
+    },
+    {
+      "decorators": [],
+      "docstring": "Normalize a file path from user input.\n\n    DELIBERATELY VULNERABLE: passes user input through without sanitization.\n    This function exists specifically to test cross-function taint propagation.\n    ",
+      "enclosing_class": null,
+      "end_line": 47,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "python:server.py:normalize_path",
+      "language": "python",
+      "line": 40,
+      "name": "normalize_path",
+      "params": [
+        {
+          "annotation": "str",
+          "default": null,
+          "name": "user_input"
+        }
+      ],
+      "qualified_name": "normalize_path",
+      "return_type": null,
+      "type": "function"
+    },
+    {
+      "decorators": [],
+      "docstring": null,
+      "enclosing_class": "MockMCP",
+      "end_line": 30,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "python:server.py:MockMCP.tool.decorator",
+      "language": "python",
+      "line": 27,
+      "name": "decorator",
+      "params": [
+        {
+          "annotation": null,
+          "default": null,
+          "name": "func"
+        }
+      ],
+      "qualified_name": "MockMCP.tool.decorator",
+      "return_type": null,
+      "type": "function"
+    },
+    {
+      "decorators": [],
+      "docstring": null,
+      "enclosing_class": "MockMCP",
+      "end_line": 31,
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "id": "python:server.py:MockMCP.tool",
+      "language": "python",
+      "line": 26,
+      "name": "tool",
+      "params": [
+        {
+          "annotation": "str",
+          "default": "None",
+          "name": "name"
+        },
+        {
+          "annotation": null,
+          "default": null,
+          "name": "self"
+        }
+      ],
+      "qualified_name": "MockMCP.tool",
+      "return_type": null,
+      "type": "function"
+    },
+    {
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "function_id": "",
+      "id": "assign:server.py:33:mcp",
+      "line": 33,
+      "snippet": "mcp = MockMCP()",
+      "target": "mcp",
+      "type": "assign",
+      "value": "MockMCP()"
+    },
+    {
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "function_id": "python:server.py:MockMCP.tool.decorator",
+      "id": "assign:server.py:28:func._mcp_tool",
+      "line": 28,
+      "snippet": "func._mcp_tool = True",
+      "target": "func._mcp_tool",
+      "type": "assign",
+      "value": "True"
+    },
+    {
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "function_id": "python:server.py:MockMCP.tool.decorator",
+      "id": "assign:server.py:29:func._mcp_name",
+      "line": 29,
+      "snippet": "func._mcp_name = name or func.__name__",
+      "target": "func._mcp_name",
+      "type": "assign",
+      "value": "name or func.__name__"
+    },
+    {
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "function_id": "python:server.py:fetch_url",
+      "id": "assign:server.py:115:response",
+      "line": 115,
+      "snippet": "response = requests.get(url, timeout=5)",
+      "target": "response",
+      "type": "assign",
+      "value": "requests.get(...)"
+    },
+    {
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "function_id": "python:server.py:read_log",
+      "id": "assign:server.py:100:full_path",
+      "line": 100,
+      "snippet": "full_path = log_dir / safe_path",
+      "target": "full_path",
+      "type": "assign",
+      "value": "(log_dir Div safe_path)"
+    },
+    {
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "function_id": "python:server.py:read_log",
+      "id": "assign:server.py:101:content",
+      "line": 101,
+      "snippet": "content = open(full_path, \"r\").read()",
+      "target": "content",
+      "type": "assign",
+      "value": "open(...).read()"
+    },
+    {
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "function_id": "python:server.py:read_log",
+      "id": "assign:server.py:98:safe_path",
+      "line": 98,
+      "snippet": "safe_path = normalize_path(filename)",
+      "target": "safe_path",
+      "type": "assign",
+      "value": "normalize_path(...)"
+    },
+    {
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "function_id": "python:server.py:read_log",
+      "id": "assign:server.py:99:log_dir",
+      "line": 99,
+      "snippet": "log_dir = Path(\"/var/log\")",
+      "target": "log_dir",
+      "type": "assign",
+      "value": "Path(...)"
+    },
+    {
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "function_id": "python:server.py:run_shell",
+      "id": "assign:server.py:83:runner",
+      "line": 83,
+      "snippet": "runner = sp.run",
+      "target": "runner",
+      "type": "assign",
+      "value": "sp.run"
+    },
+    {
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "function_id": "python:server.py:run_shell",
+      "id": "assign:server.py:84:command_text",
+      "line": 84,
+      "snippet": "command_text = command.strip()",
+      "target": "command_text",
+      "type": "assign",
+      "value": "command.strip()"
+    },
+    {
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "function_id": "python:server.py:run_shell",
+      "id": "assign:server.py:85:cmd_string",
+      "line": 85,
+      "snippet": "cmd_string = build_command(command_text)",
+      "target": "cmd_string",
+      "type": "assign",
+      "value": "build_command(...)"
+    },
+    {
+      "extractor": "rust_python_ast_phase7",
+      "file": "<ROOT>/server.py",
+      "function_id": "python:server.py:run_shell",
+      "id": "assign:server.py:86:result",
+      "line": 86,
+      "snippet": "result = runner(cmd_string, shell=True, capture_output=True, text=True)",
+      "target": "result",
+      "type": "assign",
+      "value": "runner(...)"
+    }
+  ],
+  "fused_findings": [
+    {
+      "call_chain": [],
+      "category": "command_execution",
+      "confidence": "low",
+      "conflict_notes": [],
+      "dataflow_path": [
+        "cmd_string",
+        "cmd_string",
+        "command = command",
+        "command_text = command",
+        "command_text"
+      ],
+      "evidence": [
+        "?:0 — command = command",
+        "?:0 — command_text = command",
+        "call:server.py:85:17:85 — cmd_string",
+        "call:server.py:85:17:85 — command_text",
+        "call:server.py:86:13:86 — cmd_string"
+      ],
+      "finding_id": "<UUID>",
+      "owasp_mcp": null,
+      "recommendation": null,
+      "related_agent_result_ids": [],
+      "related_codeql_result_ids": [],
+      "related_rule_result_ids": [],
+      "related_taint_result_ids": [
+        "taint:source:server.py:run_shell:command:sink:command_execution:server.py:86"
+      ],
+      "severity": "low",
+      "status": "potential",
+      "supported_by": [
+        "taint"
+      ],
+      "title": "taint: mcp_tool_parameter → command_execution"
+    },
+    {
+      "call_chain": [],
+      "category": "file_read",
+      "confidence": "medium",
+      "conflict_notes": [
+        "category mismatch: file_read, path_traversal, file_read",
+        "severity mismatch: rule=Medium, rule=High"
+      ],
+      "dataflow_path": [
+        "full_path = safe_path",
+        "full_path",
+        "normalize_path(...)",
+        "safe_path"
+      ],
+      "evidence": [
+        "<ROOT>/server.py:101:open(",
+        "<ROOT>/server.py:101:open(full_path, \"r",
+        "<ROOT>/server.py:99:Path(",
+        "?:0 — full_path = safe_path",
+        "call:server.py:101:14:101 — full_path",
+        "call:server.py:98:16:98 — normalize_path(...)",
+        "call:server.py:98:16:98 — safe_path"
+      ],
+      "finding_id": "<UUID>",
+      "owasp_mcp": null,
+      "recommendation": null,
+      "related_agent_result_ids": [],
+      "related_codeql_result_ids": [],
+      "related_rule_result_ids": [
+        "rule-result:file_read:1",
+        "rule-result:path_traversal:3"
+      ],
+      "related_taint_result_ids": [
+        "taint:source:server.py:read_log:filename:sink:file_read:server.py:101"
+      ],
+      "severity": "high",
+      "status": "potential",
+      "supported_by": [
+        "rule",
+        "taint"
+      ],
+      "title": "open("
+    },
+    {
+      "call_chain": [],
+      "category": "network_request",
+      "confidence": "high",
+      "conflict_notes": [],
+      "dataflow_path": [],
+      "evidence": [
+        "<ROOT>/server.py:115:requests.",
+        "<ROOT>/server.py:115:requests.get",
+        "call:server.py:115:15:115 — requests.get(...)"
+      ],
+      "finding_id": "<UUID>",
+      "owasp_mcp": null,
+      "recommendation": null,
+      "related_agent_result_ids": [],
+      "related_codeql_result_ids": [],
+      "related_rule_result_ids": [
+        "rule-result:network_request:2"
+      ],
+      "related_taint_result_ids": [
+        "taint:source:model:call:server.py:115:15:network_request:sink:network_request:server.py:115",
+        "taint:source:server.py:fetch_url:url:sink:network_request:server.py:115"
+      ],
+      "severity": "high",
+      "status": "potential",
+      "supported_by": [
+        "rule",
+        "taint"
+      ],
+      "title": "requests."
+    }
+  ],
+  "rule_results": [
+    {
+      "category": "file_read",
+      "confidence": "low",
+      "evidence": [
+        "<ROOT>/server.py:101:open(",
+        "<ROOT>/server.py:101:open(full_path, \"r"
+      ],
+      "file": "<ROOT>/server.py",
+      "line": 101,
+      "matched_text": "open(",
+      "owasp_mcp": null,
+      "recommendation": null,
+      "related_facts_exist": false,
+      "result_id": "rule-result:file_read:1",
+      "rule_id": "file_read",
+      "severity": "medium"
+    },
+    {
+      "category": "network_request",
+      "confidence": "medium",
+      "evidence": [
+        "<ROOT>/server.py:115:requests.",
+        "<ROOT>/server.py:115:requests.get"
+      ],
+      "file": "<ROOT>/server.py",
+      "line": 115,
+      "matched_text": "requests.",
+      "owasp_mcp": null,
+      "recommendation": null,
+      "related_facts_exist": false,
+      "result_id": "rule-result:network_request:2",
+      "rule_id": "network_request",
+      "severity": "high"
+    },
+    {
+      "category": "path_traversal",
+      "confidence": "low",
+      "evidence": [
+        "<ROOT>/server.py:99:Path("
+      ],
+      "file": "<ROOT>/server.py",
+      "line": 99,
+      "matched_text": "Path(",
+      "owasp_mcp": null,
+      "recommendation": null,
+      "related_facts_exist": false,
+      "result_id": "rule-result:path_traversal:3",
+      "rule_id": "path_traversal",
+      "severity": "high"
+    }
+  ],
+  "summary": {
+    "agent_result_count": 0,
+    "codeql_fused_count": 0,
+    "codeql_result_count": 0,
+    "fact_count": 55,
+    "fused_finding_count": 3,
+    "highest_severity": "high",
+    "risk_level": "high",
+    "rule_result_count": 3,
+    "taint_result_count": 4,
+    "target": "<ROOT>"
+  },
+  "taint_results": [
+    {
+      "backward_trace_found_root": true,
+      "call_chain": [],
+      "dataflow_path": [
+        "cmd_string",
+        "cmd_string",
+        "command = command",
+        "command_text = command",
+        "command_text"
+      ],
+      "entrypoint_id": "entry:server.py:run_shell",
+      "entrypoint_is_mcp": true,
+      "evidence": [
+        "?:0 — command = command",
+        "?:0 — command_text = command",
+        "call:server.py:85:17:85 — cmd_string",
+        "call:server.py:85:17:85 — command_text",
+        "call:server.py:86:13:86 — cmd_string"
+      ],
+      "result_id": "taint:source:server.py:run_shell:command:sink:command_execution:server.py:86",
+      "sink_id": "sink:command_execution:server.py:86",
+      "sink_kind": "command_execution",
+      "source_id": "source:server.py:run_shell:command",
+      "source_kind": "mcp_tool_parameter",
+      "taint_confidence": "low"
+    },
+    {
+      "backward_trace_found_root": true,
+      "call_chain": [],
+      "dataflow_path": [
+        "full_path = safe_path",
+        "full_path",
+        "normalize_path(...)",
+        "safe_path"
+      ],
+      "entrypoint_id": "entry:server.py:read_log",
+      "entrypoint_is_mcp": true,
+      "evidence": [
+        "?:0 — full_path = safe_path",
+        "call:server.py:101:14:101 — full_path",
+        "call:server.py:98:16:98 — normalize_path(...)",
+        "call:server.py:98:16:98 — safe_path"
+      ],
+      "result_id": "taint:source:server.py:read_log:filename:sink:file_read:server.py:101",
+      "sink_id": "sink:file_read:server.py:101",
+      "sink_kind": "file_read",
+      "source_id": "source:server.py:read_log:filename",
+      "source_kind": "mcp_tool_parameter",
+      "taint_confidence": "low"
+    },
+    {
+      "backward_trace_found_root": true,
+      "call_chain": [],
+      "dataflow_path": [
+        "requests.get(...)"
+      ],
+      "entrypoint_id": "entry:server.py:fetch_url",
+      "entrypoint_is_mcp": true,
+      "evidence": [
+        "call:server.py:115:15:115 — requests.get(...)"
+      ],
+      "result_id": "taint:source:server.py:fetch_url:url:sink:network_request:server.py:115",
+      "sink_id": "sink:network_request:server.py:115",
+      "sink_kind": "network_request",
+      "source_id": "source:server.py:fetch_url:url",
+      "source_kind": "mcp_tool_parameter",
+      "taint_confidence": "medium"
+    },
+    {
+      "backward_trace_found_root": true,
+      "call_chain": [],
+      "dataflow_path": [],
+      "entrypoint_id": "entry:server.py:fetch_url",
+      "entrypoint_is_mcp": true,
+      "evidence": [],
+      "result_id": "taint:source:model:call:server.py:115:15:network_request:sink:network_request:server.py:115",
+      "sink_id": "sink:network_request:server.py:115",
+      "sink_kind": "network_request",
+      "source_id": "source:model:call:server.py:115:15:network_request",
+      "source_kind": "network_request",
+      "taint_confidence": "medium"
+    }
+  ]
+}
