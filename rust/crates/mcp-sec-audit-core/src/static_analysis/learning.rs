@@ -424,23 +424,30 @@ pub(crate) struct StagedDelta {
     pub(crate) fingerprint: String,
 }
 
-/// `ModelCatalog` 的确定性内容身份：排序后的 `language:category:pattern` 条目用 `|` 连接。
-/// 覆盖三类模型（sink / source / sanitizer），使任何一类进化都会改变指纹。
+/// `ModelCatalog` 的确定性内容身份。为了日志可读，不再逐条打印
+/// `language:category:pattern`，而是压缩成「三类模型数量 + 全量内容的稳定哈希」：
+/// 数量给出可读摘要，哈希保留内容敏感性与确定性（任一模型变化都会改变指纹）。
 #[allow(dead_code)]
 pub(crate) fn catalog_fingerprint(catalog: &ModelCatalog) -> String {
     let mut entries = Vec::new();
+    let mut sinks = 0usize;
+    let mut sources = 0usize;
+    let mut sanitizers = 0usize;
     for lang in ["python", "javascript", "rust"] {
         for m in catalog.sinks_for_language(lang) {
+            sinks += m.patterns.len();
             for p in &m.patterns {
                 entries.push(format!("sink:{lang}:{}:{}", m.category, p));
             }
         }
         for m in catalog.sources_for_language(lang) {
+            sources += m.patterns.len();
             for p in &m.patterns {
                 entries.push(format!("source:{lang}:{}:{}", m.category, p));
             }
         }
         for m in catalog.sanitizers_for_language(lang) {
+            sanitizers += m.patterns.len();
             for p in &m.patterns {
                 entries.push(format!(
                     "sanitizer:{lang}:{}:{}",
@@ -451,7 +458,21 @@ pub(crate) fn catalog_fingerprint(catalog: &ModelCatalog) -> String {
         }
     }
     entries.sort();
-    entries.join("|")
+    format!(
+        "sinks={sinks} sources={sources} sanitizers={sanitizers} #{}",
+        stable_hash(&entries.join("|"))
+    )
+}
+
+/// 稳定的非加密 64-bit 哈希（FNV-1a），16 进制输出。用于把指纹压成紧凑摘要，
+/// 同时保持「确定性 + 内容敏感」——跨运行、跨 Rust 版本稳定。
+pub(crate) fn stable_hash(input: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in input.bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
 }
 
 /// 把门控后（Hot/Warm）的 sink 候选转成可回退的 `StagedDelta`，对现有 catalog 去重。

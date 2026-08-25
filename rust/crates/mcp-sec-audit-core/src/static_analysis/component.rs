@@ -79,11 +79,18 @@ impl Component for CodeqlComponent {
         ToolKind::Codeql
     }
     fn fingerprint(&self) -> String {
-        format!(
-            "codeql:qf={}|suites={}|mad={}",
+        let full = format!(
+            "qf={}|suites={}|mad={}",
             join(&self.query_files),
             join(&self.suite_refs),
             join(&self.mad_sinks)
+        );
+        format!(
+            "codeql:qf={} suites={} mad={} #{}",
+            self.query_files.len(),
+            self.suite_refs.len(),
+            self.mad_sinks.len(),
+            super::learning::stable_hash(&full)
         )
     }
     fn evolve(&self, delta: &ComponentDelta) -> Self {
