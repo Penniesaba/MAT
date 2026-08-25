@@ -18,8 +18,13 @@
 //! * absolute paths (target, rulebook, temp dir) → stable `<ROOT>`/`<RULEBOOK>`/`<TMP>` tokens;
 //! * UUIDs (e.g. fused `finding_id`) → `<UUID>`;
 //! * run identifiers embedded in provenance → `<SCAN_ID>`;
-//! * array ordering → canonical (sorted) so nondeterministic collection order
-//!   does not produce a spurious diff.
+//! * timestamps / durations / run-ids → `<TIMESTAMP>` (both ISO-8601 and the
+//!   repo's compact `%Y%m%d-%H%M%S` forms, plus any value under a temporal key);
+//! * array ordering → only *set-valued* arrays (id-reference sets such as
+//!   `related_taint_result_ids` and `supported_by`) are sorted; every ordered
+//!   sequence (`dataflow_path`, `call_chain`, `evidence`, `args`, `params`,
+//!   `path`, and the top-level `facts`/`rule_results`/`taint_results`/
+//!   `fused_findings` lists) keeps its order so a reordering regression is caught.
 //!
 //! Everything else is left verbatim so a genuine regression (a missing/extra
 //! finding, a changed category, a dropped fact) still changes the fixture.
@@ -48,6 +53,49 @@ fn fixture_path(name: &str) -> PathBuf {
     manifest_dir().join("tests/fixtures").join(name)
 }
 
+/// Keys whose arrays are *sets* (membership is order-insensitive) and are
+/// therefore safe to sort for determinism. Everything else is an ordered
+/// sequence (`dataflow_path`, `call_chain`, `evidence`, `args`, `params`,
+/// `path`, and the top-level `facts`/`rule_results`/`taint_results`/
+/// `fused_findings` lists) whose order is semantically meaningful and must be
+/// preserved: a reordering of a taint flow is exactly the regression the
+/// golden test must catch (and Task 7's async `spawn_blocking` conversion is
+/// precisely the change most likely to reorder things).
+const SORT_SAFE_KEYS: &[&str] = &[
+    "related_rule_result_ids",
+    "related_taint_result_ids",
+    "related_agent_result_ids",
+    "related_codeql_result_ids",
+    "related_rule_ids",
+    "related_taint_ids",
+    "related_agent_ids",
+    "supported_by",
+];
+
+/// Keys whose values are timestamps, durations, or run-ids. Masked regardless
+/// of whether they serialize as a string or a number, so a later task that
+/// adds e.g. `summary.elapsed_ms` or `started_at` does not make the golden
+/// test fail spuriously.
+const TEMPORAL_KEYS: &[&str] = &[
+    "started_at",
+    "finished_at",
+    "completed_at",
+    "scanned_at",
+    "created_at",
+    "updated_at",
+    "timestamp",
+    "timestamps",
+    "elapsed",
+    "elapsed_ms",
+    "elapsed_seconds",
+    "elapsed_nanos",
+    "duration",
+    "duration_ms",
+    "duration_seconds",
+    "duration_nanos",
+    "last_seen_run",
+];
+
 /// Normalize a rendered JSON document into a stable golden form.
 ///
 /// `masks` is a list of `(needle, replacement)` applied (in order) to every
@@ -55,32 +103,37 @@ fn fixture_path(name: &str) -> PathBuf {
 /// that vary across machines/runs.
 fn normalize_for_golden(json: &str, masks: &[(String, &str)]) -> Value {
     let mut value: Value = serde_json::from_str(json).expect("render_json output must parse");
-    normalize_value(&mut value, masks);
+    normalize_value(&mut value, "", masks);
     value
 }
 
-fn normalize_value(value: &mut Value, masks: &[(String, &str)]) {
+fn normalize_value(value: &mut Value, key: &str, masks: &[(String, &str)]) {
     match value {
         Value::String(s) => {
             let mut out = s.clone();
             for (needle, replacement) in masks {
                 out = out.replace(needle.as_str(), replacement);
             }
-            out = mask_uuid(&out);
-            out = mask_scan_id(&out);
+            out = mask_volatile(&out);
             *s = out;
         }
         Value::Array(items) => {
             for item in items.iter_mut() {
-                normalize_value(item, masks);
+                normalize_value(item, "", masks);
             }
-            // Deterministic ordering: sort by canonical compact JSON form so a
-            // stable total order exists even across mixed-type arrays.
-            items.sort_by_key(canonical_json);
+            // Only sort *set-valued* arrays (see SORT_SAFE_KEYS). Ordered
+            // sequences keep their order so the fixture pins the true flow.
+            if SORT_SAFE_KEYS.contains(&key) {
+                items.sort_by_key(canonical_json);
+            }
         }
         Value::Object(map) => {
-            for child in map.values_mut() {
-                normalize_value(child, masks);
+            for (child_key, child) in map.iter_mut() {
+                if TEMPORAL_KEYS.contains(&child_key.as_str()) {
+                    *child = Value::String("<TIMESTAMP>".to_string());
+                } else {
+                    normalize_value(child, child_key, masks);
+                }
             }
         }
         _ => {}
@@ -91,6 +144,28 @@ fn normalize_value(value: &mut Value, masks: &[(String, &str)]) {
 /// ordering. `serde_json::to_string` is infallible for a `Value`.
 fn canonical_json(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_default()
+}
+
+/// Apply all token-level masks to a string value: UUIDs, run identifiers, and
+/// timestamps.
+fn mask_volatile(s: &str) -> String {
+    mask_timestamps(&mask_scan_id(&mask_uuid(s)))
+}
+
+/// Replace timestamps with `<TIMESTAMP>`: ISO-8601/RFC3339 date-times and the
+/// repo's own compact `%Y%m%d-%H%M%S` form (see `reporting::resolve_output_path`).
+/// Defensive today (no timestamp fields exist in the result), but a later task
+/// adding an `elapsed`/`started_at` field must not make this test fail
+/// spuriously.
+fn mask_timestamps(s: &str) -> String {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(
+            r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?|\d{8}-\d{6}",
+        )
+        .expect("timestamp regex")
+    });
+    re.replace_all(s, "<TIMESTAMP>").into_owned()
 }
 
 /// Replace a v4 UUID (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`) with `<UUID>`.
@@ -174,6 +249,11 @@ fn mask_scan_id(s: &str) -> String {
 fn assert_golden(name: &str, actual: &Value) {
     let path = fixture_path(name);
     if std::env::var_os("GOLDEN_REGEN").is_some() {
+        eprintln!(
+            "GOLDEN_REGEN: rewrote {} — this is a regeneration, NOT a pass; \
+             review the diff before committing",
+            path.display()
+        );
         std::fs::create_dir_all(path.parent().expect("fixture dir")).expect("create fixtures dir");
         let pretty = serde_json::to_string_pretty(actual).expect("pretty serialize");
         std::fs::write(&path, format!("{pretty}\n")).expect("write fixture");
