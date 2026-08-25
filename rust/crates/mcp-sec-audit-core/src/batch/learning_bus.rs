@@ -22,8 +22,8 @@ use crate::static_analysis::learning::{
 /// One message the learning-bus actor can service.
 ///
 /// `Promote` carries a full promotion request plus a oneshot ack; `Snapshot`
-/// asks for a clone of the current authoritative catalog; `Shutdown` stops the
-/// actor (dropping the handle's channel also does).
+/// asks for a clone of the current authoritative catalog. The actor exits when
+/// every handle is dropped (the channel closes).
 pub enum BusMsg {
     Promote {
         req: PromoteRequest,
@@ -32,13 +32,11 @@ pub enum BusMsg {
     Snapshot {
         reply: oneshot::Sender<ModelCatalog>,
     },
-    Shutdown,
 }
 
 /// A repository's contribution to the shared learned state.
 ///
-/// `sinks` / `sources` / `sanitizers` are the model deltas to merge (each
-/// model's `corroboration_count` is summed into any prior evidence); `rules`
+/// `sinks` / `sources` / `sanitizers` are the model deltas to merge; `rules`
 /// and `prompt_extra` are accumulated text.
 #[derive(Debug, Clone, Default)]
 pub struct PromoteRequest {
@@ -160,6 +158,35 @@ impl ActorState {
         sources: Vec<SourceModel>,
         sanitizers: Vec<SanitizerModel>,
     ) {
+        // 每个 promoted model 代表一个独立观察（一次差分信号证实）。生产 delta 恒带
+        // `corroboration_count = 0`（stage_catalog_evolution），裁决模型带 1；merge 只做
+        // 求和，不自行计数。这里把每个入站模型的 corroboration 归一为 1，使：
+        //   - 首次观察落到 1（与裁决路径「首条证据 = 1」的约定一致）；
+        //   - 重复观察（同一 key 已存在）经 merge 求和 +1。
+        // 如此两个独立仓库各自固化同一 sink 时累计为 2（§7.3 #3 的 corroboration 语义）。
+        // pollution_count / last_seen_run / confidence 仍由 merge 函数照常处理，不受影响。
+        let sinks: Vec<SinkModel> = sinks
+            .into_iter()
+            .map(|mut m| {
+                m.corroboration_count = 1;
+                m
+            })
+            .collect();
+        let sources: Vec<SourceModel> = sources
+            .into_iter()
+            .map(|mut m| {
+                m.corroboration_count = 1;
+                m
+            })
+            .collect();
+        let sanitizers: Vec<SanitizerModel> = sanitizers
+            .into_iter()
+            .map(|mut m| {
+                m.corroboration_count = 1;
+                m
+            })
+            .collect();
+
         let existing_sinks = self.all_sinks();
         let existing_sources = self.all_sources();
         let existing_sanitizers = self.all_sanitizers();
@@ -257,7 +284,6 @@ async fn actor_loop(mut rx: mpsc::UnboundedReceiver<BusMsg>, learned_dir: Option
             BusMsg::Snapshot { reply } => {
                 let _ = reply.send(state.catalog.clone());
             }
-            BusMsg::Shutdown => break,
         }
     }
 }
@@ -267,6 +293,9 @@ mod tests {
     use super::*;
     use crate::model::{Confidence, Severity};
 
+    /// Builds a sink model exactly the way the production staged-delta path
+    /// does: `corroboration_count = 0` (see `stage_catalog_evolution`). The
+    /// actor — not the caller — is responsible for counting observations.
     fn sink_model(pattern: &str, category: &str) -> SinkModel {
         SinkModel {
             language: "python".into(),
@@ -277,7 +306,7 @@ mod tests {
             patterns: vec![pattern.into()],
             source: Some("learned".into()),
             learned_from: None,
-            corroboration_count: 1,
+            corroboration_count: 0,
             pollution_count: 0,
             last_seen_run: None,
         }
@@ -328,6 +357,31 @@ mod tests {
             "two independent repos finding the same sink must corroborate"
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn single_repo_promotion_counts_exactly_one_observation() {
+        let bus = spawn(None);
+        bus.promote(PromoteRequest {
+            repo: "a".into(),
+            sinks: vec![sink_model("os.popen", "command_execution")],
+            ..Default::default()
+        })
+        .await
+        .expect("promote");
+
+        let snap = bus.snapshot().await.expect("snapshot");
+        let found = snap
+            .sinks_for_language("python")
+            .iter()
+            .find(|m| m.patterns.contains(&"os.popen".to_string()))
+            .expect("model");
+        // 一次观察 = 恰好一条 corroboration；绝不能因入站 delta 带 0 而被吞掉，
+        // 也不能被膨胀成 2+（计数观察，而非无差别 +1 到既有值之外）。
+        assert_eq!(
+            found.corroboration_count, 1,
+            "a single repo's observation must count as exactly one corroboration"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
