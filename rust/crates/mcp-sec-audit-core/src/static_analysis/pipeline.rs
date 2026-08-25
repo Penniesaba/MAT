@@ -212,7 +212,22 @@ pub fn run_static_scan_with_progress(
             "Agent analysis: skipped (disabled)"
         });
         let start = std::time::Instant::now();
-        let output = agent::run(&ctx)?;
+        // A transient agent failure (e.g. auth, unparseable output) must not
+        // abort the whole scan: degrade to "no agent findings" with a warning.
+        let output = match agent::run(&ctx) {
+            Ok(output) => output,
+            Err(e) => {
+                tracing::warn!(
+                    target: "mcp_sec_audit::agent",
+                    error = %e,
+                    "agent analysis (phase 1) failed; continuing without agent findings"
+                );
+                AgentOutput {
+                    findings: Vec::new(),
+                    model_candidates: Vec::new(),
+                }
+            }
+        };
         tracing::info!(
             target: "mcp_sec_audit::agent",
             findings = output.findings.len(),
@@ -419,7 +434,20 @@ pub fn run_static_scan_with_progress(
         .entered();
         progress("Running agent analysis (phase 2)...");
         let start = std::time::Instant::now();
-        let output = agent::run_with_prompt(&ctx, prompt_extra.as_deref())?;
+        let output = match agent::run_with_prompt(&ctx, prompt_extra.as_deref()) {
+            Ok(output) => output,
+            Err(e) => {
+                tracing::warn!(
+                    target: "mcp_sec_audit::agent",
+                    error = %e,
+                    "agent analysis (phase 2) failed; continuing without agent findings"
+                );
+                AgentOutput {
+                    findings: Vec::new(),
+                    model_candidates: Vec::new(),
+                }
+            }
+        };
         tracing::info!(
             target: "mcp_sec_audit::agent",
             findings = output.findings.len(),
