@@ -203,8 +203,10 @@ pub struct RunContext {
     pub run_id: RunId,
     pub progress: Progress,
     pub cancel: CancellationToken,
-    /// Placeholder until Task 9 replaces it with `Option<crate::batch::ResourceGovernor>`.
-    pub governor: Option<()>,
+    /// The per-class resource governor, when this run participates in a batch.
+    /// `None` (single-repo mode) keeps the pipeline acquiring no permits, so
+    /// the single-repo path is byte-identical to v4.
+    pub governor: Option<crate::batch::ResourceGovernor>,
     /// The shared learning bus, when this run participates in cross-repo
     /// learning. `None` (single-repo mode) keeps the v4 two-phase promote path
     /// unchanged.
@@ -235,6 +237,26 @@ impl RunContext {
             cancel: CancellationToken::new(),
             governor: None,
             learning_bus: None,
+        }
+    }
+
+    /// Builds the per-repository context the batch orchestrator hands to each
+    /// repo task: the repo's derived [`RunId`], a repo-scoped [`Progress`], the
+    /// shared batch [`CancellationToken`], the shared [`ResourceGovernor`], and
+    /// the shared [`LearningBusHandle`] (when learning is enabled).
+    pub fn for_repo(
+        run_id: RunId,
+        progress: Progress,
+        cancel: CancellationToken,
+        governor: Option<crate::batch::ResourceGovernor>,
+        learning_bus: Option<crate::batch::LearningBusHandle>,
+    ) -> Self {
+        Self {
+            run_id,
+            progress,
+            cancel,
+            governor,
+            learning_bus,
         }
     }
 

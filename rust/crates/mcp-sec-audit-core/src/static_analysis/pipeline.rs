@@ -9,8 +9,8 @@ use anyhow::{Context, Result, bail};
 use crate::model::CodeqlOutput;
 use crate::{
     AgentOutput, ConfigSnapshot, EvolutionReport, Fact, FusedFinding, ModelCandidate, Progress,
-    PromoteRequest, RuleAnalysisResult, RuleBook, RunContext, RunId, RuntimeConfig, Severity,
-    StaticAnalysisResult, StaticAnalysisSummary, TaintAnalysisResult, load_rulebook,
+    PromoteRequest, ResourceClass, RuleAnalysisResult, RuleBook, RunContext, RunId, RuntimeConfig,
+    Severity, StaticAnalysisResult, StaticAnalysisSummary, TaintAnalysisResult, load_rulebook,
 };
 
 use super::component::Component;
@@ -57,6 +57,24 @@ impl StaticScanContext {
             discovered_files,
             run_id,
         }
+    }
+}
+
+/// Acquires a [`ResourceGovernor`] permit for `class` when the run carries a
+/// governor, returning `None` (no permit, no `.await`) in single-repo mode.
+///
+/// # 防死锁不变量
+/// 任一时刻最多持有一个类别的许可，且绝不在持有 A 类许可时去申请 B 类许可。
+/// 每个 provider 调用点独立作用域，靠 `OwnedSemaphorePermit` 的 RAII 在离开
+/// 作用域时释放——许可从不跨类别持有，环形等待在结构上不可能出现。单仓库模式
+/// （`governor = None`）不申请任何许可，行为与 v4 逐字节一致。
+async fn acquire_permit(
+    run_ctx: &RunContext,
+    class: ResourceClass,
+) -> Option<tokio::sync::OwnedSemaphorePermit> {
+    match &run_ctx.governor {
+        Some(governor) => Some(governor.acquire(class).await),
+        None => None,
     }
 }
 
@@ -268,6 +286,7 @@ pub async fn run_static_scan_async(
         let start = std::time::Instant::now();
         let ctx_owned = ctx.clone();
         let rulebook_owned = loaded_rulebook.clone();
+        let _cpu_permit = acquire_permit(run_ctx, ResourceClass::Cpu).await;
         let results =
             tokio::task::spawn_blocking(move || rule::run(&ctx_owned, rulebook_owned.as_ref()))
                 .await??;
@@ -296,6 +315,7 @@ pub async fn run_static_scan_async(
         let start = std::time::Instant::now();
         let ctx_owned = ctx.clone();
         let catalog_owned = base_catalog.clone();
+        let _cpu_permit = acquire_permit(run_ctx, ResourceClass::Cpu).await;
         let (results, facts) = tokio::task::spawn_blocking(move || {
             taint::run_with_catalog(&ctx_owned, &catalog_owned)
         })
@@ -326,6 +346,7 @@ pub async fn run_static_scan_async(
         let start = std::time::Instant::now();
         // A transient agent failure (e.g. auth, unparseable output) must not
         // abort the whole scan: degrade to "no agent findings" with a warning.
+        let _agent_permit = acquire_permit(run_ctx, ResourceClass::Agent).await;
         let output = match agent::run_async(&ctx).await {
             Ok(output) => output,
             Err(e) => {
@@ -367,6 +388,7 @@ pub async fn run_static_scan_async(
             "CodeQL analysis: skipped (disabled)"
         });
         let start = std::time::Instant::now();
+        let _codeql_permit = acquire_permit(run_ctx, ResourceClass::Codeql).await;
         let output = codeql::run_async(&ctx, &base_catalog, progress).await?;
         tracing::info!(
             target: "mcp_sec_audit::codeql",
@@ -526,6 +548,7 @@ pub async fn run_static_scan_async(
         let start = std::time::Instant::now();
         let ctx_owned = ctx.clone();
         let catalog_owned = evolved_catalog.clone();
+        let _cpu_permit = acquire_permit(run_ctx, ResourceClass::Cpu).await;
         let (results, facts) = tokio::task::spawn_blocking(move || {
             taint::run_with_catalog(&ctx_owned, &catalog_owned)
         })
@@ -550,6 +573,7 @@ pub async fn run_static_scan_async(
         .entered();
         progress.report("Running agent analysis (phase 2)...");
         let start = std::time::Instant::now();
+        let _agent_permit = acquire_permit(run_ctx, ResourceClass::Agent).await;
         let output = match agent::run_with_prompt_async(&ctx, prompt_extra.as_deref()).await {
             Ok(output) => output,
             Err(e) => {
@@ -587,6 +611,7 @@ pub async fn run_static_scan_async(
         .entered();
         progress.report("Running CodeQL analysis (phase 2)...");
         let start = std::time::Instant::now();
+        let _codeql_permit = acquire_permit(run_ctx, ResourceClass::Codeql).await;
         let output = codeql::run_async(&ctx, &evolved_catalog, progress).await?;
         tracing::info!(
             target: "mcp_sec_audit::codeql",
@@ -630,13 +655,16 @@ pub async fn run_static_scan_async(
             })
             .collect();
         let explanation_extra = agent::render_explanation_prompt(&items);
-        match agent::run_with_prompt_async(&ctx, Some(&explanation_extra)).await {
-            Ok(out) => attach_explanations(&mut ambiguous, &out.findings),
-            Err(e) => tracing::warn!(
-                target: "mcp_sec_audit::agent",
-                error = %e,
-                "L2 explanation pass failed"
-            ),
+        {
+            let _agent_permit = acquire_permit(run_ctx, ResourceClass::Agent).await;
+            match agent::run_with_prompt_async(&ctx, Some(&explanation_extra)).await {
+                Ok(out) => attach_explanations(&mut ambiguous, &out.findings),
+                Err(e) => tracing::warn!(
+                    target: "mcp_sec_audit::agent",
+                    error = %e,
+                    "L2 explanation pass failed"
+                ),
+            }
         }
     }
     tracing::info!(
@@ -664,6 +692,7 @@ pub async fn run_static_scan_async(
             });
         }
         if !items.is_empty() {
+            let _agent_permit = acquire_permit(run_ctx, ResourceClass::Agent).await;
             match agent::run_adjudication_async(&ctx, &items).await {
                 Ok(rounds) => {
                     let resolved = agent::vote(&rounds);

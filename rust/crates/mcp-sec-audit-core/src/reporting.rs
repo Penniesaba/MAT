@@ -376,7 +376,10 @@ pub fn resolve_output_path(output: &str, repo: Option<&str>) -> String {
 }
 
 /// Current local time formatted as `YYYYMMDD-HHMMSS`.
-fn current_local_timestamp() -> String {
+///
+/// `pub(crate)` so the batch orchestrator can stamp `BatchSummary::started_at`
+/// in the same format as report filenames, keeping the two consistent.
+pub(crate) fn current_local_timestamp() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()

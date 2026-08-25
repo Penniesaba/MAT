@@ -14,7 +14,7 @@ pub use batch::{
     BatchConfig, BatchRepoSummary, BatchSettings, BatchSummary, BusMsg, LearningBusHandle,
     LimitsConfig, PromoteRequest, RepoConfig, RepoStatus, ResourceClass, ResourceGovernor,
     load_batch_config, merge_repo_config, parse_batch_config_toml, render_batch_summary_json,
-    render_batch_summary_markdown,
+    render_batch_summary_markdown, run_batch,
 };
 pub use config::{
     DynamicConfig, FusionConfig, LogFormat, LogLevel, LoggingConfig, ReportConfig, RuntimeConfig,
