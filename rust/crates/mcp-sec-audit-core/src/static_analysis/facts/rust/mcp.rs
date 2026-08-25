@@ -57,8 +57,7 @@ pub(crate) fn entrypoint_kind_from_callee(callee: &str) -> EntryPointKind {
 
 /// Check if a callee matches an MCP registration pattern (SDK call style).
 pub(crate) fn is_mcp_registration(callee: &str) -> bool {
-    MCP_ATTR_PATTERNS.iter().any(|pattern| {
-        callee == *pattern
-            || callee.ends_with(&format!(".{pattern}"))
-    })
+    MCP_ATTR_PATTERNS
+        .iter()
+        .any(|pattern| callee == *pattern || callee.ends_with(&format!(".{pattern}")))
 }

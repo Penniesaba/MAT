@@ -25,6 +25,16 @@ fn mad_inject_supported(version: Option<(u32, u32, u32)>) -> bool {
     matches!(version, Some((major, minor, patch)) if (major, minor, patch) >= (2, 26, 3))
 }
 
+/// Map a CodeQL database language to its MaD model-pack language key.
+/// `typescript` shares the `javascript` pack; `rust` has no MaD pack today.
+fn mad_language_for_db_language(db_language: &str) -> Option<&'static str> {
+    match db_language {
+        "python" => Some("python"),
+        "javascript" | "typescript" => Some("javascript"),
+        _ => None,
+    }
+}
+
 /// A prepared CodeQL scan: provider, config, and per-language databases and
 /// query packs. `create` builds databases (reusing any cached DB); `analyze`
 /// runs analysis and parses SARIF.
@@ -105,7 +115,8 @@ impl CodeqlSession {
 
         for language in &languages {
             // Resolve the query pack for this database's language (built-in or custom).
-            let query_pack = resolve_query_pack(codeql_config.query_pack_path.as_deref(), language)?;
+            let query_pack =
+                resolve_query_pack(codeql_config.query_pack_path.as_deref(), language)?;
             tracing::info!(
                 target: "mcp_sec_audit::codeql",
                 language = %language,
@@ -158,6 +169,15 @@ impl CodeqlSession {
         for (language, db) in &self.databases {
             let query_pack = &self.query_packs[language];
 
+            // Inject only the MaD pack matching this database's language.
+            // Injecting the javascript pack while analyzing a python DB (or
+            // vice-versa) loads the wrong language's `sinkModel` tuples and
+            // aborts analysis with `Expected 4, but was 3`.
+            let language_packs: Vec<&MadPack> = model_packs
+                .iter()
+                .filter(|mp| Some(mp.language.as_str()) == mad_language_for_db_language(language))
+                .collect();
+
             // Run analysis against the database.
             tracing::debug!(
                 target: "mcp_sec_audit::codeql",
@@ -170,7 +190,7 @@ impl CodeqlSession {
                 query_pack,
                 self.config.timeout_seconds,
                 &self.config.extra_args,
-                model_packs,
+                &language_packs,
             ) {
                 Ok(sarif) => {
                     let metadata = parser::CodeqlMetadata {
@@ -194,18 +214,13 @@ impl CodeqlSession {
                             raw_sarif_parts.push(sarif);
                         }
                         Err(e) => {
-                            all_diagnostics.push(format!(
-                                "SARIF parse failed for {}: {}",
-                                language, e
-                            ));
+                            all_diagnostics
+                                .push(format!("SARIF parse failed for {}: {}", language, e));
                         }
                     }
                 }
                 Err(e) => {
-                    all_diagnostics.push(format!(
-                        "CodeQL analyze failed for {}: {}",
-                        language, e
-                    ));
+                    all_diagnostics.push(format!("CodeQL analyze failed for {}: {}", language, e));
                 }
             }
         }
@@ -229,7 +244,11 @@ impl CodeqlSession {
 /// Builds a session (databases + query packs), compiles the shared sink model
 /// catalog into a MaD model pack, runs analysis, and parses SARIF into
 /// structured results.
-pub fn run(ctx: &StaticScanContext, catalog: &crate::models::ModelCatalog, mut progress: impl FnMut(&str)) -> Result<CodeqlOutput> {
+pub fn run(
+    ctx: &StaticScanContext,
+    catalog: &crate::models::ModelCatalog,
+    mut progress: impl FnMut(&str),
+) -> Result<CodeqlOutput> {
     let Some(session) = CodeqlSession::create(ctx)? else {
         // `create` returned `None`: either CodeQL is disabled, or no supported
         // language files were found. Reproduce the skip behavior here (where
@@ -261,13 +280,16 @@ pub fn run(ctx: &StaticScanContext, catalog: &crate::models::ModelCatalog, mut p
     let cli_version = session.provider.codeql_version();
     let model_packs: Vec<models::MadPack> = if mad_inject_supported(cli_version) {
         match models::write_model_pack_dir(catalog, ctx) {
-            Ok(pack) => {
-                tracing::info!(
-                    target: "mcp_sec_audit::codeql",
-                    pack = %pack.name,
-                    "compiled MaD model pack"
-                );
-                vec![pack]
+            Ok(packs) => {
+                for pack in &packs {
+                    tracing::info!(
+                        target: "mcp_sec_audit::codeql",
+                        pack = %pack.name,
+                        language = %pack.language,
+                        "compiled MaD model pack"
+                    );
+                }
+                packs
             }
             Err(e) => {
                 tracing::warn!(
@@ -302,7 +324,8 @@ mod tests {
             rulebook_paths: Vec::new(),
             discovered_files: Vec::new(),
         };
-        let output = run(&ctx, &crate::models::default_catalog(), |_| {}).expect("run disabled codeql");
+        let output =
+            run(&ctx, &crate::models::default_catalog(), |_| {}).expect("run disabled codeql");
         assert!(output.results.is_empty());
         assert!(output.raw_sarif.is_none());
         assert!(output.diagnostics.is_empty());
@@ -318,7 +341,8 @@ mod tests {
             discovered_files: Vec::new(),
         };
         // Safe even without CodeQL CLI: no files → returns before CLI check.
-        let output = run(&ctx, &crate::models::default_catalog(), |_| {}).expect("run codeql with no files");
+        let output =
+            run(&ctx, &crate::models::default_catalog(), |_| {}).expect("run codeql with no files");
         assert!(output.results.is_empty());
         assert!(!output.diagnostics.is_empty());
         assert!(output.diagnostics[0].contains("No CodeQL-supported language"));
@@ -338,7 +362,10 @@ mod tests {
             }],
         };
         let mut messages: Vec<String> = Vec::new();
-        let output = run(&ctx, &crate::models::default_catalog(), |m| messages.push(m.to_string())).expect("run");
+        let output = run(&ctx, &crate::models::default_catalog(), |m| {
+            messages.push(m.to_string())
+        })
+        .expect("run");
         assert!(output.results.is_empty());
         assert!(messages.iter().any(|m| m.contains("CodeQL skipped")));
     }
@@ -355,5 +382,64 @@ mod tests {
         assert!(!mad_inject_supported(Some((2, 26, 2))));
         assert!(!mad_inject_supported(Some((2, 26, 0))));
         assert!(!mad_inject_supported(None));
+    }
+
+    /// Regression gate for the P0 cross-language MaD pollution bug: compiling the
+    /// full catalog (python + javascript) and analyzing a single-language DB must
+    /// not load the other language's `.model.yml` (which previously aborted with
+    /// `sinkModel Expected 4, but was 3`). Requires a real CodeQL CLI, so it is
+    /// `#[ignore]`d by default; run manually with:
+    ///   cargo test -p mcp-sec-audit-core --lib codeql -- --ignored
+    #[test]
+    #[ignore = "requires CodeQL CLI >= 2.26.3 on PATH"]
+    fn mad_pack_isolation_end_to_end_no_cross_language_error() {
+        use super::models::MadPack;
+        use super::provider::{CliCodeqlProvider, CodeqlProvider};
+        use super::queries::QueryPack;
+
+        let provider = CliCodeqlProvider::new("codeql");
+        if !provider.check_available() {
+            eprintln!("skipping: codeql CLI not on PATH");
+            return;
+        }
+        if !mad_inject_supported(provider.codeql_version()) {
+            eprintln!("skipping: codeql CLI < 2.26.3 (MaD disabled)");
+            return;
+        }
+
+        // Minimal python DB with a command sink reachable from an env var.
+        let src = std::env::temp_dir().join("mcp-sec-audit-mad-e2e-src");
+        std::fs::create_dir_all(&src).expect("create src dir");
+        std::fs::write(
+            src.join("main.py"),
+            "import os\np = os.environ.get('X')\nos.system(p)\n",
+        )
+        .expect("write main.py");
+        let db = provider
+            .create_database(&src, "python")
+            .expect("create python DB");
+
+        // Compile the FULL catalog (python + javascript sinks) into per-language
+        // packs, then analyze the python DB with ONLY the python pack.
+        let ctx = StaticScanContext {
+            config: RuntimeConfig::default(),
+            rulebook_paths: Vec::new(),
+            discovered_files: Vec::new(),
+        };
+        let packs = super::models::write_model_pack_dir(&crate::models::default_catalog(), &ctx)
+            .expect("write model pack dir");
+        let python_pack: Vec<&MadPack> = packs.iter().filter(|p| p.language == "python").collect();
+        assert_eq!(python_pack.len(), 1, "expected exactly one python pack");
+
+        let query_pack = QueryPack {
+            query_files: Vec::new(),
+            suite_refs: vec!["codeql/python-queries".to_string()],
+        };
+        match provider.run_analysis(&db, &query_pack, 600, &[], &python_pack) {
+            Ok(_sarif) => {}
+            Err(e) => panic!("MaD cross-language pollution (or analyze failure): {e}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&src);
     }
 }

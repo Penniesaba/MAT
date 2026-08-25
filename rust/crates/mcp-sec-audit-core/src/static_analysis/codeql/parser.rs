@@ -11,7 +11,10 @@ pub struct CodeqlMetadata {
 }
 
 fn normalize_tag(tag: &str) -> String {
-    tag.trim().replace('-', "_").replace(' ', "_").to_lowercase()
+    tag.trim()
+        .replace('-', "_")
+        .replace(' ', "_")
+        .to_lowercase()
 }
 
 /// Extract a shared-vocabulary category from a SARIF rule's `properties.tags`.
@@ -67,9 +70,12 @@ pub fn resolve_category(rule_id: &str, rule: Option<&serde_json::Value>) -> Stri
 }
 
 /// Parse SARIF v2.1.0 JSON output from CodeQL into structured results.
-pub fn parse_sarif(sarif_json: &str, metadata: &CodeqlMetadata) -> Result<Vec<CodeqlAnalysisResult>> {
-    let root: serde_json::Value =
-        serde_json::from_str(sarif_json).map_err(|e| anyhow::anyhow!("invalid SARIF JSON: {}", e))?;
+pub fn parse_sarif(
+    sarif_json: &str,
+    metadata: &CodeqlMetadata,
+) -> Result<Vec<CodeqlAnalysisResult>> {
+    let root: serde_json::Value = serde_json::from_str(sarif_json)
+        .map_err(|e| anyhow::anyhow!("invalid SARIF JSON: {}", e))?;
 
     let runs = root["runs"]
         .as_array()
@@ -78,11 +84,10 @@ pub fn parse_sarif(sarif_json: &str, metadata: &CodeqlMetadata) -> Result<Vec<Co
     let mut results = Vec::new();
 
     for (run_idx, run) in runs.iter().enumerate() {
-        let tool_name = run["tool"]["driver"]["name"]
-            .as_str()
-            .unwrap_or("CodeQL");
+        let tool_name = run["tool"]["driver"]["name"].as_str().unwrap_or("CodeQL");
 
-        let rule_index: std::collections::HashMap<&str, &serde_json::Value> = run["tool"]["driver"]["rules"]
+        let rule_index: std::collections::HashMap<&str, &serde_json::Value> = run["tool"]["driver"]
+            ["rules"]
             .as_array()
             .map(|rules| {
                 rules
@@ -112,10 +117,7 @@ pub fn parse_sarif(sarif_json: &str, metadata: &CodeqlMetadata) -> Result<Vec<Co
             let rule = rule_index.get(rule_id.as_str()).copied();
             let category = resolve_category(&rule_id, rule);
 
-            let message = sr["message"]["text"]
-                .as_str()
-                .unwrap_or("")
-                .to_string();
+            let message = sr["message"]["text"].as_str().unwrap_or("").to_string();
 
             if message.is_empty() {
                 continue;
@@ -168,10 +170,7 @@ pub fn parse_sarif(sarif_json: &str, metadata: &CodeqlMetadata) -> Result<Vec<Co
     Ok(results)
 }
 
-fn parse_severity(
-    result_level: Option<&str>,
-    rule_level: Option<&str>,
-) -> Severity {
+fn parse_severity(result_level: Option<&str>, rule_level: Option<&str>) -> Severity {
     let level = result_level.or(rule_level).unwrap_or("warning");
     match level {
         "error" => Severity::High,
@@ -278,7 +277,8 @@ mod tests {
       }]
     }]
   }]
-}"#.to_string()
+}"#
+        .to_string()
     }
 
     fn metadata() -> CodeqlMetadata {
@@ -341,7 +341,10 @@ mod tests {
   }]
 }"#;
         let results = parse_sarif(sarif, &metadata()).expect("parse SARIF");
-        assert!(results.is_empty(), "results without ruleId should be skipped");
+        assert!(
+            results.is_empty(),
+            "results without ruleId should be skipped"
+        );
     }
 
     #[test]
@@ -363,7 +366,10 @@ mod tests {
   }]
 }"#;
         let results = parse_sarif(sarif, &metadata()).expect("parse SARIF");
-        assert!(results.is_empty(), "results with empty message should be skipped");
+        assert!(
+            results.is_empty(),
+            "results with empty message should be skipped"
+        );
     }
 
     #[test]
@@ -468,29 +474,44 @@ mod tests {
     fn extracts_category_from_tags_and_rule_id_map() {
         // Our query: @tags carry the category directly (kebab → snake).
         assert_eq!(
-            resolve_category("mcp/python/command-execution", Some(&serde_json::json!({
-                "properties": { "tags": ["security", "mcp", "command-execution"] }
-            }))),
+            resolve_category(
+                "mcp/python/command-execution",
+                Some(&serde_json::json!({
+                    "properties": { "tags": ["security", "mcp", "command-execution"] }
+                }))
+            ),
             "command_execution"
         );
         // Official query: curated rule_id → category map.
-        assert_eq!(resolve_category("rust/sql-injection", None), "database_injection");
-        assert_eq!(resolve_category("rust/request-forgery", None), "network_request");
+        assert_eq!(
+            resolve_category("rust/sql-injection", None),
+            "database_injection"
+        );
+        assert_eq!(
+            resolve_category("rust/request-forgery", None),
+            "network_request"
+        );
         assert_eq!(
             resolve_category("rust/access-after-lifetime-ended", None),
             "unsafe_block"
         );
         // Unknown: uncategorized fallback.
-        assert_eq!(resolve_category("rust/unknown-thing", None), "uncategorized");
+        assert_eq!(
+            resolve_category("rust/unknown-thing", None),
+            "uncategorized"
+        );
     }
 
     #[test]
     fn tags_use_shared_alias_normalization() {
         // A tag using a rule-style alias must normalize to the canonical category.
         assert_eq!(
-            resolve_category("mcp/python/command-exec", Some(&serde_json::json!({
-                "properties": { "tags": ["mcp", "command_exec"] }
-            }))),
+            resolve_category(
+                "mcp/python/command-exec",
+                Some(&serde_json::json!({
+                    "properties": { "tags": ["mcp", "command_exec"] }
+                }))
+            ),
             "command_execution"
         );
     }

@@ -37,6 +37,11 @@ struct BfsItem {
     has_external_call: bool,
     /// Sink categories neutralized by sanitizers seen so far on this path.
     neutralized: HashSet<String>,
+    /// The argument slot through which taint entered `node_id`, when `node_id`
+    /// is a call. Interprocedural propagation must stay within this slot so an
+    /// argument that maps to an unused parameter does not reach every sink in
+    /// the callee (parameter-sensitive tracking).
+    arg_index: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -91,6 +96,7 @@ fn propagate(
             depth: 0,
             has_external_call: false,
             neutralized: HashSet::new(),
+            arg_index: None,
         });
     }
 
@@ -122,10 +128,37 @@ fn propagate(
             // deduplicate_paths then keeps over the real (stepped) path.
             if matches!(
                 edge,
-                Edge::SourceInFunction { .. } | Edge::CallInFunction { .. }
+                Edge::SourceInFunction { .. }
+                    | Edge::CallInFunction { .. }
+                    | Edge::CallToFunction { .. }
             ) {
                 continue;
             }
+
+            // Parameter-sensitive tracking: compute the argument-slot transition
+            // for this edge and skip the edge when the slot does not match the
+            // one taint entered through.
+            let new_arg_index = match (direction, edge) {
+                (Direction::Forward, Edge::SourceToArg { arg_index, .. })
+                | (Direction::Forward, Edge::VarToArg { arg_index, .. }) => Some(*arg_index),
+                (Direction::Forward, Edge::ArgToParam { arg_index, .. }) => {
+                    if item.arg_index.map_or(true, |a| a == *arg_index) {
+                        None
+                    } else {
+                        continue;
+                    }
+                }
+                (Direction::Backward, Edge::ArgToParam { arg_index, .. }) => Some(*arg_index),
+                (Direction::Backward, Edge::SourceToArg { arg_index, .. })
+                | (Direction::Backward, Edge::VarToArg { arg_index, .. }) => {
+                    if item.arg_index.map_or(true, |a| a == *arg_index) {
+                        None
+                    } else {
+                        continue;
+                    }
+                }
+                _ => None,
+            };
 
             let next_id = match direction {
                 Direction::Forward => edge.to_id(),
@@ -227,6 +260,7 @@ fn propagate(
                     depth: item.depth + 1,
                     has_external_call: next_has_external,
                     neutralized: neutralized.clone(),
+                    arg_index: new_arg_index,
                 });
             }
         }

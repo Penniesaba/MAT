@@ -645,7 +645,10 @@ mod tests {
             "#,
         )
         .expect("parse config");
-        assert_eq!(config.static_.learned_dir.as_deref(), Some("models/learned"));
+        assert_eq!(
+            config.static_.learned_dir.as_deref(),
+            Some("models/learned")
+        );
     }
 
     #[test]

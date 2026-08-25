@@ -15,7 +15,9 @@
 
 use std::path::Path;
 
-use crate::model::{AgentAnalysisResult, CodeqlAnalysisResult, RuleAnalysisResult, TaintAnalysisResult};
+use crate::model::{
+    AgentAnalysisResult, CodeqlAnalysisResult, RuleAnalysisResult, TaintAnalysisResult,
+};
 use crate::static_analysis::category::normalize_category;
 
 /// A group of related results from different analysis lines.
@@ -338,8 +340,7 @@ fn can_join_group_proximity(
         let member = &items[member_idx];
         let member_key = file_key(&member.file);
         let candidate_key = file_key(&candidate.file);
-        member_key == candidate_key
-            && member.line.abs_diff(candidate.line) <= line_proximity
+        member_key == candidate_key && member.line.abs_diff(candidate.line) <= line_proximity
     })
 }
 
@@ -406,12 +407,7 @@ mod tests {
         }
     }
 
-    fn make_agent(
-        id: &str,
-        file: &str,
-        line: u32,
-        confidence: Confidence,
-    ) -> AgentAnalysisResult {
+    fn make_agent(id: &str, file: &str, line: u32, confidence: Confidence) -> AgentAnalysisResult {
         AgentAnalysisResult {
             result_id: id.to_string(),
             agent_id: "test_agent".to_string(),
@@ -466,7 +462,12 @@ mod tests {
     fn stage1_proximity_matches_same_file_nearby_lines() {
         // Taint line defaults to 0; a rule on line 3 is within proximity 5.
         let rules = vec![make_rule("r1", "a.py", 3, "cmd_inj", Confidence::High)];
-        let taints = vec![make_taint("t1", "sink:command_exec:a.py:0", "command_exec", Confidence::Medium)];
+        let taints = vec![make_taint(
+            "t1",
+            "sink:command_exec:a.py:0",
+            "command_exec",
+            Confidence::Medium,
+        )];
         let agents = vec![];
         let groups = match_results(rules, taints, agents, vec![], 5);
         assert_eq!(groups.len(), 1);
@@ -478,7 +479,12 @@ mod tests {
     fn stage1_proximity_excludes_far_lines() {
         // Different categories as well as far lines, so neither stage can fuse.
         let rules = vec![make_rule("r1", "a.py", 10, "cmd_inj", Confidence::High)];
-        let taints = vec![make_taint("t1", "sink:file_read:a.py:0", "file_read", Confidence::Medium)];
+        let taints = vec![make_taint(
+            "t1",
+            "sink:file_read:a.py:0",
+            "file_read",
+            Confidence::Medium,
+        )];
         let agents = vec![];
         let groups = match_results(rules, taints, agents, vec![], 5);
         // taint line is 0, proximity |10-0|=10 > 5
@@ -491,7 +497,12 @@ mod tests {
     #[test]
     fn stage2_category_matches_same_file_same_category() {
         let rules = vec![make_rule("r1", "a.py", 10, "cmd_inj", Confidence::High)];
-        let taints = vec![make_taint("t1", "sink:cmd_inj:a.py:0", "cmd_inj", Confidence::Medium)];
+        let taints = vec![make_taint(
+            "t1",
+            "sink:cmd_inj:a.py:0",
+            "cmd_inj",
+            Confidence::Medium,
+        )];
         let agents = vec![];
         // line proximity fails but category should match in stage 2
         let groups = match_results(rules, taints, agents, vec![], 1);
@@ -502,7 +513,12 @@ mod tests {
     #[test]
     fn unmatched_results_become_solo_groups() {
         let rules = vec![make_rule("r1", "a.py", 10, "cmd_inj", Confidence::High)];
-        let taints = vec![make_taint("t1", "sink:file_read:b.py:0", "file_read", Confidence::Medium)];
+        let taints = vec![make_taint(
+            "t1",
+            "sink:file_read:b.py:0",
+            "file_read",
+            Confidence::Medium,
+        )];
         let agents = vec![];
         let groups = match_results(rules, taints, agents, vec![], 5);
         // Different files, different categories — both solo
@@ -527,7 +543,12 @@ mod tests {
             make_rule("r1", "a.py", 10, "cmd_inj", Confidence::Low),
             make_rule("r2", "a.py", 100, "cmd_inj", Confidence::High),
         ];
-        let taints = vec![make_taint("t1", "sink:cmd_inj:a.py:0", "cmd_inj", Confidence::Medium)];
+        let taints = vec![make_taint(
+            "t1",
+            "sink:cmd_inj:a.py:0",
+            "cmd_inj",
+            Confidence::Medium,
+        )];
         let agents = vec![];
         let groups = match_results(rules, taints, agents, vec![], 5);
         assert_eq!(groups.len(), 1);
@@ -580,7 +601,13 @@ mod tests {
     #[test]
     fn codeql_matches_rule_by_proximity() {
         let rules = vec![make_rule("r1", "a.py", 42, "cmd_inj", Confidence::High)];
-        let codeql = vec![make_codeql("c1", "a.py", 41, "py/cmd-injection", Severity::High)];
+        let codeql = vec![make_codeql(
+            "c1",
+            "a.py",
+            41,
+            "py/cmd-injection",
+            Severity::High,
+        )];
         let groups = match_results(rules, vec![], vec![], codeql, 5);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].line_count(), 2);
@@ -590,7 +617,13 @@ mod tests {
 
     #[test]
     fn codeql_solo_group() {
-        let codeql = vec![make_codeql("c1", "a.py", 42, "py/cmd-injection", Severity::High)];
+        let codeql = vec![make_codeql(
+            "c1",
+            "a.py",
+            42,
+            "py/cmd-injection",
+            Severity::High,
+        )];
         let groups = match_results(vec![], vec![], vec![], codeql, 5);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].line_count(), 1);
@@ -600,8 +633,19 @@ mod tests {
     #[test]
     fn matches_rule_full_path_with_taint_basename() {
         // rule 用完整路径，taint sink_id 只含 basename —— 应能融合
-        let rules = vec![make_rule("r1", "proj/src/main.rs", 33, "cmd_inj", Confidence::High)];
-        let taints = vec![make_taint("t1", "sink:command_execution:main.rs:36", "command_execution", Confidence::Medium)];
+        let rules = vec![make_rule(
+            "r1",
+            "proj/src/main.rs",
+            33,
+            "cmd_inj",
+            Confidence::High,
+        )];
+        let taints = vec![make_taint(
+            "t1",
+            "sink:command_execution:main.rs:36",
+            "command_execution",
+            Confidence::Medium,
+        )];
         let groups = match_results(rules, taints, vec![], vec![], 5);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].supported_by(), vec!["rule", "taint"]);
@@ -610,8 +654,19 @@ mod tests {
     #[test]
     fn stage2_category_matches_across_vocabularies() {
         // rule uses "command_exec", taint uses "command_execution" — must fuse.
-        let rules = vec![make_rule("r1", "a.py", 10, "command_exec", Confidence::High)];
-        let taints = vec![make_taint("t1", "sink:command_execution:a.py:0", "command_execution", Confidence::Medium)];
+        let rules = vec![make_rule(
+            "r1",
+            "a.py",
+            10,
+            "command_exec",
+            Confidence::High,
+        )];
+        let taints = vec![make_taint(
+            "t1",
+            "sink:command_execution:a.py:0",
+            "command_execution",
+            Confidence::Medium,
+        )];
         let groups = match_results(rules, taints, vec![], vec![], 1);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].line_count(), 2);
@@ -619,8 +674,20 @@ mod tests {
 
     #[test]
     fn codeql_relative_path_matches_rule_full_path_via_basename() {
-        let rules = vec![make_rule("r1", "/proj/src/main.py", 42, "command_execution", Confidence::High)];
-        let codeql = vec![make_codeql("c1", "src/main.py", 41, "py/cmd-injection", Severity::High)];
+        let rules = vec![make_rule(
+            "r1",
+            "/proj/src/main.py",
+            42,
+            "command_execution",
+            Confidence::High,
+        )];
+        let codeql = vec![make_codeql(
+            "c1",
+            "src/main.py",
+            41,
+            "py/cmd-injection",
+            Severity::High,
+        )];
         let groups = match_results(rules, vec![], vec![], codeql, 5);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].supported_by(), vec!["rule", "codeql"]);

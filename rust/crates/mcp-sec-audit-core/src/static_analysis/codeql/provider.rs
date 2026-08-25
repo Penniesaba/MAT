@@ -32,7 +32,7 @@ pub trait CodeqlProvider {
         queries: &QueryPack,
         timeout_seconds: u64,
         extra_args: &[String],
-        model_packs: &[MadPack],
+        model_packs: &[&MadPack],
     ) -> Result<String>;
 }
 
@@ -153,7 +153,7 @@ impl CodeqlProvider for CliCodeqlProvider {
         queries: &QueryPack,
         timeout_seconds: u64,
         extra_args: &[String],
-        model_packs: &[MadPack],
+        model_packs: &[&MadPack],
     ) -> Result<String> {
         // `--output=-` (SARIF to stdout) is unreliable across CodeQL versions,
         // so write to a temp file and read it back instead.

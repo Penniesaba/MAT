@@ -82,7 +82,11 @@ mod tests {
         assert!(inv.packages_for("python").unwrap().contains("subprocess"));
         assert!(inv.packages_for("python").unwrap().contains("os"));
         assert!(inv.packages_for("python").unwrap().contains("openpyxl"));
-        assert!(inv.packages_for("javascript").unwrap().contains("child_process"));
+        assert!(
+            inv.packages_for("javascript")
+                .unwrap()
+                .contains("child_process")
+        );
         assert!(inv.packages_for("javascript").unwrap().contains("xlsx"));
         assert!(inv.packages_for("rust").unwrap().contains("std"));
         assert!(inv.packages_for("go").is_none());

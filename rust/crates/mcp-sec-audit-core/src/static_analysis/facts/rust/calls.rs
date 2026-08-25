@@ -1,4 +1,4 @@
-use syn::{punctuated::Punctuated, Expr, Token};
+use syn::{Expr, Token, punctuated::Punctuated};
 
 use crate::model::CallArg;
 

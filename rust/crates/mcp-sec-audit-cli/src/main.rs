@@ -206,8 +206,7 @@ fn write_report_files(
             ),
         };
         let path = PathBuf::from(format!("{}.{}", output, format.extension()));
-        fs::write(&path, content)
-            .with_context(|| format!("write report to {}", path.display()))?;
+        fs::write(&path, content).with_context(|| format!("write report to {}", path.display()))?;
         written.push(path);
     }
     Ok(written)
@@ -243,12 +242,16 @@ mod tests {
 
         let written = write_report_files(&result, &report).expect("write reports");
         assert_eq!(written.len(), 2);
-        assert!(written
-            .iter()
-            .any(|p| p.extension().and_then(|e| e.to_str()) == Some("json")));
-        assert!(written
-            .iter()
-            .any(|p| p.extension().and_then(|e| e.to_str()) == Some("md")));
+        assert!(
+            written
+                .iter()
+                .any(|p| p.extension().and_then(|e| e.to_str()) == Some("json"))
+        );
+        assert!(
+            written
+                .iter()
+                .any(|p| p.extension().and_then(|e| e.to_str()) == Some("md"))
+        );
 
         for path in written {
             std::fs::remove_file(&path).expect("cleanup");

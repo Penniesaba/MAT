@@ -390,6 +390,200 @@ mod tests {
     }
 
     #[test]
+    fn does_not_over_propagate_unrelated_param() {
+        // handler(a, b) -> helper(a, b) -> os.system(x)
+        // Only `a` reaches the sink (via helper's param `x`); `b` maps to
+        // helper's param `y`, which is never used. Interprocedural propagation
+        // must be parameter-sensitive and NOT report `b` as reaching the sink.
+        let file = "s.py".to_string();
+        let func_id = "python:s.py:handler".to_string();
+        let helper_id = "python:s.py:helper".to_string();
+        let call1_id = "call:s.py:4:0".to_string();
+        let call2_id = "call:s.py:8:0".to_string();
+        let sink_id = "sink:command_execution:s.py:8".to_string();
+
+        let facts = vec![
+            Fact::Function(FunctionFact {
+                base: FactBase {
+                    id: func_id.clone(),
+                    file: file.clone(),
+                    line: 1,
+                    extractor: "t".into(),
+                },
+                language: "python".into(),
+                name: "handler".into(),
+                qualified_name: "handler".into(),
+                end_line: 6,
+                params: vec![
+                    ParamInfo {
+                        name: "a".into(),
+                        annotation: None,
+                        default: None,
+                    },
+                    ParamInfo {
+                        name: "b".into(),
+                        annotation: None,
+                        default: None,
+                    },
+                ],
+                decorators: vec!["@mcp.tool()".into()],
+                docstring: None,
+                return_type: None,
+                enclosing_class: None,
+            }),
+            Fact::Function(FunctionFact {
+                base: FactBase {
+                    id: helper_id.clone(),
+                    file: file.clone(),
+                    line: 7,
+                    extractor: "t".into(),
+                },
+                language: "python".into(),
+                name: "helper".into(),
+                qualified_name: "helper".into(),
+                end_line: 10,
+                params: vec![
+                    ParamInfo {
+                        name: "x".into(),
+                        annotation: None,
+                        default: None,
+                    },
+                    ParamInfo {
+                        name: "y".into(),
+                        annotation: None,
+                        default: None,
+                    },
+                ],
+                decorators: vec![],
+                docstring: None,
+                return_type: None,
+                enclosing_class: None,
+            }),
+            Fact::Entrypoint(EntryPointFact {
+                base: FactBase {
+                    id: "entry:s.py:handler".into(),
+                    file: file.clone(),
+                    line: 1,
+                    extractor: "t".into(),
+                },
+                kind: EntryPointKind::McpTool,
+                name: "handler".into(),
+                function_id: func_id.clone(),
+                evidence: Some(EntryPointEvidence {
+                    kind: "decorator".into(),
+                    text: "@mcp.tool()".into(),
+                }),
+                params: vec!["a".into(), "b".into()],
+                confidence: Confidence::High,
+            }),
+            Fact::Source(SourceFact {
+                base: FactBase {
+                    id: "source:s.py:handler:a".into(),
+                    file: file.clone(),
+                    line: 1,
+                    extractor: "t".into(),
+                },
+                kind: "mcp_tool_parameter".into(),
+                function_id: func_id.clone(),
+                name: "a".into(),
+                call_id: None,
+                confidence: Confidence::High,
+            }),
+            Fact::Source(SourceFact {
+                base: FactBase {
+                    id: "source:s.py:handler:b".into(),
+                    file: file.clone(),
+                    line: 1,
+                    extractor: "t".into(),
+                },
+                kind: "mcp_tool_parameter".into(),
+                function_id: func_id.clone(),
+                name: "b".into(),
+                call_id: None,
+                confidence: Confidence::High,
+            }),
+            // handler -> helper(a, b)
+            Fact::Call(CallFact {
+                base: FactBase {
+                    id: call1_id.clone(),
+                    file: file.clone(),
+                    line: 4,
+                    extractor: "t".into(),
+                },
+                caller: func_id.clone(),
+                callee: "helper".into(),
+                normalized_callee: Some("helper".into()),
+                column: Some(0),
+                end_line: Some(4),
+                snippet: "helper(a, b)".into(),
+                args: vec![
+                    CallArg {
+                        index: 0,
+                        expr: "a".into(),
+                        kind: "positional".into(),
+                    },
+                    CallArg {
+                        index: 1,
+                        expr: "b".into(),
+                        kind: "positional".into(),
+                    },
+                ],
+                kwargs: std::collections::BTreeMap::new(),
+                resolution: None,
+            }),
+            // helper -> os.system(x)
+            Fact::Call(CallFact {
+                base: FactBase {
+                    id: call2_id.clone(),
+                    file: file.clone(),
+                    line: 8,
+                    extractor: "t".into(),
+                },
+                caller: helper_id.clone(),
+                callee: "os.system".into(),
+                normalized_callee: Some("os.system".into()),
+                column: Some(0),
+                end_line: Some(8),
+                snippet: "os.system(x)".into(),
+                args: vec![CallArg {
+                    index: 0,
+                    expr: "x".into(),
+                    kind: "positional".into(),
+                }],
+                kwargs: std::collections::BTreeMap::new(),
+                resolution: None,
+            }),
+            Fact::Sink(SinkFact {
+                base: FactBase {
+                    id: sink_id.clone(),
+                    file: file.clone(),
+                    line: 8,
+                    extractor: "t".into(),
+                },
+                call_id: call2_id,
+                category: "command_execution".into(),
+                rule_id: "python.command_execution".into(),
+                sink_name: "os.system".into(),
+                severity_base: Severity::Critical,
+                reason: "dangerous".into(),
+                conditions: std::collections::BTreeMap::new(),
+                confidence: Confidence::High,
+            }),
+        ];
+
+        let config = default_config();
+        let (results, _) = run_taint_analysis(&facts, &config).expect("taint analysis");
+
+        let source_a_reaches = results.iter().any(|r| r.source_id.contains(":a"));
+        let source_b_reaches = results.iter().any(|r| r.source_id.contains(":b"));
+        assert!(source_a_reaches, "param `a` must reach the sink");
+        assert!(
+            !source_b_reaches,
+            "param `b` must NOT reach the sink (it is unrelated to os.system)"
+        );
+    }
+
+    #[test]
     fn disabled_config_returns_empty() {
         let mut config = default_config();
         config.enabled = false;

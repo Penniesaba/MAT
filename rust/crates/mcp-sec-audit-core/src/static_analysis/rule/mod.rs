@@ -1,4 +1,7 @@
-use std::{collections::{BTreeMap, BTreeSet}, fs};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+};
 
 use anyhow::{Context, Result, bail};
 use regex::RegexBuilder;
@@ -73,8 +76,8 @@ fn analyze_rule_line(
 
                 let matches = match_indicator(indicator, &input.text, &input.aliases)
                     .with_context(|| {
-                    format!("match indicator for capability '{}'", capability.name)
-                })?;
+                        format!("match indicator for capability '{}'", capability.name)
+                    })?;
                 if matches.is_empty() {
                     continue;
                 }
@@ -464,8 +467,7 @@ fn mask_python(text: &str) -> String {
                 out[i] = b' ';
                 i += 1;
             }
-        } else if (b == b'"' || b == b'\'') && i + 2 < n && bytes[i + 1] == b && bytes[i + 2] == b
-        {
+        } else if (b == b'"' || b == b'\'') && i + 2 < n && bytes[i + 1] == b && bytes[i + 2] == b {
             // Triple-quoted string (docstring or multi-line string): mask it.
             out[i] = b' ';
             out[i + 1] = b' ';
@@ -843,8 +845,11 @@ def fetch_url(url):
     fn python_comment_is_not_matched_as_code() {
         let root = temp_dir("rule-comment");
         let file = root.join("server.py");
-        fs::write(&file, "# open('/etc/passwd', 'r')\nx = open('/tmp/x', 'r')\n")
-            .expect("write source");
+        fs::write(
+            &file,
+            "# open('/etc/passwd', 'r')\nx = open('/tmp/x', 'r')\n",
+        )
+        .expect("write source");
         let rulebook = parse_rulebook_toml(
             r#"
             [[capabilities]]

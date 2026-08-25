@@ -130,16 +130,26 @@ const NAME_PREFIX_CATEGORY: &[(&str, &str)] = &[
     ("exec", "dynamic_execution"),
     ("eval", "dynamic_execution"),
     ("run", "command_execution"),
-    ("get", "network_request"),
-    ("post", "network_request"),
     ("fetch", "network_request"),
     ("download", "network_request"),
     ("upload", "network_request"),
-    ("delete", "file_delete"),
     ("remove", "file_delete"),
     ("unlink", "file_delete"),
     ("rmdir", "file_delete"),
 ];
+
+// NOTE: `get` and `post` are deliberately NOT in the name-prefix heuristic.
+// As bare method names they are ambiguous English verbs (`get_excel_path`,
+// `get_merged_cells`, `post_comment` are not network requests). Real HTTP
+// verbs are already modeled explicitly in the sink catalog (`requests.get`,
+// `httpx.get`, `aiohttp.ClientSession.get`, …), so mapping the `get`/`post`
+// prefix to `network_request` here only produced false positives.
+//
+// Same for `delete`: `delete_range_operation`, `delete_worksheet`,
+// `delete_sheet_rows`, … are openpyxl worksheet/cell/row mutations, not file
+// deletions. The real file-delete verbs (`os.remove`, `os.unlink`, `os.rmdir`,
+// `shutil.rmtree`, `Path.unlink`, `Path.rmdir`) are already in the sink
+// catalog, so the bare `delete` prefix only produced false positives.
 
 /// Layer-3 category for a callee's method-name prefix, or `None`.
 pub(crate) fn name_category(callee: &str) -> Option<&'static str> {
@@ -365,6 +375,49 @@ def handle(filepath: str, url: str):
             inferred
                 .iter()
                 .all(|f| matches!(f, Fact::Sink(s) if s.confidence == Confidence::Low))
+        );
+    }
+
+    #[test]
+    fn get_prefix_is_not_inferred_as_network_request() {
+        // Regression: `get_excel_path(filepath)` is a file-path accessor, not an
+        // HTTP request. The bare `get` prefix must not map to network_request
+        // (real HTTP verbs are modeled in the sink catalog instead).
+        let facts = extract(
+            r#"
+@mcp.tool()
+def apply_formula(filepath: str):
+    get_excel_path(filepath)
+"#,
+        );
+        let inferred = infer_by_name(&facts, &BTreeSet::new());
+        assert!(
+            !inferred
+                .iter()
+                .any(|f| matches!(f, Fact::Sink(s) if s.category == "network_request")),
+            "get_excel_path must not be inferred as a network_request sink"
+        );
+    }
+
+    #[test]
+    fn delete_prefix_is_not_inferred_as_file_delete() {
+        // Regression: `delete_range_operation(filepath)` deletes cells/sheets in
+        // a workbook, not a file on disk. The bare `delete` prefix must not map
+        // to file_delete (real file-delete verbs like os.remove are modeled in
+        // the sink catalog instead).
+        let facts = extract(
+            r#"
+@mcp.tool()
+def delete_range(filepath: str):
+    delete_range_operation(filepath)
+"#,
+        );
+        let inferred = infer_by_name(&facts, &BTreeSet::new());
+        assert!(
+            !inferred
+                .iter()
+                .any(|f| matches!(f, Fact::Sink(s) if s.category == "file_delete")),
+            "delete_range_operation must not be inferred as a file_delete sink"
         );
     }
 }

@@ -162,7 +162,9 @@ mod tests {
             extra_args: vec![],
         };
         let provider = CliAgentProvider;
-        let err = provider.run(&config).expect_err("nonexistent binary should fail");
+        let err = provider
+            .run(&config)
+            .expect_err("nonexistent binary should fail");
         assert!(err.to_string().contains("not found in PATH"));
     }
 

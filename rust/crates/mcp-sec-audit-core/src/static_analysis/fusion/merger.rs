@@ -15,47 +15,66 @@ use crate::static_analysis::category::normalize_category;
 use super::scorer::ScoredGroup;
 
 pub(crate) fn merge_groups(scored_groups: Vec<ScoredGroup>) -> Vec<FusedFinding> {
-    scored_groups.into_iter().map(|sg| {
-        let group = sg.group;
+    scored_groups
+        .into_iter()
+        .map(|sg| {
+            let group = sg.group;
 
-        // Title: highest-severity result's best description
-        let title = build_title(&group);
+            // Title: highest-severity result's best description
+            let title = build_title(&group);
 
-        // Category: plurality vote, tie-broken by highest severity
-        let category = build_category(&group);
+            // Category: plurality vote, tie-broken by highest severity
+            let category = build_category(&group);
 
-        // Evidence: union of all evidence fields, deduplicated
-        let evidence = build_evidence(&group);
+            // Evidence: union of all evidence fields, deduplicated
+            let evidence = build_evidence(&group);
 
-        // Conflict notes
-        let conflict_notes = build_conflict_notes(&group);
+            // Conflict notes
+            let conflict_notes = build_conflict_notes(&group);
 
-        // Call chain and dataflow path from taint (or codeql dataflow)
-        let (call_chain, dataflow_path) = extract_paths(&group);
+            // Call chain and dataflow path from taint (or codeql dataflow)
+            let (call_chain, dataflow_path) = extract_paths(&group);
 
-        // Recommendation
-        let recommendation = extract_recommendation(&group);
+            // Recommendation
+            let recommendation = extract_recommendation(&group);
 
-        FusedFinding {
-            finding_id: Uuid::new_v4().to_string(),
-            title,
-            category,
-            owasp_mcp: None,
-            severity: sg.severity,
-            confidence: sg.confidence,
-            status: FindingStatus::Potential,
-            supported_by: group.supported_by().iter().map(|s| s.to_string()).collect(),
-            related_rule_result_ids: group.rule_results.iter().map(|r| r.result_id.clone()).collect(),
-            related_taint_result_ids: group.taint_results.iter().map(|t| t.result_id.clone()).collect(),
-            related_agent_result_ids: group.agent_results.iter().map(|a| a.result_id.clone()).collect(),
-            related_codeql_result_ids: group.codeql_results.iter().map(|c| c.result_id.clone()).collect(),
-            evidence,
-            call_chain,
-            dataflow_path,
-            recommendation,
-            conflict_notes,
-        }
-    }).collect()
+            FusedFinding {
+                finding_id: Uuid::new_v4().to_string(),
+                title,
+                category,
+                owasp_mcp: None,
+                severity: sg.severity,
+                confidence: sg.confidence,
+                status: FindingStatus::Potential,
+                supported_by: group.supported_by().iter().map(|s| s.to_string()).collect(),
+                related_rule_result_ids: group
+                    .rule_results
+                    .iter()
+                    .map(|r| r.result_id.clone())
+                    .collect(),
+                related_taint_result_ids: group
+                    .taint_results
+                    .iter()
+                    .map(|t| t.result_id.clone())
+                    .collect(),
+                related_agent_result_ids: group
+                    .agent_results
+                    .iter()
+                    .map(|a| a.result_id.clone())
+                    .collect(),
+                related_codeql_result_ids: group
+                    .codeql_results
+                    .iter()
+                    .map(|c| c.result_id.clone())
+                    .collect(),
+                evidence,
+                call_chain,
+                dataflow_path,
+                recommendation,
+                conflict_notes,
+            }
+        })
+        .collect()
 }
 
 fn build_title(group: &super::matcher::MatchGroup) -> String {
@@ -96,7 +115,8 @@ fn build_category(group: &super::matcher::MatchGroup) -> String {
     for c in &group.codeql_results {
         *counts.entry(normalize_category(&c.category)).or_insert(0) += 1;
     }
-    counts.into_iter()
+    counts
+        .into_iter()
         .max_by_key(|(cat, count)| (*count, cat.len()))
         .map(|(cat, _)| cat)
         .unwrap_or_else(|| "unknown".to_string())
@@ -184,7 +204,8 @@ fn build_conflict_notes(group: &super::matcher::MatchGroup) -> Vec<String> {
     if severities.len() > 1 {
         let first = severities[0];
         if severities.iter().any(|(_, s)| s != &first.1) {
-            let parts: Vec<String> = severities.iter()
+            let parts: Vec<String> = severities
+                .iter()
                 .map(|(line, s)| format!("{line}={s:?}"))
                 .collect();
             notes.push(format!("severity mismatch: {}", parts.join(", ")));
@@ -212,9 +233,9 @@ fn build_conflict_notes(group: &super::matcher::MatchGroup) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::matcher::MatchGroup;
     use super::super::scorer::ScoredGroup;
+    use super::*;
     use crate::model::{
         AgentAnalysisResult, CodeqlAnalysisResult, Confidence, Location, RuleAnalysisResult,
         Severity,
@@ -224,18 +245,29 @@ mod tests {
     fn merge_single_rule_produces_fused_finding() {
         let group = MatchGroup {
             rule_results: vec![RuleAnalysisResult {
-                result_id: "r1".into(), rule_id: "cmd_exec".into(),
-                category: "command_execution".into(), owasp_mcp: None,
-                file: "a.py".into(), line: 42, matched_text: Some("subprocess.run(x)".into()),
+                result_id: "r1".into(),
+                rule_id: "cmd_exec".into(),
+                category: "command_execution".into(),
+                owasp_mcp: None,
+                file: "a.py".into(),
+                line: 42,
+                matched_text: Some("subprocess.run(x)".into()),
                 evidence: vec!["line 42: subprocess.run(x)".into()],
-                severity: Severity::High, confidence: Confidence::High,
-                recommendation: Some("Use allowlist".into()), related_facts_exist: true,
+                severity: Severity::High,
+                confidence: Confidence::High,
+                recommendation: Some("Use allowlist".into()),
+                related_facts_exist: true,
             }],
             taint_results: vec![],
             agent_results: vec![],
             codeql_results: vec![],
         };
-        let scored = ScoredGroup { group, severity: Severity::High, confidence: Confidence::High, raw_score: 0.8 };
+        let scored = ScoredGroup {
+            group,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            raw_score: 0.8,
+        };
         let findings = merge_groups(vec![scored]);
         assert_eq!(findings.len(), 1);
         let f = &findings[0];
@@ -253,24 +285,44 @@ mod tests {
     fn evidence_is_deduplicated() {
         let group = MatchGroup {
             rule_results: vec![RuleAnalysisResult {
-                result_id: "r1".into(), rule_id: "x".into(), category: "x".into(),
-                owasp_mcp: None, file: "a.py".into(), line: 1, matched_text: None,
+                result_id: "r1".into(),
+                rule_id: "x".into(),
+                category: "x".into(),
+                owasp_mcp: None,
+                file: "a.py".into(),
+                line: 1,
+                matched_text: None,
                 evidence: vec!["dup".into(), "unique".into()],
-                severity: Severity::Medium, confidence: Confidence::Medium,
-                recommendation: None, related_facts_exist: false,
+                severity: Severity::Medium,
+                confidence: Confidence::Medium,
+                recommendation: None,
+                related_facts_exist: false,
             }],
             taint_results: vec![],
             agent_results: vec![AgentAnalysisResult {
-                result_id: "a1".into(), agent_id: "ag".into(), prompt_profile: "t".into(),
-                model_provider: None, input_scope: vec![], candidate_title: "t".into(),
-                affected_locations: vec![], reasoning_summary: "".into(),
+                result_id: "a1".into(),
+                agent_id: "ag".into(),
+                prompt_profile: "t".into(),
+                model_provider: None,
+                input_scope: vec![],
+                candidate_title: "t".into(),
+                affected_locations: vec![],
+                reasoning_summary: "".into(),
                 evidence_snippets: vec!["dup".into()],
-                related_rule_result_ids: vec![], related_taint_result_ids: vec![],
-                confidence: Confidence::Medium, verification_status: "u".into(), limitations: vec![],
+                related_rule_result_ids: vec![],
+                related_taint_result_ids: vec![],
+                confidence: Confidence::Medium,
+                verification_status: "u".into(),
+                limitations: vec![],
             }],
             codeql_results: vec![],
         };
-        let scored = ScoredGroup { group, severity: Severity::Medium, confidence: Confidence::Medium, raw_score: 0.6 };
+        let scored = ScoredGroup {
+            group,
+            severity: Severity::Medium,
+            confidence: Confidence::Medium,
+            raw_score: 0.6,
+        };
         let findings = merge_groups(vec![scored]);
         assert_eq!(findings[0].evidence.len(), 2); // "dup" appears once, "unique" once
     }

@@ -58,14 +58,35 @@ mod tests {
 
     #[test]
     fn classifies_extended_js_sinks() {
-        assert_eq!(category_for("child_process.execSync").as_deref(), Some("command_execution"));
-        assert_eq!(category_for("fs.readFileSync").as_deref(), Some("file_read"));
-        assert_eq!(category_for("fs.unlinkSync").as_deref(), Some("file_delete"));
-        assert_eq!(category_for("https.get").as_deref(), Some("network_request"));
+        assert_eq!(
+            category_for("child_process.execSync").as_deref(),
+            Some("command_execution")
+        );
+        assert_eq!(
+            category_for("fs.readFileSync").as_deref(),
+            Some("file_read")
+        );
+        assert_eq!(
+            category_for("fs.unlinkSync").as_deref(),
+            Some("file_delete")
+        );
+        assert_eq!(
+            category_for("https.get").as_deref(),
+            Some("network_request")
+        );
         assert_eq!(category_for("process.env").as_deref(), Some("env_access"));
-        assert_eq!(category_for("pg.query").as_deref(), Some("database_injection"));
-        assert_eq!(category_for("ejs.render").as_deref(), Some("template_injection"));
+        assert_eq!(
+            category_for("pg.query").as_deref(),
+            Some("database_injection")
+        );
+        assert_eq!(
+            category_for("ejs.render").as_deref(),
+            Some("template_injection")
+        );
         assert_eq!(category_for("eval").as_deref(), Some("dynamic_execution"));
-        assert_eq!(category_for("vm.runInNewContext").as_deref(), Some("deserialization_rce"));
+        assert_eq!(
+            category_for("vm.runInNewContext").as_deref(),
+            Some("deserialization_rce")
+        );
     }
 }

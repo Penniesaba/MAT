@@ -100,7 +100,11 @@ pub enum Edge {
         call_id: String,
         arg_index: u32,
         param_name: String,
-        callee_function_id: String,
+        /// The callee parameter's Variable node id. Interprocedural taint must
+        /// flow through the *specific* parameter, not the whole callee function
+        /// — otherwise an unrelated argument would reach every sink in the
+        /// callee body (parameter-insensitive over-propagation).
+        param_var_id: String,
     },
     VarToArg {
         var_id: String,
@@ -193,9 +197,7 @@ impl Edge {
             Edge::CallToFunction {
                 callee_function_id, ..
             } => callee_function_id,
-            Edge::ArgToParam {
-                callee_function_id, ..
-            } => callee_function_id,
+            Edge::ArgToParam { param_var_id, .. } => param_var_id,
             Edge::VarToArg { call_id, .. } => call_id,
             Edge::ValToVar { to_var_id, .. } => to_var_id,
             Edge::CallToSink { sink_id, .. } => sink_id,

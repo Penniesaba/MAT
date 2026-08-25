@@ -72,61 +72,64 @@ pub(crate) fn score_groups(
     groups: Vec<MatchGroup>,
     config: &crate::config::FusionConfig,
 ) -> Vec<ScoredGroup> {
-    groups.into_iter().filter_map(|group| {
-        if group.line_count() < config.require_confirmed_by {
-            return None; // filtered out
-        }
+    groups
+        .into_iter()
+        .filter_map(|group| {
+            if group.line_count() < config.require_confirmed_by {
+                return None; // filtered out
+            }
 
-        // Collect all confidences in the group for weighted average
-        let mut weighted_sum = 0.0f64;
-        let mut weight_sum = 0u32;
+            // Collect all confidences in the group for weighted average
+            let mut weighted_sum = 0.0f64;
+            let mut weight_sum = 0u32;
 
-        for r in &group.rule_results {
-            weighted_sum += config.rule_weight as f64 * confidence_value(&r.confidence);
-            weight_sum += config.rule_weight;
-        }
-        for t in &group.taint_results {
-            weighted_sum += config.taint_weight as f64 * confidence_value(&t.taint_confidence);
-            weight_sum += config.taint_weight;
-        }
-        for a in &group.agent_results {
-            weighted_sum += config.agent_weight as f64 * confidence_value(&a.confidence);
-            weight_sum += config.agent_weight;
-        }
-        for _ in &group.codeql_results {
-            weighted_sum += config.codeql_weight as f64 * CODEQL_CONFIDENCE;
-            weight_sum += config.codeql_weight;
-        }
+            for r in &group.rule_results {
+                weighted_sum += config.rule_weight as f64 * confidence_value(&r.confidence);
+                weight_sum += config.rule_weight;
+            }
+            for t in &group.taint_results {
+                weighted_sum += config.taint_weight as f64 * confidence_value(&t.taint_confidence);
+                weight_sum += config.taint_weight;
+            }
+            for a in &group.agent_results {
+                weighted_sum += config.agent_weight as f64 * confidence_value(&a.confidence);
+                weight_sum += config.agent_weight;
+            }
+            for _ in &group.codeql_results {
+                weighted_sum += config.codeql_weight as f64 * CODEQL_CONFIDENCE;
+                weight_sum += config.codeql_weight;
+            }
 
-        let mut raw = if weight_sum > 0 {
-            weighted_sum / weight_sum as f64
-        } else {
-            0.0
-        };
+            let mut raw = if weight_sum > 0 {
+                weighted_sum / weight_sum as f64
+            } else {
+                0.0
+            };
 
-        // Corroboration boost
-        if config.boost_when_multiple_lines_agree && group.line_count() >= 2 {
-            raw = (raw + 0.1).min(1.0);
-        }
+            // Corroboration boost
+            if config.boost_when_multiple_lines_agree && group.line_count() >= 2 {
+                raw = (raw + 0.1).min(1.0);
+            }
 
-        // Agent-only downgrade
-        if config.agent_only_as_advisory
-            && group.line_count() == 1
-            && !group.agent_results.is_empty()
-        {
-            raw = raw.min(0.6);
-        }
+            // Agent-only downgrade
+            if config.agent_only_as_advisory
+                && group.line_count() == 1
+                && !group.agent_results.is_empty()
+            {
+                raw = raw.min(0.6);
+            }
 
-        // Compute max severity
-        let severity = group_max_severity(&group);
+            // Compute max severity
+            let severity = group_max_severity(&group);
 
-        Some(ScoredGroup {
-            group,
-            severity,
-            confidence: raw_to_confidence(raw),
-            raw_score: raw,
+            Some(ScoredGroup {
+                group,
+                severity,
+                confidence: raw_to_confidence(raw),
+                raw_score: raw,
+            })
         })
-    }).collect()
+        .collect()
 }
 
 fn group_max_severity(group: &MatchGroup) -> Severity {
@@ -188,30 +191,54 @@ mod tests {
 
     fn make_rule(confidence: Confidence) -> RuleAnalysisResult {
         RuleAnalysisResult {
-            result_id: "r1".into(), rule_id: "test".into(), category: "cmd".into(),
-            owasp_mcp: None, file: "a.py".into(), line: 1, matched_text: None,
-            evidence: vec![], severity: Severity::High, confidence,
-            recommendation: None, related_facts_exist: false,
+            result_id: "r1".into(),
+            rule_id: "test".into(),
+            category: "cmd".into(),
+            owasp_mcp: None,
+            file: "a.py".into(),
+            line: 1,
+            matched_text: None,
+            evidence: vec![],
+            severity: Severity::High,
+            confidence,
+            recommendation: None,
+            related_facts_exist: false,
         }
     }
 
     fn make_taint(confidence: Confidence) -> TaintAnalysisResult {
         TaintAnalysisResult {
-            result_id: "t1".into(), source_id: "s:x".into(), source_kind: "p".into(),
-            entrypoint_id: None, sink_id: "sink:x".into(), sink_kind: "cmd".into(),
-            call_chain: vec![], dataflow_path: vec![], evidence: vec![],
-            taint_confidence: confidence, entrypoint_is_mcp: false, backward_trace_found_root: false,
+            result_id: "t1".into(),
+            source_id: "s:x".into(),
+            source_kind: "p".into(),
+            entrypoint_id: None,
+            sink_id: "sink:x".into(),
+            sink_kind: "cmd".into(),
+            call_chain: vec![],
+            dataflow_path: vec![],
+            evidence: vec![],
+            taint_confidence: confidence,
+            entrypoint_is_mcp: false,
+            backward_trace_found_root: false,
         }
     }
 
     fn make_agent(confidence: Confidence) -> AgentAnalysisResult {
         AgentAnalysisResult {
-            result_id: "a1".into(), agent_id: "ag".into(), prompt_profile: "t".into(),
-            model_provider: None, input_scope: vec![], candidate_title: "t".into(),
-            affected_locations: vec!["a.py:1".into()], reasoning_summary: "".into(),
-            evidence_snippets: vec![], related_rule_result_ids: vec![],
-            related_taint_result_ids: vec![], confidence,
-            verification_status: "u".into(), limitations: vec![],
+            result_id: "a1".into(),
+            agent_id: "ag".into(),
+            prompt_profile: "t".into(),
+            model_provider: None,
+            input_scope: vec![],
+            candidate_title: "t".into(),
+            affected_locations: vec!["a.py:1".into()],
+            reasoning_summary: "".into(),
+            evidence_snippets: vec![],
+            related_rule_result_ids: vec![],
+            related_taint_result_ids: vec![],
+            confidence,
+            verification_status: "u".into(),
+            limitations: vec![],
         }
     }
 

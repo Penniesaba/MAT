@@ -151,6 +151,7 @@ fn extract_source_from_pat(
             kind: "mcp_tool_parameter".to_string(),
             function_id: function_id.to_string(),
             name: id.sym.to_string(),
+            call_id: None,
             confidence: Confidence::High,
         })],
         Pat::Object(obj) => obj
@@ -171,6 +172,7 @@ fn extract_source_from_pat(
                         kind: "mcp_tool_parameter".to_string(),
                         function_id: function_id.to_string(),
                         name: assign.key.sym.to_string(),
+                        call_id: None,
                         confidence: Confidence::High,
                     })]
                 }

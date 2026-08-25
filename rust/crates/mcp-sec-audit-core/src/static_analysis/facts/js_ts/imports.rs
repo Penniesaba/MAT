@@ -1,7 +1,5 @@
 use std::collections::BTreeMap;
-use swc_core::ecma::ast::{
-    ImportDecl, ObjectPatProp, Pat, PropName, VarDeclarator,
-};
+use swc_core::ecma::ast::{ImportDecl, ObjectPatProp, Pat, PropName, VarDeclarator};
 
 use crate::model::{Fact, FactBase, ImportFact, ImportKind};
 

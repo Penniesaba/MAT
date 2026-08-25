@@ -18,8 +18,8 @@ pub(crate) fn matches_sink(callee: &str, patterns: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::default_catalog;
     use crate::Severity;
+    use crate::models::default_catalog;
 
     fn category_for(callee: &str) -> Option<String> {
         default_catalog()
@@ -31,16 +31,43 @@ mod tests {
 
     #[test]
     fn classifies_extended_rust_sinks() {
-        assert_eq!(category_for("std::process::Command::new").as_deref(), Some("command_execution"));
-        assert_eq!(category_for("std::fs::File::open").as_deref(), Some("file_read"));
-        assert_eq!(category_for("std::fs::remove_file").as_deref(), Some("file_delete"));
+        assert_eq!(
+            category_for("std::process::Command::new").as_deref(),
+            Some("command_execution")
+        );
+        assert_eq!(
+            category_for("std::fs::File::open").as_deref(),
+            Some("file_read")
+        );
+        assert_eq!(
+            category_for("std::fs::remove_file").as_deref(),
+            Some("file_delete")
+        );
         assert_eq!(category_for("std::env::var").as_deref(), Some("env_access"));
-        assert_eq!(category_for("reqwest::get").as_deref(), Some("network_request"));
-        assert_eq!(category_for("rusqlite::Connection::execute").as_deref(), Some("database_injection"));
-        assert_eq!(category_for("sqlx::query").as_deref(), Some("database_injection"));
-        assert_eq!(category_for("tera::Tera::render").as_deref(), Some("template_injection"));
-        assert_eq!(category_for("serde_json::from_str").as_deref(), Some("deserialization"));
-        assert_eq!(category_for("libloading::Library::new").as_deref(), Some("dynamic_loading"));
+        assert_eq!(
+            category_for("reqwest::get").as_deref(),
+            Some("network_request")
+        );
+        assert_eq!(
+            category_for("rusqlite::Connection::execute").as_deref(),
+            Some("database_injection")
+        );
+        assert_eq!(
+            category_for("sqlx::query").as_deref(),
+            Some("database_injection")
+        );
+        assert_eq!(
+            category_for("tera::Tera::render").as_deref(),
+            Some("template_injection")
+        );
+        assert_eq!(
+            category_for("serde_json::from_str").as_deref(),
+            Some("deserialization")
+        );
+        assert_eq!(
+            category_for("libloading::Library::new").as_deref(),
+            Some("dynamic_loading")
+        );
     }
 
     #[test]
@@ -51,13 +78,21 @@ mod tests {
             .find(|m| matches_sink("serde_json::from_str", &m.patterns))
             .expect("serde_json::from_str sink");
         assert_eq!(serde.severity, Severity::Medium);
-        assert!(serde.reason.contains("memory-safe"), "reason was: {}", serde.reason);
+        assert!(
+            serde.reason.contains("memory-safe"),
+            "reason was: {}",
+            serde.reason
+        );
 
         let bincode = rust
             .iter()
             .find(|m| matches_sink("bincode::deserialize", &m.patterns))
             .expect("bincode::deserialize sink");
         assert_eq!(bincode.severity, Severity::High);
-        assert!(bincode.reason.contains("RCE"), "reason was: {}", bincode.reason);
+        assert!(
+            bincode.reason.contains("RCE"),
+            "reason was: {}",
+            bincode.reason
+        );
     }
 }

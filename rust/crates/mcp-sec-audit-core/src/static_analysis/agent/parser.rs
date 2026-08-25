@@ -120,25 +120,24 @@ fn extract_json_block(stdout: &str) -> Option<&str> {
 }
 
 /// Parse agent stdout into structured results.
-pub fn parse_agent_output(
-    stdout: &str,
-    metadata: &AgentMetadata,
-) -> Result<AgentOutput> {
-    let json_str = extract_json_block(stdout)
-        .ok_or_else(|| anyhow::anyhow!(
+pub fn parse_agent_output(stdout: &str, metadata: &AgentMetadata) -> Result<AgentOutput> {
+    let json_str = extract_json_block(stdout).ok_or_else(|| {
+        anyhow::anyhow!(
             "no valid JSON output from agent provider. \
              Expected a ```json code fence or a {{\"findings\": [...]}} block.\n\
              Raw output (first 500 chars): {}",
             truncate_for_display(stdout, 500)
-        ))?;
+        )
+    })?;
 
-    let raw: RawOutput = serde_json::from_str(json_str)
-        .map_err(|e| anyhow::anyhow!(
+    let raw: RawOutput = serde_json::from_str(json_str).map_err(|e| {
+        anyhow::anyhow!(
             "failed to parse agent JSON output: {}\n\
              JSON excerpt (first 500 chars): {}",
             e,
             truncate_for_display(json_str, 500)
-        ))?;
+        )
+    })?;
 
     let mut results = Vec::new();
     for (i, finding) in raw.findings.into_iter().enumerate() {
@@ -177,8 +176,8 @@ pub fn parse_agent_output(
             affected_locations,
             reasoning_summary: finding.reasoning_summary,
             evidence_snippets: finding.evidence_snippets,
-            related_rule_result_ids: Vec::new(),    // Phase 13
-            related_taint_result_ids: Vec::new(),   // Phase 13
+            related_rule_result_ids: Vec::new(),  // Phase 13
+            related_taint_result_ids: Vec::new(), // Phase 13
             confidence: parse_confidence(&finding.confidence),
             verification_status: "uncorroborated".to_string(), // Phase 13
             limitations: finding.limitations,

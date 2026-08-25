@@ -42,6 +42,21 @@ pub fn build_graph(facts: &[Fact]) -> Graph {
                 },
             );
 
+            // Register each parameter as a Variable node so interprocedural
+            // taint can flow through a specific parameter (ArgToParam → param
+            // var → VarToArg) instead of collapsing to the whole function.
+            for p in &f.params {
+                let param_var_id = make_var_id(&func_id, &p.name);
+                g.add_node(
+                    param_var_id.clone(),
+                    Node::Variable {
+                        id: param_var_id,
+                        name: p.name.clone(),
+                        function_id: func_id.clone(),
+                    },
+                );
+            }
+
             func_lookup
                 .entry(f.qualified_name.clone())
                 .or_default()
@@ -97,6 +112,17 @@ pub fn build_graph(facts: &[Fact]) -> Graph {
                     source_id: source_id.clone(),
                     call_id: call_id.clone(),
                 });
+            } else {
+                // Parameter source (e.g. an MCP tool parameter): link it to its
+                // parameter Variable node so interprocedural taint entering this
+                // function through that parameter also carries the source taint.
+                let param_var_id = make_var_id(&s.function_id, &s.name);
+                if g.nodes.contains_key(&param_var_id) {
+                    g.add_edge(Edge::SourceToVar {
+                        source_id: source_id.clone(),
+                        var_id: param_var_id,
+                    });
+                }
             }
         }
     }
@@ -183,11 +209,12 @@ pub fn build_graph(facts: &[Fact]) -> Graph {
                     .unwrap_or_default();
                 for arg in &c.args {
                     if (arg.index as usize) < num_params {
+                        let param_name = param_names[arg.index as usize].clone();
                         g.add_edge(Edge::ArgToParam {
                             call_id: call_id.clone(),
                             arg_index: arg.index,
-                            param_name: param_names[arg.index as usize].clone(),
-                            callee_function_id: func_id.clone(),
+                            param_var_id: make_var_id(&func_id, &param_name),
+                            param_name,
                         });
                     }
                 }
@@ -883,13 +910,25 @@ mod tests {
         ];
         let g = build_graph(&facts);
 
-        let command_id = make_var_id(&func_id, "command");
-        let linked = g.incoming_edges(&command_id).iter().any(|e| {
+        // `cmd` is both a parameter (Variable node) and a source. The source is
+        // linked to its parameter Variable node, which then flows into `command`
+        // via the assignment. Assert both hops so the taint can reach `command`.
+        let param_var_id = make_var_id(&func_id, "cmd");
+        let source_to_param = g.incoming_edges(&param_var_id).iter().any(|e| {
             matches!(e, Edge::SourceToVar { source_id: sid, .. } if sid.as_str() == source_id.as_str())
         });
         assert!(
-            linked,
-            "expected SourceToVar from source `cmd` to variable `command`"
+            source_to_param,
+            "expected SourceToVar from source `cmd` to its parameter variable"
+        );
+
+        let command_id = make_var_id(&func_id, "command");
+        let param_to_command = g.incoming_edges(&command_id).iter().any(|e| {
+            matches!(e, Edge::ValToVar { from_var_id: fid, .. } if fid.as_str() == param_var_id.as_str())
+        });
+        assert!(
+            param_to_command,
+            "expected ValToVar from parameter `cmd` to variable `command`"
         );
     }
 

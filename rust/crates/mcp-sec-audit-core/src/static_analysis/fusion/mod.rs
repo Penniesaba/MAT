@@ -1,9 +1,12 @@
 pub(crate) mod matcher;
-mod scorer;
 mod merger;
+mod scorer;
 
 use crate::config::FusionConfig;
-use crate::model::{AgentAnalysisResult, CodeqlAnalysisResult, FusedFinding, RuleAnalysisResult, TaintAnalysisResult};
+use crate::model::{
+    AgentAnalysisResult, CodeqlAnalysisResult, FusedFinding, RuleAnalysisResult,
+    TaintAnalysisResult,
+};
 
 /// Run the fusion pipeline across all four analysis lines.
 ///

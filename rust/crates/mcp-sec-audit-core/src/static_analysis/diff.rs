@@ -1,7 +1,10 @@
 //! v4.0 set-partition: split the four analysis lines into the three feedback
 //! sets c / a / b by reusing the fusion matcher's proximity grouping.
 
-use crate::model::{AgentAnalysisResult, CodeqlAnalysisResult, ModelCandidate, RuleAnalysisResult, TaintAnalysisResult};
+use crate::model::{
+    AgentAnalysisResult, CodeqlAnalysisResult, ModelCandidate, RuleAnalysisResult,
+    TaintAnalysisResult,
+};
 
 use super::codeql::models::mad_sink_kind;
 use super::fusion::matcher::{MatchGroup, match_results};
@@ -90,9 +93,13 @@ mod b0_tests {
 
     fn cand(kind: &str, name: &str, category: &str) -> ModelCandidate {
         ModelCandidate {
-            kind: kind.into(), name: name.into(), category: category.into(),
-            language: "python".into(), argument: Some(0),
-            confidence: Confidence::Medium, evidence_snippets: vec![],
+            kind: kind.into(),
+            name: name.into(),
+            category: category.into(),
+            language: "python".into(),
+            argument: Some(0),
+            confidence: Confidence::Medium,
+            evidence_snippets: vec![],
         }
     }
 
@@ -115,13 +122,22 @@ mod b0_tests {
 
     #[test]
     fn source_and_sanitizer_are_taint_models() {
-        assert_eq!(classify_candidate(&cand("source", "request.get", "network_request")), Representability::TaintModel);
-        assert_eq!(classify_candidate(&cand("sanitizer", "html.escape", "xss")), Representability::TaintModel);
+        assert_eq!(
+            classify_candidate(&cand("source", "request.get", "network_request")),
+            Representability::TaintModel
+        );
+        assert_eq!(
+            classify_candidate(&cand("sanitizer", "html.escape", "xss")),
+            Representability::TaintModel
+        );
     }
 
     #[test]
     fn unknown_kind_is_semantic_only() {
-        assert_eq!(classify_candidate(&cand("mystery", "foo.bar", "x")), Representability::SemanticOnly);
+        assert_eq!(
+            classify_candidate(&cand("mystery", "foo.bar", "x")),
+            Representability::SemanticOnly
+        );
     }
 }
 
@@ -132,42 +148,77 @@ mod tests {
 
     fn rule(id: &str, file: &str, line: u32, category: &str) -> RuleAnalysisResult {
         RuleAnalysisResult {
-            result_id: id.into(), rule_id: "r".into(), category: category.into(),
-            owasp_mcp: None, file: file.into(), line, matched_text: None, evidence: vec![],
-            severity: Severity::Medium, confidence: Confidence::High,
-            recommendation: None, related_facts_exist: false,
+            result_id: id.into(),
+            rule_id: "r".into(),
+            category: category.into(),
+            owasp_mcp: None,
+            file: file.into(),
+            line,
+            matched_text: None,
+            evidence: vec![],
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            recommendation: None,
+            related_facts_exist: false,
         }
     }
     fn taint(id: &str, sink_id: &str, sink_kind: &str) -> TaintAnalysisResult {
         TaintAnalysisResult {
-            result_id: id.into(), source_id: "source:x.py:0".into(),
-            source_kind: "mcp_tool_param".into(), entrypoint_id: None,
-            sink_id: sink_id.into(), sink_kind: sink_kind.into(),
-            call_chain: vec![], dataflow_path: vec![], evidence: vec![],
-            taint_confidence: Confidence::Medium, entrypoint_is_mcp: false,
+            result_id: id.into(),
+            source_id: "source:x.py:0".into(),
+            source_kind: "mcp_tool_param".into(),
+            entrypoint_id: None,
+            sink_id: sink_id.into(),
+            sink_kind: sink_kind.into(),
+            call_chain: vec![],
+            dataflow_path: vec![],
+            evidence: vec![],
+            taint_confidence: Confidence::Medium,
+            entrypoint_is_mcp: false,
             backward_trace_found_root: false,
         }
     }
     fn agent(id: &str, file: &str, line: u32) -> AgentAnalysisResult {
         AgentAnalysisResult {
-            result_id: id.into(), agent_id: "a".into(), prompt_profile: "p".into(),
-            model_provider: None, input_scope: vec![],
-            candidate_title: "t".into(), affected_locations: vec![format!("{file}:{line}")],
-            reasoning_summary: String::new(), evidence_snippets: vec![],
-            related_rule_result_ids: vec![], related_taint_result_ids: vec![],
-            confidence: Confidence::Medium, verification_status: "uncorroborated".into(),
+            result_id: id.into(),
+            agent_id: "a".into(),
+            prompt_profile: "p".into(),
+            model_provider: None,
+            input_scope: vec![],
+            candidate_title: "t".into(),
+            affected_locations: vec![format!("{file}:{line}")],
+            reasoning_summary: String::new(),
+            evidence_snippets: vec![],
+            related_rule_result_ids: vec![],
+            related_taint_result_ids: vec![],
+            confidence: Confidence::Medium,
+            verification_status: "uncorroborated".into(),
             limitations: vec![],
         }
     }
     fn codeql(id: &str, file: &str, line: u32) -> CodeqlAnalysisResult {
         CodeqlAnalysisResult {
-            result_id: id.into(), rule_id: "py/cmd".into(), rule_name: "cmd".into(),
-            category: "command_execution".into(), query_source: "built-in".into(),
-            languages: vec!["python".into()], message: "m".into(), severity: Severity::High,
-            locations: vec![Location { file: file.into(), line, column: None, message: None }],
-            dataflow_path: None, sarif_snippet: None, related_rule_ids: vec![],
-            related_taint_ids: vec![], related_agent_ids: vec![],
-            verification_status: "uncorroborated".into(), limitations: vec![],
+            result_id: id.into(),
+            rule_id: "py/cmd".into(),
+            rule_name: "cmd".into(),
+            category: "command_execution".into(),
+            query_source: "built-in".into(),
+            languages: vec!["python".into()],
+            message: "m".into(),
+            severity: Severity::High,
+            locations: vec![Location {
+                file: file.into(),
+                line,
+                column: None,
+                message: None,
+            }],
+            dataflow_path: None,
+            sarif_snippet: None,
+            related_rule_ids: vec![],
+            related_taint_ids: vec![],
+            related_agent_ids: vec![],
+            verification_status: "uncorroborated".into(),
+            limitations: vec![],
         }
     }
 
