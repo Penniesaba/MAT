@@ -23,7 +23,8 @@ pub(crate) use prompt::{PromptFinding, render_explanation_prompt, render_verific
 #[allow(unused_imports)]
 pub(crate) use adjudicate::{
     Abstraction, AdjudicationOutcome, AdjudicationVerdict, PromoteAction, ResolvedVerdict,
-    parse_verdicts, render_adjudication_prompt, resolved_to_promote_action, run_adjudication, vote,
+    parse_verdicts, render_adjudication_prompt, resolved_to_promote_action, run_adjudication_async,
+    vote,
 };
 
 /// Hardcoded constants (not user-configurable).
@@ -67,15 +68,23 @@ fn scan_target_root(ctx: &StaticScanContext) -> Option<String> {
 
 /// Agent line entry point (阶段 1).
 ///
-/// Prepares file context, renders the prompt template, invokes the
-/// configured CLI agent provider, and parses structured results from
-/// the agent's output.
+/// Synchronous `block_on` shell over [`run_async`], kept so existing
+/// synchronous callers (and tests) need not change.
+#[cfg(test)]
 pub fn run(ctx: &StaticScanContext) -> Result<AgentOutput> {
-    run_with_prompt(ctx, None)
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(run_async(ctx))
+}
+
+/// Async agent line entry point (阶段 1) for the async pipeline (Task 7).
+pub(crate) async fn run_async(ctx: &StaticScanContext) -> Result<AgentOutput> {
+    run_with_prompt_async(ctx, None).await
 }
 
 /// 跑 agent，可选地在渲染好的基础 prompt 之后追加一段验证提示词（阶段 2 的 prompt'）。
-pub(crate) fn run_with_prompt(
+pub(crate) async fn run_with_prompt_async(
     ctx: &StaticScanContext,
     prompt_extra: Option<&str>,
 ) -> Result<AgentOutput> {
@@ -154,7 +163,7 @@ pub(crate) fn run_with_prompt(
         extra_args: agent_config.extra_args.clone(),
     };
 
-    let output = provider.run_blocking(&run_config)?;
+    let output = provider.run(&run_config).await?;
 
     // Parse results
     let metadata = parser::AgentMetadata {

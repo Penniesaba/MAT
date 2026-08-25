@@ -137,8 +137,9 @@ impl CliAgentProvider {
         }
     }
 
-    /// Synchronous shell around [`Self::run`] for callers that have not yet
-    /// migrated to the async pipeline (Task 7).
+    /// Synchronous shell around [`Self::run`], used only by the synchronous
+    /// unit tests now that the pipeline calls the async form directly.
+    #[cfg(test)]
     pub(crate) fn run_blocking(&self, config: &AgentRunConfig) -> Result<AgentRunOutput> {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()

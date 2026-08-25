@@ -192,7 +192,7 @@ fn language_for_file(item_id: &str) -> String {
 const ROUNDS: u32 = 3;
 
 /// Run the claude CLI adjudication ROUNDS times, returning one Vec per round.
-pub fn run_adjudication(
+pub(crate) async fn run_adjudication_async(
     ctx: &StaticScanContext,
     items: &[AdjudicationItem],
 ) -> Result<Vec<Vec<AdjudicationVerdict>>> {
@@ -215,7 +215,7 @@ pub fn run_adjudication(
             timeout_seconds: agent_config.timeout_seconds,
             extra_args: agent_config.extra_args.clone(),
         };
-        let output = CliAgentProvider.run_blocking(&cfg)?;
+        let output = CliAgentProvider.run(&cfg).await?;
         rounds.push(parse_verdicts(&output.stdout)?);
     }
     Ok(rounds)

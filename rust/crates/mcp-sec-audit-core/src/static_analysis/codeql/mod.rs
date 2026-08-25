@@ -50,7 +50,19 @@ pub(crate) struct CodeqlSession {
 impl CodeqlSession {
     /// Create a session (build databases + resolve query packs) if there is
     /// CodeQL work to do; `Ok(None)` when disabled or no supported language.
+    ///
+    /// Synchronous `block_on` shell over [`Self::create_async`], kept so the
+    /// synchronous tests need not change.
+    #[cfg(test)]
     pub(crate) fn create(ctx: &StaticScanContext) -> Result<Option<Self>> {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(Self::create_async(ctx))
+    }
+
+    /// Async form of [`Self::create`] for the async pipeline (Task 7).
+    pub(crate) async fn create_async(ctx: &StaticScanContext) -> Result<Option<Self>> {
         let codeql_config = &ctx.config.static_.codeql;
 
         if !codeql_config.enabled {
@@ -132,7 +144,10 @@ impl CodeqlSession {
                 language = %language,
                 "creating CodeQL database"
             );
-            let db = match provider.create_database_blocking(std::path::Path::new(&target_root), language) {
+            let db = match provider
+                .create_database(std::path::Path::new(&target_root), language)
+                .await
+            {
                 Ok(db) => db,
                 Err(e) => {
                     diagnostics.push(format!(
@@ -158,7 +173,7 @@ impl CodeqlSession {
 
     /// Run per-language analysis against the prepared databases, parse SARIF,
     /// and collect results/diagnostics/raw SARIF into a `CodeqlOutput`.
-    pub(crate) fn analyze(
+    pub(crate) async fn analyze_async(
         &self,
         model_packs: &[MadPack],
         progress: &Progress,
@@ -186,13 +201,17 @@ impl CodeqlSession {
                 "running CodeQL analysis"
             );
             progress.report(format!("CodeQL: analyzing {} database...", language));
-            match self.provider.run_analysis_blocking(
-                db,
-                query_pack,
-                self.config.timeout_seconds,
-                &self.config.extra_args,
-                &language_packs,
-            ) {
+            match self
+                .provider
+                .run_analysis(
+                    db,
+                    query_pack,
+                    self.config.timeout_seconds,
+                    &self.config.extra_args,
+                    &language_packs,
+                )
+                .await
+            {
                 Ok(sarif) => {
                     let metadata = parser::CodeqlMetadata {
                         query_source: self
@@ -242,15 +261,31 @@ impl CodeqlSession {
 
 /// CodeQL line entry point.
 ///
-/// Builds a session (databases + query packs), compiles the shared sink model
-/// catalog into a MaD model pack, runs analysis, and parses SARIF into
-/// structured results.
+/// Synchronous `block_on` shell over [`run_async`], kept so existing
+/// synchronous callers (and tests) need not change.
+#[cfg(test)]
 pub fn run(
     ctx: &StaticScanContext,
     catalog: &crate::models::ModelCatalog,
     progress: &Progress,
 ) -> Result<CodeqlOutput> {
-    let Some(session) = CodeqlSession::create(ctx)? else {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(run_async(ctx, catalog, progress))
+}
+
+/// Async CodeQL line entry point for the async pipeline (Task 7).
+///
+/// Builds a session (databases + query packs), compiles the shared sink model
+/// catalog into a MaD model pack, runs analysis, and parses SARIF into
+/// structured results.
+pub(crate) async fn run_async(
+    ctx: &StaticScanContext,
+    catalog: &crate::models::ModelCatalog,
+    progress: &Progress,
+) -> Result<CodeqlOutput> {
+    let Some(session) = CodeqlSession::create_async(ctx).await? else {
         // `create` returned `None`: either CodeQL is disabled, or no supported
         // language files were found. Reproduce the skip behavior here (where
         // the progress callback and output are available).
@@ -310,7 +345,7 @@ pub fn run(
         Vec::new()
     };
 
-    session.analyze(&model_packs, progress)
+    session.analyze_async(&model_packs, progress).await
 }
 
 #[cfg(test)]

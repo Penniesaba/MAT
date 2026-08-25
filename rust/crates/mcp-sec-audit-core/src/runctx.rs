@@ -221,6 +221,18 @@ impl RunContext {
         }
     }
 
+    /// Builds a context with an explicit [`Progress`] backend (noop, closure,
+    /// or tracing). Used by the synchronous `block_on` shells in the pipeline.
+    pub fn with_progress(run_id: RunId, progress: Progress) -> Self {
+        Self {
+            run_id,
+            progress,
+            cancel: CancellationToken::new(),
+            governor: None,
+            learning_bus: None,
+        }
+    }
+
     /// Removes every run-scoped temporary directory created for this run's
     /// [`RunId`] (the `codeql`, `sarif`, `mad`, and `staging` kinds).
     ///

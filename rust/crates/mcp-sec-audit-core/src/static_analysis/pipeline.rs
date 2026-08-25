@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 use crate::model::CodeqlOutput;
 use crate::{
     AgentOutput, ConfigSnapshot, EvolutionReport, Fact, FusedFinding, ModelCandidate, Progress,
-    RuleAnalysisResult, RuleBook, RunId, RuntimeConfig, Severity, StaticAnalysisResult,
+    RuleAnalysisResult, RuleBook, RunContext, RunId, RuntimeConfig, Severity, StaticAnalysisResult,
     StaticAnalysisSummary, TaintAnalysisResult, load_rulebook,
 };
 
@@ -51,7 +51,16 @@ pub fn run_static_scan(
     rulebook_paths: &[PathBuf],
     target_overrides: Option<&[PathBuf]>,
 ) -> Result<StaticAnalysisResult> {
-    run_static_scan_inner(config, rulebook_paths, target_overrides, &Progress::noop())
+    let run_ctx = RunContext::with_progress(RunId::new(), Progress::noop());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(run_static_scan_async(
+            config,
+            rulebook_paths,
+            target_overrides,
+            &run_ctx,
+        ))
 }
 
 /// The legacy `FnMut(&str)` entry point, kept as a bridge over the
@@ -66,23 +75,53 @@ pub fn run_static_scan_with_progress(
     target_overrides: Option<&[PathBuf]>,
     progress: impl FnMut(&str) + Send + 'static,
 ) -> Result<StaticAnalysisResult> {
-    run_static_scan_inner(
-        config,
-        rulebook_paths,
-        target_overrides,
-        &Progress::from_fn(progress),
-    )
+    let run_ctx = RunContext::with_progress(RunId::new(), Progress::from_fn(progress));
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(run_static_scan_async(
+            config,
+            rulebook_paths,
+            target_overrides,
+            &run_ctx,
+        ))
 }
 
-/// The core synchronous scan, parameterized by a [`Progress`] reporter rather
-/// than a `FnMut` closure so it can cross `.await` points once the pipeline is
-/// made asynchronous (Task 7).
+/// The synchronous scan entry point parameterized by a [`Progress`] reporter.
+///
+/// Kept as a `block_on` shell over [`run_static_scan_async`] for the
+/// single-repository CLI path, which passes its own [`Progress`] (tracing or
+/// noop) directly.
 pub fn run_static_scan_inner(
     config: &RuntimeConfig,
     rulebook_paths: &[PathBuf],
     target_overrides: Option<&[PathBuf]>,
     progress: &Progress,
 ) -> Result<StaticAnalysisResult> {
+    let run_ctx = RunContext::with_progress(RunId::new(), progress.clone());
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(run_static_scan_async(
+            config,
+            rulebook_paths,
+            target_overrides,
+            &run_ctx,
+        ))
+}
+
+/// The asynchronous pipeline entry point (Task 7).
+///
+/// The synchronous [`run_static_scan`], [`run_static_scan_with_progress`], and
+/// [`run_static_scan_inner`] are `block_on` shells over this function. The
+/// batch orchestrator and CLI call this directly.
+pub async fn run_static_scan_async(
+    config: &RuntimeConfig,
+    rulebook_paths: &[PathBuf],
+    target_overrides: Option<&[PathBuf]>,
+    run_ctx: &RunContext,
+) -> Result<StaticAnalysisResult> {
+    let progress = &run_ctx.progress;
     let mut effective_config = config.clone();
     if let Some(targets) = target_overrides {
         effective_config.scan.targets = targets
@@ -205,7 +244,11 @@ pub fn run_static_scan_inner(
             "Rule analysis: skipped (disabled)"
         });
         let start = std::time::Instant::now();
-        let results = rule::run(&ctx, loaded_rulebook.as_ref())?;
+        let ctx_owned = ctx.clone();
+        let rulebook_owned = loaded_rulebook.clone();
+        let results =
+            tokio::task::spawn_blocking(move || rule::run(&ctx_owned, rulebook_owned.as_ref()))
+                .await??;
         tracing::info!(
             target: "mcp_sec_audit::rule",
             findings = results.len(),
@@ -229,7 +272,12 @@ pub fn run_static_scan_inner(
             "Taint analysis: skipped (disabled)"
         });
         let start = std::time::Instant::now();
-        let (results, facts) = taint::run_with_catalog(&ctx, &base_catalog)?;
+        let ctx_owned = ctx.clone();
+        let catalog_owned = base_catalog.clone();
+        let (results, facts) = tokio::task::spawn_blocking(move || {
+            taint::run_with_catalog(&ctx_owned, &catalog_owned)
+        })
+        .await??;
         tracing::info!(
             target: "mcp_sec_audit::taint",
             findings = results.len(),
@@ -256,7 +304,7 @@ pub fn run_static_scan_inner(
         let start = std::time::Instant::now();
         // A transient agent failure (e.g. auth, unparseable output) must not
         // abort the whole scan: degrade to "no agent findings" with a warning.
-        let output = match agent::run(&ctx) {
+        let output = match agent::run_async(&ctx).await {
             Ok(output) => output,
             Err(e) => {
                 tracing::warn!(
@@ -297,7 +345,7 @@ pub fn run_static_scan_inner(
             "CodeQL analysis: skipped (disabled)"
         });
         let start = std::time::Instant::now();
-        let output = codeql::run(&ctx, &base_catalog, progress)?;
+        let output = codeql::run_async(&ctx, &base_catalog, progress).await?;
         tracing::info!(
             target: "mcp_sec_audit::codeql",
             findings = output.results.len(),
@@ -454,7 +502,12 @@ pub fn run_static_scan_inner(
         .entered();
         progress.report("Running taint analysis (phase 2)...");
         let start = std::time::Instant::now();
-        let (results, facts) = taint::run_with_catalog(&ctx, &evolved_catalog)?;
+        let ctx_owned = ctx.clone();
+        let catalog_owned = evolved_catalog.clone();
+        let (results, facts) = tokio::task::spawn_blocking(move || {
+            taint::run_with_catalog(&ctx_owned, &catalog_owned)
+        })
+        .await??;
         tracing::info!(
             target: "mcp_sec_audit::taint",
             findings = results.len(),
@@ -475,7 +528,7 @@ pub fn run_static_scan_inner(
         .entered();
         progress.report("Running agent analysis (phase 2)...");
         let start = std::time::Instant::now();
-        let output = match agent::run_with_prompt(&ctx, prompt_extra.as_deref()) {
+        let output = match agent::run_with_prompt_async(&ctx, prompt_extra.as_deref()).await {
             Ok(output) => output,
             Err(e) => {
                 tracing::warn!(
@@ -512,7 +565,7 @@ pub fn run_static_scan_inner(
         .entered();
         progress.report("Running CodeQL analysis (phase 2)...");
         let start = std::time::Instant::now();
-        let output = codeql::run(&ctx, &evolved_catalog, progress)?;
+        let output = codeql::run_async(&ctx, &evolved_catalog, progress).await?;
         tracing::info!(
             target: "mcp_sec_audit::codeql",
             findings = output.results.len(),
@@ -555,7 +608,7 @@ pub fn run_static_scan_inner(
             })
             .collect();
         let explanation_extra = agent::render_explanation_prompt(&items);
-        match agent::run_with_prompt(&ctx, Some(&explanation_extra)) {
+        match agent::run_with_prompt_async(&ctx, Some(&explanation_extra)).await {
             Ok(out) => attach_explanations(&mut ambiguous, &out.findings),
             Err(e) => tracing::warn!(
                 target: "mcp_sec_audit::agent",
@@ -589,7 +642,7 @@ pub fn run_static_scan_inner(
             });
         }
         if !items.is_empty() {
-            match agent::run_adjudication(&ctx, &items) {
+            match agent::run_adjudication_async(&ctx, &items).await {
                 Ok(rounds) => {
                     let resolved = agent::vote(&rounds);
                     for r in &resolved {

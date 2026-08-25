@@ -115,7 +115,9 @@ impl CliCodeqlProvider {
         })
     }
 
-    /// Synchronous shell around [`Self::create_database`].
+    /// Synchronous shell around [`Self::create_database`], used only by the
+    /// synchronous unit tests now that the pipeline calls the async form.
+    #[cfg(test)]
     pub(crate) fn create_database_blocking(
         &self,
         source_dir: &Path,
@@ -215,7 +217,9 @@ impl CliCodeqlProvider {
         }
     }
 
-    /// Synchronous shell around [`Self::run_analysis`].
+    /// Synchronous shell around [`Self::run_analysis`], used only by the
+    /// synchronous unit tests now that the pipeline calls the async form.
+    #[cfg(test)]
     pub(crate) fn run_analysis_blocking(
         &self,
         db: &DatabaseInfo,

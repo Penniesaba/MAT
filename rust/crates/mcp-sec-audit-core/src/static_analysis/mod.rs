@@ -25,5 +25,6 @@ pub use facts::{
     extract_static_facts,
 };
 pub use pipeline::{
-    StaticScanContext, run_static_scan, run_static_scan_inner, run_static_scan_with_progress,
+    StaticScanContext, run_static_scan, run_static_scan_async, run_static_scan_inner,
+    run_static_scan_with_progress,
 };
