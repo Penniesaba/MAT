@@ -5,7 +5,7 @@ mod queries;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 
 use crate::config::StaticCodeqlConfig;
 use crate::model::CodeqlOutput;
@@ -76,7 +76,7 @@ impl CodeqlSession {
         // Hard-error if CodeQL CLI is not installed (only checked when we have work to do).
         let provider = CliCodeqlProvider::new(&codeql_config.binary);
         if !provider.check_available() {
-            panic!(
+            bail!(
                 "CodeQL CLI ('{}') not found. Set [static.codeql].binary or add it to PATH. \
                  Install it from: https://github.com/github/codeql-cli-binaries/releases",
                 codeql_config.binary
@@ -368,6 +368,32 @@ mod tests {
         .expect("run");
         assert!(output.results.is_empty());
         assert!(messages.iter().any(|m| m.contains("CodeQL skipped")));
+    }
+
+    #[test]
+    fn missing_codeql_binary_returns_err_not_panic() {
+        use crate::static_analysis::discovery::{DiscoveredFile, ScanLanguage};
+        let mut config = RuntimeConfig::default();
+        config.static_.codeql.enabled = true;
+        config.static_.codeql.binary = "/nonexistent/definitely-not-codeql".to_string();
+        // A supported-language file is required to reach the CLI availability
+        // check: empty/unsupported discovered files return Ok(None) before it.
+        let ctx = StaticScanContext {
+            config,
+            rulebook_paths: Vec::new(),
+            discovered_files: vec![DiscoveredFile {
+                path: "main.py".into(),
+                language: ScanLanguage::Python,
+            }],
+        };
+        let result = CodeqlSession::create(&ctx);
+        // `err()` (rather than `unwrap_err()`) because `CodeqlSession` is not
+        // `Debug`; the intent is "recoverable Err, not a panic".
+        let err = result.err().expect("missing CLI must be a recoverable Err, not a panic");
+        assert!(
+            err.to_string().contains("codeql"),
+            "error should mention the CodeQL CLI"
+        );
     }
 
     #[test]
