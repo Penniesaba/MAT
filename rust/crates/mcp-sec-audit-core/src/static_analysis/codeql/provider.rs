@@ -6,6 +6,8 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 
+use crate::RunId;
+
 use super::models::MadPack;
 use super::queries::QueryPack;
 
@@ -37,15 +39,25 @@ pub trait CodeqlProvider {
 }
 
 /// Default provider: shells out to the `codeql` CLI.
-pub struct CliCodeqlProvider {
+pub(crate) struct CliCodeqlProvider {
     binary: String,
+    run_id: RunId,
 }
 
 impl CliCodeqlProvider {
-    pub fn new(binary: impl Into<String>) -> Self {
-        Self {
-            binary: binary.into(),
-        }
+    pub(crate) fn new(binary: String, run_id: RunId) -> Self {
+        Self { binary, run_id }
+    }
+
+    /// The per-run CodeQL database directory for a language. Keyed by [`RunId`]
+    /// so concurrent repositories in one process never share a database.
+    fn db_dir(&self, language: &str) -> PathBuf {
+        self.run_id.temp_dir("codeql").join("db").join(language)
+    }
+
+    /// The per-run SARIF output path for a language.
+    fn sarif_path(&self, language: &str) -> PathBuf {
+        self.run_id.temp_dir("sarif").join(format!("{language}.sarif"))
     }
 
     /// Parse the installed CodeQL CLI version from `codeql --version`.
@@ -91,19 +103,7 @@ impl CodeqlProvider for CliCodeqlProvider {
     }
 
     fn create_database(&self, source_dir: &Path, language: &str) -> Result<DatabaseInfo> {
-        let db_dir = std::env::temp_dir()
-            .join("mcp-sec-audit-codeql")
-            .join(format!("db-{}", std::process::id()))
-            .join(language);
-
-        // Reuse a cached database when one already exists for this process +
-        // language, so a re-created session does not re-extract the source.
-        if db_dir.join("codeql-database.yml").exists() {
-            return Ok(DatabaseInfo {
-                path: db_dir,
-                language: language.to_string(),
-            });
-        }
+        let db_dir = self.db_dir(language);
 
         std::fs::create_dir_all(&db_dir)?;
 
@@ -157,11 +157,10 @@ impl CodeqlProvider for CliCodeqlProvider {
     ) -> Result<String> {
         // `--output=-` (SARIF to stdout) is unreliable across CodeQL versions,
         // so write to a temp file and read it back instead.
-        let output_path = std::env::temp_dir().join(format!(
-            "mcp-sec-audit-sarif-{}-{}.sarif",
-            std::process::id(),
-            db.language
-        ));
+        let output_path = self.sarif_path(&db.language);
+        if let Some(parent) = output_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
 
         let mut cmd = Command::new(&self.binary);
         cmd.arg("database")
@@ -255,10 +254,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn codeql_db_dirs_differ_across_runs_in_one_process() {
+        let a = CliCodeqlProvider::new("codeql".into(), RunId::new());
+        let b = CliCodeqlProvider::new("codeql".into(), RunId::new());
+        assert_ne!(
+            a.db_dir("python"),
+            b.db_dir("python"),
+            "same-process runs must not share a CodeQL database"
+        );
+        assert_ne!(a.sarif_path("python"), b.sarif_path("python"));
+    }
+
+    #[test]
     fn missing_codeql_cli_errors_on_database_create() {
         // Use a binary that cannot exist so the test is deterministic
         // regardless of whether CodeQL is installed on the host.
-        let provider = CliCodeqlProvider::new("__codeql_definitely_missing__");
+        let provider = CliCodeqlProvider::new("__codeql_definitely_missing__".to_string(), RunId::new());
         if provider.check_available() {
             return; // unexpected, but skip rather than fail
         }

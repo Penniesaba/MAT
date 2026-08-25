@@ -111,9 +111,9 @@ pub(crate) struct MadPack {
 /// `rust` is intentionally not a MaD target today.
 pub(crate) fn write_model_pack_dir(
     catalog: &ModelCatalog,
-    _ctx: &StaticScanContext,
+    ctx: &StaticScanContext,
 ) -> Result<Vec<MadPack>> {
-    let base = std::env::temp_dir().join(format!("mcp-sec-audit-mad-{}", std::process::id()));
+    let base = ctx.run_id.temp_dir("mad");
     std::fs::create_dir_all(&base)?;
     let mut packs = Vec::new();
     for language in ["python", "javascript"] {

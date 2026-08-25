@@ -405,8 +405,7 @@ pub fn run_static_scan_with_progress(
     };
     let evolved_component = base_component.evolve(&delta);
     let evolved_catalog = evolved_component.catalog.clone();
-    let staging_dir =
-        std::env::temp_dir().join(format!("mcp-sec-audit-staging-{}", std::process::id()));
+    let staging_dir = ctx.run_id.temp_dir("staging");
     learning::write_staging(&staging_dir, &staged)?;
 
     // 验证提示词 prompt'：把阶段 1 的 a-only 二分为 a1（高精度标准线命中，请复核）
@@ -1024,7 +1023,10 @@ fn empty_result(
     }
 }
 
-/// 生成本次扫描的稳定标识：`scan-{target}-{unix_secs}`（供 learned_from 溯源）。
+/// 生成本次扫描的稳定标识：`scan-{target}-{run_id}`（供 learned_from 溯源）。
+///
+/// Keyed by [`RunId`] rather than a wall-clock second so two scans of the same
+/// target in one process (or the same second) can never collide.
 fn scan_identifier(ctx: &StaticScanContext) -> String {
     let target = ctx
         .config
@@ -1033,14 +1035,10 @@ fn scan_identifier(ctx: &StaticScanContext) -> String {
         .first()
         .cloned()
         .unwrap_or_else(|| "<none>".to_string());
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
     format!(
         "scan-{}-{}",
         target.replace(['/', '\\', ' ', '.'], "_"),
-        secs
+        ctx.run_id.as_str()
     )
 }
 
@@ -1105,6 +1103,12 @@ mod tests {
     fn scan_context_carries_a_run_id() {
         let ctx = StaticScanContext::new(RuntimeConfig::default(), Vec::new(), Vec::new());
         assert!(!ctx.run_id.as_str().is_empty());
+    }
+
+    #[test]
+    fn scan_identifier_embeds_run_id() {
+        let ctx = StaticScanContext::new(RuntimeConfig::default(), Vec::new(), Vec::new());
+        assert!(scan_identifier(&ctx).contains(ctx.run_id.as_str()));
     }
 
     #[test]

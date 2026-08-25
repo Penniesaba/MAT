@@ -74,7 +74,7 @@ impl CodeqlSession {
         }
 
         // Hard-error if CodeQL CLI is not installed (only checked when we have work to do).
-        let provider = CliCodeqlProvider::new(&codeql_config.binary);
+        let provider = CliCodeqlProvider::new(codeql_config.binary.clone(), ctx.run_id.clone());
         if !provider.check_available() {
             bail!(
                 "CodeQL CLI ('{}') not found. Set [static.codeql].binary or add it to PATH. \
@@ -427,7 +427,7 @@ mod tests {
         use super::provider::{CliCodeqlProvider, CodeqlProvider};
         use super::queries::QueryPack;
 
-        let provider = CliCodeqlProvider::new("codeql");
+        let provider = CliCodeqlProvider::new("codeql".to_string(), crate::RunId::new());
         if !provider.check_available() {
             eprintln!("skipping: codeql CLI not on PATH");
             return;
