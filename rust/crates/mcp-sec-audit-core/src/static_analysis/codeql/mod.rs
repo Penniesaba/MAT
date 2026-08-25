@@ -9,6 +9,7 @@ use anyhow::{Result, bail};
 
 use crate::config::StaticCodeqlConfig;
 use crate::model::CodeqlOutput;
+use crate::Progress;
 
 use super::pipeline::StaticScanContext;
 use models::MadPack;
@@ -160,7 +161,7 @@ impl CodeqlSession {
     pub(crate) fn analyze(
         &self,
         model_packs: &[MadPack],
-        mut progress: impl FnMut(&str),
+        progress: &Progress,
     ) -> Result<CodeqlOutput> {
         let mut all_results = Vec::new();
         let mut all_diagnostics = self.diagnostics.clone();
@@ -184,7 +185,7 @@ impl CodeqlSession {
                 language = %language,
                 "running CodeQL analysis"
             );
-            progress(&format!("CodeQL: analyzing {} database...", language));
+            progress.report(format!("CodeQL: analyzing {} database...", language));
             match self.provider.run_analysis(
                 db,
                 query_pack,
@@ -247,7 +248,7 @@ impl CodeqlSession {
 pub fn run(
     ctx: &StaticScanContext,
     catalog: &crate::models::ModelCatalog,
-    mut progress: impl FnMut(&str),
+    progress: &Progress,
 ) -> Result<CodeqlOutput> {
     let Some(session) = CodeqlSession::create(ctx)? else {
         // `create` returned `None`: either CodeQL is disabled, or no supported
@@ -261,7 +262,7 @@ pub fn run(
             target: "mcp_sec_audit::codeql",
             "CodeQL skipped: no CodeQL-supported language in target"
         );
-        progress("CodeQL skipped: no CodeQL-supported language in target");
+        progress.report("CodeQL skipped: no CodeQL-supported language in target");
         let mut output = CodeqlOutput::empty();
         let total = ctx.discovered_files.len();
         output.diagnostics.push(format!(
@@ -309,7 +310,7 @@ pub fn run(
         Vec::new()
     };
 
-    session.analyze(&model_packs, &mut progress)
+    session.analyze(&model_packs, progress)
 }
 
 #[cfg(test)]
@@ -325,8 +326,12 @@ mod tests {
             rulebook_paths: Vec::new(),
             discovered_files: Vec::new(),
         };
-        let output =
-            run(&ctx, &crate::models::default_catalog(), |_| {}).expect("run disabled codeql");
+        let output = run(
+            &ctx,
+            &crate::models::default_catalog(),
+            &crate::Progress::noop(),
+        )
+        .expect("run disabled codeql");
         assert!(output.results.is_empty());
         assert!(output.raw_sarif.is_none());
         assert!(output.diagnostics.is_empty());
@@ -343,8 +348,12 @@ mod tests {
             discovered_files: Vec::new(),
         };
         // Safe even without CodeQL CLI: no files → returns before CLI check.
-        let output =
-            run(&ctx, &crate::models::default_catalog(), |_| {}).expect("run codeql with no files");
+        let output = run(
+            &ctx,
+            &crate::models::default_catalog(),
+            &crate::Progress::noop(),
+        )
+        .expect("run codeql with no files");
         assert!(output.results.is_empty());
         assert!(!output.diagnostics.is_empty());
         assert!(output.diagnostics[0].contains("No CodeQL-supported language"));
@@ -364,11 +373,9 @@ mod tests {
                 language: ScanLanguage::Json,
             }],
         };
-        let mut messages: Vec<String> = Vec::new();
-        let output = run(&ctx, &crate::models::default_catalog(), |m| {
-            messages.push(m.to_string())
-        })
-        .expect("run");
+        let (progress, mut rx) = crate::Progress::channel();
+        let output = run(&ctx, &crate::models::default_catalog(), &progress).expect("run");
+        let messages: Vec<String> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
         assert!(output.results.is_empty());
         assert!(messages.iter().any(|m| m.contains("CodeQL skipped")));
     }

@@ -6,6 +6,7 @@
 //! state that the asynchronous pipeline will carry.
 
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -74,6 +75,9 @@ fn sanitize(repo: &str) -> String {
 ///   progress surfaces in real time.
 /// * **channel** — `report` sends to an `mpsc::UnboundedSender<String>`, for
 ///   the batch orchestrator to aggregate across repositories and print once.
+/// * **closure** — `report` forwards immediately to a caller-provided closure;
+///   used by the synchronous `run_static_scan_with_progress` bridge so the
+///   legacy `FnMut(&str)` API stays live instead of buffering to the end.
 /// * **noop** — `report` does nothing; used by tests.
 #[derive(Clone)]
 pub struct Progress {
@@ -81,10 +85,16 @@ pub struct Progress {
     prefix: Option<String>,
 }
 
+/// A `Send` closure that forwards a single progress message. The `Arc<Mutex>`
+/// keeps it shareable across [`Progress`] clones while still mutable, and the
+/// alias keeps the [`ProgressKind`] variant readable.
+type ProgressCallback = Arc<Mutex<Box<dyn FnMut(&str) + Send>>>;
+
 #[derive(Clone)]
 enum ProgressKind {
     Tracing,
     Channel(mpsc::UnboundedSender<String>),
+    Closure(ProgressCallback),
     Noop,
 }
 
@@ -117,6 +127,22 @@ impl Progress {
         }
     }
 
+    /// A progress reporter that forwards every message to `f` as soon as
+    /// `report` is called.
+    ///
+    /// This is the immediate-forwarding backend behind the synchronous
+    /// `run_static_scan_with_progress` bridge: it keeps the legacy
+    /// `FnMut(&str)` public API live without buffering to a channel.
+    pub(crate) fn from_fn<F>(f: F) -> Self
+    where
+        F: FnMut(&str) + Send + 'static,
+    {
+        Self {
+            kind: ProgressKind::Closure(Arc::new(Mutex::new(Box::new(f)))),
+            prefix: None,
+        }
+    }
+
     /// Emits a progress message.
     pub fn report(&self, msg: impl Into<String>) {
         let msg = msg.into();
@@ -135,6 +161,12 @@ impl Progress {
                     None => msg,
                 };
                 let _ = tx.send(rendered);
+            }
+            ProgressKind::Closure(cb) => {
+                // The closure backend is only ever produced by `from_fn`, which
+                // starts unscoped and is never scoped (scoping is a batch
+                // concern), so the prefix is intentionally ignored here.
+                (cb.lock().expect("progress closure mutex poisoned"))(msg.as_str());
             }
             ProgressKind::Noop => {}
         }
@@ -294,6 +326,17 @@ mod tests {
         let progress = Progress::noop();
         progress.report("hi");
         progress.scoped("excel").report("hi");
+    }
+
+    #[test]
+    fn closure_progress_forwards_immediately() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let captured = seen.clone();
+        let progress = Progress::from_fn(move |msg| captured.lock().unwrap().push(msg.to_string()));
+        progress.report("one");
+        progress.report("two");
+        let seen = seen.lock().unwrap();
+        assert_eq!(*seen, vec!["one".to_string(), "two".to_string()]);
     }
 
     #[test]

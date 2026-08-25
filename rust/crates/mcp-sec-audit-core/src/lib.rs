@@ -34,7 +34,7 @@ pub use static_analysis::{
     DiscoveredFile, DiscoverySummary, ExtractionDiagnostic, JsTsDiagnostic, JsTsExtractionResult,
     PythonExtractionResult, RustExtractionResult, ScanLanguage, StaticScanContext, detect_language,
     discover_files, extract_js_ts_facts, extract_python_facts, extract_rust_facts,
-    extract_static_facts, run_static_scan, run_static_scan_with_progress,
+    extract_static_facts, run_static_scan, run_static_scan_inner, run_static_scan_with_progress,
 };
 
 /// Current Rust rewrite phase implemented by this crate.

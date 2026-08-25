@@ -8,7 +8,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::model::CodeqlOutput;
 use crate::{
-    AgentOutput, ConfigSnapshot, EvolutionReport, Fact, FusedFinding, ModelCandidate,
+    AgentOutput, ConfigSnapshot, EvolutionReport, Fact, FusedFinding, ModelCandidate, Progress,
     RuleAnalysisResult, RuleBook, RunId, RuntimeConfig, Severity, StaticAnalysisResult,
     StaticAnalysisSummary, TaintAnalysisResult, load_rulebook,
 };
@@ -51,14 +51,37 @@ pub fn run_static_scan(
     rulebook_paths: &[PathBuf],
     target_overrides: Option<&[PathBuf]>,
 ) -> Result<StaticAnalysisResult> {
-    run_static_scan_with_progress(config, rulebook_paths, target_overrides, |_| {})
+    run_static_scan_inner(config, rulebook_paths, target_overrides, &Progress::noop())
 }
 
+/// The legacy `FnMut(&str)` entry point, kept as a bridge over the
+/// `Progress`-based pipeline so existing closure-passing callers do not break.
+///
+/// The closure is wrapped in a closure-backed [`Progress`] that forwards each
+/// message the moment `report` is called, so progress stays live rather than
+/// being buffered and replayed after the scan finishes.
 pub fn run_static_scan_with_progress(
     config: &RuntimeConfig,
     rulebook_paths: &[PathBuf],
     target_overrides: Option<&[PathBuf]>,
-    mut progress: impl FnMut(&str),
+    progress: impl FnMut(&str) + Send + 'static,
+) -> Result<StaticAnalysisResult> {
+    run_static_scan_inner(
+        config,
+        rulebook_paths,
+        target_overrides,
+        &Progress::from_fn(progress),
+    )
+}
+
+/// The core synchronous scan, parameterized by a [`Progress`] reporter rather
+/// than a `FnMut` closure so it can cross `.await` points once the pipeline is
+/// made asynchronous (Task 7).
+pub fn run_static_scan_inner(
+    config: &RuntimeConfig,
+    rulebook_paths: &[PathBuf],
+    target_overrides: Option<&[PathBuf]>,
+    progress: &Progress,
 ) -> Result<StaticAnalysisResult> {
     let mut effective_config = config.clone();
     if let Some(targets) = target_overrides {
@@ -75,10 +98,10 @@ pub fn run_static_scan_with_progress(
         .map(PathBuf::from)
         .collect::<Vec<_>>();
 
-    progress(&format!("Scanning {}", target_label(&targets)));
+    progress.report(format!("Scanning {}", target_label(&targets)));
 
     if !effective_config.static_.enabled {
-        progress("Static analysis disabled; returning empty result");
+        progress.report("Static analysis disabled; returning empty result");
         return Ok(empty_result(
             effective_config,
             rulebook_paths_to_strings(rulebook_paths),
@@ -87,7 +110,7 @@ pub fn run_static_scan_with_progress(
     }
 
     let discovery = discover_files(&targets, &effective_config.scan)?;
-    progress(&format!(
+    progress.report(format!(
         "Discovered {} files",
         discovery.discovered_files.len()
     ));
@@ -176,7 +199,7 @@ pub fn run_static_scan_with_progress(
             enabled = effective_config.static_.rule.enabled
         )
         .entered();
-        progress(if effective_config.static_.rule.enabled {
+        progress.report(if effective_config.static_.rule.enabled {
             "Running rule analysis..."
         } else {
             "Rule analysis: skipped (disabled)"
@@ -189,7 +212,7 @@ pub fn run_static_scan_with_progress(
             elapsed_ms = start.elapsed().as_millis() as u64,
             "rule analysis complete"
         );
-        progress(&format!("Rule analysis done: {} findings", results.len()));
+        progress.report(format!("Rule analysis done: {} findings", results.len()));
         results
     };
 
@@ -200,7 +223,7 @@ pub fn run_static_scan_with_progress(
             enabled = effective_config.static_.taint.enabled
         )
         .entered();
-        progress(if effective_config.static_.taint.enabled {
+        progress.report(if effective_config.static_.taint.enabled {
             "Running taint analysis (phase 1)..."
         } else {
             "Taint analysis: skipped (disabled)"
@@ -214,7 +237,7 @@ pub fn run_static_scan_with_progress(
             elapsed_ms = start.elapsed().as_millis() as u64,
             "taint analysis complete (phase 1)"
         );
-        progress(&format!("Taint analysis done: {} findings", results.len()));
+        progress.report(format!("Taint analysis done: {} findings", results.len()));
         (results, facts)
     };
 
@@ -225,7 +248,7 @@ pub fn run_static_scan_with_progress(
             enabled = effective_config.static_.agent.enabled
         )
         .entered();
-        progress(if effective_config.static_.agent.enabled {
+        progress.report(if effective_config.static_.agent.enabled {
             "Running agent analysis..."
         } else {
             "Agent analysis: skipped (disabled)"
@@ -254,7 +277,7 @@ pub fn run_static_scan_with_progress(
             elapsed_ms = start.elapsed().as_millis() as u64,
             "agent analysis complete"
         );
-        progress(&format!(
+        progress.report(format!(
             "Agent analysis done: {} findings",
             output.findings.len()
         ));
@@ -268,13 +291,13 @@ pub fn run_static_scan_with_progress(
             enabled = effective_config.static_.codeql.enabled
         )
         .entered();
-        progress(if effective_config.static_.codeql.enabled {
+        progress.report(if effective_config.static_.codeql.enabled {
             "Running CodeQL analysis (phase 1)..."
         } else {
             "CodeQL analysis: skipped (disabled)"
         });
         let start = std::time::Instant::now();
-        let output = codeql::run(&ctx, &base_catalog, &mut progress)?;
+        let output = codeql::run(&ctx, &base_catalog, progress)?;
         tracing::info!(
             target: "mcp_sec_audit::codeql",
             findings = output.results.len(),
@@ -282,7 +305,7 @@ pub fn run_static_scan_with_progress(
             elapsed_ms = start.elapsed().as_millis() as u64,
             "codeql analysis complete (phase 1)"
         );
-        progress(&format!(
+        progress.report(format!(
             "CodeQL analysis done: {} findings",
             output.results.len()
         ));
@@ -341,7 +364,7 @@ pub fn run_static_scan_with_progress(
 
     // 无进化可做时，直接以阶段 1 结果走融合+汇总，返回（不重跑阶段 2）。
     let Some(staged) = learning::stage_catalog_evolution(&base_catalog, &gated) else {
-        progress("Differential: no evolution candidates — skipping phase 2");
+        progress.report("Differential: no evolution candidates — skipping phase 2");
         let evolution = EvolutionReport {
             b0_count: b0.len(),
             b0_candidates: b0,
@@ -429,7 +452,7 @@ pub fn run_static_scan_with_progress(
             enabled = effective_config.static_.taint.enabled
         )
         .entered();
-        progress("Running taint analysis (phase 2)...");
+        progress.report("Running taint analysis (phase 2)...");
         let start = std::time::Instant::now();
         let (results, facts) = taint::run_with_catalog(&ctx, &evolved_catalog)?;
         tracing::info!(
@@ -439,7 +462,7 @@ pub fn run_static_scan_with_progress(
             elapsed_ms = start.elapsed().as_millis() as u64,
             "taint analysis complete (phase 2)"
         );
-        progress(&format!("Taint phase 2 done: {} findings", results.len()));
+        progress.report(format!("Taint phase 2 done: {} findings", results.len()));
         (results, facts)
     };
 
@@ -450,7 +473,7 @@ pub fn run_static_scan_with_progress(
             enabled = effective_config.static_.agent.enabled
         )
         .entered();
-        progress("Running agent analysis (phase 2)...");
+        progress.report("Running agent analysis (phase 2)...");
         let start = std::time::Instant::now();
         let output = match agent::run_with_prompt(&ctx, prompt_extra.as_deref()) {
             Ok(output) => output,
@@ -473,7 +496,7 @@ pub fn run_static_scan_with_progress(
             elapsed_ms = start.elapsed().as_millis() as u64,
             "agent analysis complete (phase 2)"
         );
-        progress(&format!(
+        progress.report(format!(
             "Agent phase 2 done: {} findings",
             output.findings.len()
         ));
@@ -487,9 +510,9 @@ pub fn run_static_scan_with_progress(
             enabled = effective_config.static_.codeql.enabled
         )
         .entered();
-        progress("Running CodeQL analysis (phase 2)...");
+        progress.report("Running CodeQL analysis (phase 2)...");
         let start = std::time::Instant::now();
-        let output = codeql::run(&ctx, &evolved_catalog, &mut progress)?;
+        let output = codeql::run(&ctx, &evolved_catalog, progress)?;
         tracing::info!(
             target: "mcp_sec_audit::codeql",
             findings = output.results.len(),
@@ -497,7 +520,7 @@ pub fn run_static_scan_with_progress(
             elapsed_ms = start.elapsed().as_millis() as u64,
             "codeql analysis complete (phase 2)"
         );
-        progress(&format!(
+        progress.report(format!(
             "CodeQL phase 2 done: {} findings",
             output.results.len()
         ));
@@ -840,14 +863,14 @@ fn finish(
     codeql_output: CodeqlOutput,
     facts: Vec<Fact>,
     evolution: EvolutionReport,
-    mut progress: impl FnMut(&str),
+    progress: &Progress,
 ) -> Result<StaticAnalysisResult> {
     let agent_results = agent_output.findings;
     let model_candidates = agent_output.model_candidates;
 
     let fused_findings = {
         let _enter = tracing::info_span!(target: "mcp_sec_audit::fusion", "fusion").entered();
-        progress("Fusing results...");
+        progress.report("Fusing results...");
         let start = std::time::Instant::now();
         let findings = fusion::run(
             &ctx.config.fusion,
@@ -862,7 +885,7 @@ fn finish(
             elapsed_ms = start.elapsed().as_millis() as u64,
             "fusion complete"
         );
-        progress(&format!("Fused {} findings", findings.len()));
+        progress.report(format!("Fused {} findings", findings.len()));
         findings
     };
 
@@ -874,7 +897,7 @@ fn finish(
         codeql_output.results.clone(),
         ctx.config.fusion.line_proximity,
     );
-    progress(&format!(
+    progress.report(format!(
         "Differential: agreed={} standard-only={} agent-only={}",
         line_diff.agreed.len(),
         line_diff.a_only.len(),
@@ -1103,6 +1126,19 @@ mod tests {
     fn scan_context_carries_a_run_id() {
         let ctx = StaticScanContext::new(RuntimeConfig::default(), Vec::new(), Vec::new());
         assert!(!ctx.run_id.as_str().is_empty());
+    }
+
+    #[test]
+    fn progress_bridge_forwards_messages_to_the_legacy_closure() {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = seen.clone();
+        let mut config = RuntimeConfig::default();
+        config.static_.enabled = false;
+        let _ = run_static_scan_with_progress(&config, &[], None, move |m| {
+            captured.lock().unwrap().push(m.to_string());
+        });
+        let seen = seen.lock().unwrap();
+        assert!(seen.iter().any(|m| m.contains("Scanning")));
     }
 
     #[test]

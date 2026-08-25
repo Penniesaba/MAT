@@ -142,16 +142,17 @@ fn main() -> Result<()> {
 fn run_static_scan_from_config(config_path: &PathBuf) -> Result<()> {
     let config = mcp_sec_audit_core::load_runtime_config(config_path)?;
     logging::init(&config.logging)?;
-    let result = mcp_sec_audit_core::run_static_scan_with_progress(
-        &config,
-        &[] as &[PathBuf],
-        None,
-        |msg| {
-            if config.logging.show_progress {
-                tracing::info!(target: "mcp_sec_audit::pipeline", "{msg}");
-            }
-        },
-    )?;
+    // The single-repo path uses `Progress`'s tracing form so progress stays
+    // live (each `report` emits a `tracing::info!` immediately) instead of
+    // being buffered and dumped at the end. `show_progress` downgrades it to
+    // the noop form, preserving the previous "quiet" behavior.
+    let progress = if config.logging.show_progress {
+        mcp_sec_audit_core::Progress::tracing()
+    } else {
+        mcp_sec_audit_core::Progress::noop()
+    };
+    let result =
+        mcp_sec_audit_core::run_static_scan_inner(&config, &[] as &[PathBuf], None, &progress)?;
     for path in write_report_files(&result, &config.report)? {
         tracing::info!(target: "mcp_sec_audit::pipeline", path = %path.display(), "wrote report");
     }
