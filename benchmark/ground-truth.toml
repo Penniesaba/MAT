@@ -1,6 +1,6 @@
 # Ground truth — one vulnerability per key. sink_line is the sink expression's
 # line number in the VULNERABLE commit (verify against the pinned commit).
-# `sink_line = 0` / `sink_file = "<PENDING>"` are placeholders resolved by a later verify pass.
+# All entries are pinned: commit SHA (manifest) + sink_file/sink_line (here) verified against the vulnerable commit.
 
 [vulns."CVE-2025-68144"]
 repo_slug = "servers-git-py"
@@ -9,8 +9,8 @@ cwe = "CWE-88"
 category = "command_execution"
 severity = "high"
 evidence_tier = "cve"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 120
+sink_file = "src/git/src/mcp_server_git/server.py"
 
 [vulns."CVE-2025-68143"]
 repo_slug = "servers-git-py"
@@ -19,8 +19,8 @@ cwe = "CWE-22"
 category = "path_traversal"
 severity = "high"
 evidence_tier = "cve"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 188
+sink_file = "src/git/src/mcp_server_git/server.py"
 
 [vulns."CVE-2026-7206"]
 repo_slug = "sqlite-mcp"
@@ -38,8 +38,8 @@ cwe = "CWE-94"
 category = "command_execution"
 severity = "high"
 evidence_tier = "cve"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 151
+sink_file = "compatible_servers/windsurf/windsurf_compatible_mcp_server.py"
 
 [vulns."CVE-2025-64340"]
 repo_slug = "fastmcp"
@@ -48,8 +48,8 @@ cwe = "CWE-78"
 category = "command_execution"
 severity = "high"
 evidence_tier = "cve"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 141
+sink_file = "src/fastmcp/cli/install/claude_code.py"
 
 [vulns."CVE-2026-32871"]
 repo_slug = "fastmcp-openapi"
@@ -58,8 +58,8 @@ cwe = "CWE-918"
 category = "ssrf"
 severity = "high"
 evidence_tier = "cve"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 213
+sink_file = "src/fastmcp/utilities/openapi/director.py"
 
 [vulns."CVE-2026-42271"]
 repo_slug = "litellm"
@@ -68,8 +68,8 @@ cwe = "CWE-78"
 category = "command_execution"
 severity = "high"
 evidence_tier = "cve"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 104
+sink_file = "litellm/experimental_mcp_client/client.py"
 
 [vulns."CVE-2026-4270"]
 repo_slug = "aws-api-mcp-server"
@@ -78,8 +78,8 @@ cwe = "CWE-284"
 category = "access_control"
 severity = "high"
 evidence_tier = "cve"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 112
+sink_file = "awslabs/aws_api_mcp_server/core/aws/service.py"
 
 [vulns."CVE-2025-66416"]
 repo_slug = "python-sdk"
@@ -88,8 +88,8 @@ cwe = "CWE-346"
 category = "origin_validation"
 severity = "medium"
 evidence_tier = "cve"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 43
+sink_file = "src/mcp/server/transport_security.py"
 
 [vulns."CVE-2025-53109"]
 repo_slug = "servers-filesystem-ts"
@@ -98,8 +98,8 @@ cwe = "CWE-59"
 category = "path_traversal"
 severity = "high"
 evidence_tier = "cve"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 78
+sink_file = "src/filesystem/index.ts"
 
 [vulns."CVE-2025-53110"]
 repo_slug = "servers-filesystem-ts"
@@ -108,8 +108,8 @@ cwe = "CWE-22"
 category = "path_traversal"
 severity = "high"
 evidence_tier = "cve"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 64
+sink_file = "src/filesystem/index.ts"
 
 [vulns."CVE-2025-49596"]
 repo_slug = "inspector"
@@ -118,8 +118,8 @@ cwe = "CWE-306"
 category = "auth_bypass"
 severity = "critical"
 evidence_tier = "cve"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 115
+sink_file = "server/src/index.ts"
 
 [vulns."CVE-2025-6514"]
 repo_slug = "mcp-remote"
@@ -128,8 +128,8 @@ cwe = "CWE-78"
 category = "command_execution"
 severity = "high"
 evidence_tier = "cve"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 175
+sink_file = "src/lib/node-oauth-client-provider.ts"
 
 [vulns."CVE-2025-53967"]
 repo_slug = "figma-context-mcp"
@@ -138,8 +138,8 @@ cwe = "CWE-77"
 category = "command_execution"
 severity = "high"
 evidence_tier = "cve"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 43
+sink_file = "src/utils/fetch-with-retry.ts"
 
 [vulns."CVE-2025-69256"]
 repo_slug = "serverless-mcp"
@@ -148,18 +148,18 @@ cwe = "CWE-78"
 category = "command_execution"
 severity = "high"
 evidence_tier = "cve"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 24
+sink_file = "packages/mcp/src/lib/project-finder.js"
 
-[vulns."LAB-filesystem-path-traversal"]
+[vulns."LAB-malicious-code-exec"]
 repo_slug = "vulnerable-mcp-servers-lab"
 language = "javascript"
-cwe = "CWE-22"
-category = "path_traversal"
+cwe = "CWE-94"
+category = "command_execution"
 severity = "high"
 evidence_tier = "synthetic"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 105
+sink_file = "vulnerable-mcp-server-malicious-code-exec/index.js"
 
 [vulns."RUSTSEC-2026-0189"]
 repo_slug = "rust-sdk"
@@ -168,8 +168,8 @@ cwe = "CWE-346"
 category = "origin_validation"
 severity = "medium"
 evidence_tier = "cve"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 282
+sink_file = "crates/rmcp/src/transport/streamable_http_server/tower.rs"
 
 [vulns."RUVECTOR-207"]
 repo_slug = "ruvector"
@@ -178,8 +178,8 @@ cwe = "CWE-22"
 category = "path_traversal"
 severity = "high"
 evidence_tier = "issue"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 464
+sink_file = "crates/ruvector-cli/src/mcp/handlers.rs"
 
 [vulns."NUCLEUS-102"]
 repo_slug = "nucleus"
@@ -188,8 +188,8 @@ cwe = "CWE-59"
 category = "path_traversal"
 severity = "high"
 evidence_tier = "issue"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 790
+sink_file = "crates/nucleus-tool-proxy/src/mcp.rs"
 
 [vulns."FRIGG-symlink-traversal"]
 repo_slug = "frigg"
@@ -198,8 +198,8 @@ cwe = "CWE-59"
 category = "path_traversal"
 severity = "high"
 evidence_tier = "issue"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 432
+sink_file = "crates/cli/src/mcp/server/search_tools/inspect.rs"
 
 [vulns."servers-fetch-ssrf"]
 repo_slug = "servers-fetch-py"
@@ -208,8 +208,8 @@ cwe = "CWE-918"
 category = "ssrf"
 severity = "high"
 evidence_tier = "writeup"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 121
+sink_file = "src/fetch/src/mcp_server_fetch/server.py"
 
 [vulns."GHSA-vj7q-gjh5-988w"]
 repo_slug = "python-sdk-ghsa"
@@ -218,5 +218,5 @@ cwe = "CWE-346"
 category = "origin_validation"
 severity = "medium"
 evidence_tier = "cve"
-sink_line = 0
-sink_file = "<PENDING>"
+sink_line = 24
+sink_file = "src/mcp/server/websocket.py"

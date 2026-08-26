@@ -57,7 +57,7 @@ vulns = ["CVE-2026-7206"]
 [[repo]]
 slug = "kubectl-mcp-server"
 url = "git@github.com:rohitg00/kubectl-mcp-server.git"
-commit = "5515999bd5183c77de98134d85776ba731551c7f"
+commit = "f0986f3f3817283cf945b00ffb1329a3beef5f0e"
 language = "python"
 evidence_tier = "cve"
 vulns = ["CVE-2025-65719"]
@@ -82,7 +82,7 @@ vulns = ["CVE-2026-42271"]
 [[repo]]
 slug = "aws-api-mcp-server"
 url = "git@github.com:awslabs/mcp.git"
-commit = "<PENDING>"
+commit = "a3ede30b28880ccb4d7ebd9b9e6d97337987e354"
 language = "python"
 evidence_tier = "cve"
 vulns = ["CVE-2026-4270"]
@@ -159,7 +159,7 @@ vulns = ["CVE-2025-53967"]
 [[repo]]
 slug = "serverless-mcp"
 url = "git@github.com:serverless/serverless.git"
-commit = "b83fbd3b5e215a416434b0f5dc26c155e02330f6"
+commit = "6213453da7df375aaf12fb3522ab8870488fc59a"
 language = "javascript"
 scan_targets = ["packages/mcp"]
 evidence_tier = "cve"
@@ -170,9 +170,9 @@ slug = "vulnerable-mcp-servers-lab"
 url = "git@github.com:appsecco/vulnerable-mcp-servers-lab.git"
 commit = "47b7f2082261136b667daa7be9273698e66e479e"
 language = "javascript"
-scan_targets = ["vulnerable-mcp-servers-lab/filesystem-server"]
+scan_targets = ["vulnerable-mcp-server-malicious-code-exec"]
 evidence_tier = "synthetic"
-vulns = ["LAB-filesystem-path-traversal"]
+vulns = ["LAB-malicious-code-exec"]
 
 # --- Rust (4) ---
 [[repo]]
@@ -186,7 +186,7 @@ vulns = ["RUSTSEC-2026-0189"]
 [[repo]]
 slug = "ruvector"
 url = "git@github.com:ruvnet/RuVector.git"
-commit = "<PENDING>"
+commit = "7908e8872655d0a872742db3676591675e5eb094"
 language = "rust"
 evidence_tier = "issue"
 vulns = ["RUVECTOR-207"]
@@ -194,7 +194,7 @@ vulns = ["RUVECTOR-207"]
 [[repo]]
 slug = "nucleus"
 url = "git@github.com:coproduct-opensource/nucleus.git"
-commit = "<PENDING>"
+commit = "9aea589d0eee8a39c97ab0765a80fa0c27785b05"
 language = "rust"
 evidence_tier = "issue"
 vulns = ["NUCLEUS-102"]
