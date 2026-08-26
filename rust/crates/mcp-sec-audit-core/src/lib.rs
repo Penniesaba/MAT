@@ -1,6 +1,7 @@
 //! Shared core types and utilities for the Rust MCP Security Auditor rewrite.
 
 pub mod batch;
+pub mod bench;
 pub mod config;
 pub mod fixtures;
 pub mod model;
