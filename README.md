@@ -544,6 +544,21 @@ Configure in `web-detection-portal/config.py`:
 
 ---
 
+## Benchmark
+
+Run the known-vulnerable MCP benchmark (20 repos, see `benchmark/`):
+
+```bash
+bash benchmark/fetch.sh                         # SSH-clone the corpus (once)
+cd rust && cargo run -- bench ../benchmark/manifest.toml
+```
+
+Results land in `benchmark/bench_results/<timestamp>/metrics.json` (+ `.md`).
+Scoring: sink-line match ±N (default 5), TP/FP/unconfirmed classification,
+optimistic + pessimistic precision, grouped by language/tier.
+
+---
+
 ## Benchmark Results
 
 | Benchmark | Samples | Coverage | Description |
