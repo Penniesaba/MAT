@@ -1,4 +1,4 @@
-# MCP Vulnerability Benchmark manifest (17 repos: 7 python / 4 typescript / 2 javascript / 4 rust; 20 vuln keys).
+# MCP Vulnerability Benchmark manifest (20 repos: 10 python / 4 typescript / 2 javascript / 4 rust; 22 vuln keys).
 # `commit` must be pinned to the VULNERABLE commit (not HEAD). Run fetch.sh to clone.
 
 [scan]
@@ -36,7 +36,7 @@ taint_weight = 2
 agent_weight = 1
 codeql_weight = 4
 
-# --- Python (7) ---
+# --- Python (10) ---
 [[repo]]
 slug = "servers-git-py"
 url = "git@github.com:modelcontextprotocol/servers.git"
@@ -68,7 +68,7 @@ url = "git@github.com:jlowin/fastmcp.git"
 commit = "<PENDING>"
 language = "python"
 evidence_tier = "cve"
-vulns = ["CVE-2025-64340", "CVE-2026-32871"]
+vulns = ["CVE-2025-64340"]
 
 [[repo]]
 slug = "litellm"
@@ -94,6 +94,32 @@ commit = "<PENDING>"
 language = "python"
 evidence_tier = "cve"
 vulns = ["CVE-2025-66416"]
+
+[[repo]]
+slug = "servers-fetch-py"
+url = "git@github.com:modelcontextprotocol/servers.git"
+commit = "<PENDING>"
+language = "python"
+scan_targets = ["src/fetch"]
+evidence_tier = "writeup"
+vulns = ["servers-fetch-ssrf"]
+
+[[repo]]
+slug = "fastmcp-openapi"
+url = "git@github.com:jlowin/fastmcp.git"
+commit = "<PENDING>"
+language = "python"
+scan_targets = ["src/fastmcp/utilities/openapi"]
+evidence_tier = "cve"
+vulns = ["CVE-2026-32871"]
+
+[[repo]]
+slug = "python-sdk-ghsa"
+url = "git@github.com:modelcontextprotocol/python-sdk.git"
+commit = "<PENDING>"
+language = "python"
+evidence_tier = "cve"
+vulns = ["GHSA-vj7q-gjh5-988w"]
 
 # --- TypeScript (4) ---
 [[repo]]

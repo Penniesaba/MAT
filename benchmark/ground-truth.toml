@@ -53,7 +53,7 @@ sink_line = 0
 sink_file = "<PENDING>"
 
 [vulns."CVE-2026-32871"]
-repo_slug = "fastmcp"
+repo_slug = "fastmcp-openapi"
 language = "python"
 cwe = "CWE-918"
 category = "ssrf"
@@ -199,5 +199,25 @@ cwe = "CWE-59"
 category = "path_traversal"
 severity = "high"
 evidence_tier = "issue"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."servers-fetch-ssrf"]
+repo_slug = "servers-fetch-py"
+language = "python"
+cwe = "CWE-918"
+category = "ssrf"
+severity = "high"
+evidence_tier = "writeup"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."GHSA-vj7q-gjh5-988w"]
+repo_slug = "python-sdk-ghsa"
+language = "python"
+cwe = "CWE-346"
+category = "origin_validation"
+severity = "medium"
+evidence_tier = "cve"
 sink_line = 0
 sink_file = "<PENDING>"
