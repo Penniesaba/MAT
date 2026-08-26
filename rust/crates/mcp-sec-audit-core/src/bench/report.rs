@@ -23,6 +23,36 @@ pub fn render_metrics_json(m: &BenchMetrics) -> Result<String> {
     serde_json::to_string_pretty(m).map_err(Into::into)
 }
 
+/// Push a per-`key` aggregate table (by language / tier / category), skipping
+/// empty maps. One row per entry, `{:.3}` on the three float columns.
+fn push_tiered_table(
+    title: &str,
+    map: &BTreeMap<String, AggregateMetrics>,
+    lines: &mut Vec<String>,
+) {
+    if map.is_empty() {
+        return;
+    }
+    lines.push(String::new());
+    lines.push(format!("## {}", title));
+    lines.push(String::new());
+    lines.push("| key | GT | TP | FP | unconf | recall | P_opt | P_pes |".to_string());
+    lines.push("|---|---|---|---|---|---|---|---|".to_string());
+    for (key, m) in map {
+        lines.push(format!(
+            "| {} | {} | {} | {} | {} | {:.3} | {:.3} | {:.3} |",
+            key,
+            m.ground_truth,
+            m.tp,
+            m.fp,
+            m.unconfirmed,
+            m.recall,
+            m.precision_optimistic,
+            m.precision_pessimistic,
+        ));
+    }
+}
+
 pub fn render_metrics_markdown(m: &BenchMetrics) -> String {
     let mut lines = vec![
         "# MCP Vulnerability Benchmark".to_string(),
@@ -64,6 +94,9 @@ pub fn render_metrics_markdown(m: &BenchMetrics) -> String {
             lines.push(format!("  - misses: {}", r.misses.join(", ")));
         }
     }
+    push_tiered_table("by_language", &m.by_language, &mut lines);
+    push_tiered_table("by_tier", &m.by_tier, &mut lines);
+    push_tiered_table("by_category", &m.by_category, &mut lines);
     lines.join("\n")
 }
 

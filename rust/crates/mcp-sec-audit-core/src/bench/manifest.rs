@@ -40,20 +40,9 @@ pub fn load_manifest(path: &Path) -> Result<BenchManifest> {
     toml::from_str(&input).context("parse benchmark manifest TOML")
 }
 
-pub fn dedupe_commits(repos: &[RepoEntry]) -> Vec<&RepoEntry> {
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
-    for repo in repos {
-        let key = (repo.url.as_str(), repo.commit.as_str());
-        if seen.insert(key) {
-            out.push(repo);
-        }
-    }
-    out
-}
-
 pub fn to_batch_config(
     manifest: &BenchManifest,
+    corpus_root: &Path,
     out_dir: &str,
     max_parallel: usize,
 ) -> BatchConfig {
@@ -67,14 +56,16 @@ pub fn to_batch_config(
         .repos
         .iter()
         .map(|entry| {
+            let repo_dir = corpus_root.join(&entry.slug);
+            let repo_dir_str = repo_dir.to_string_lossy().to_string();
             let mut overrides = std::collections::BTreeMap::new();
             let targets = if entry.scan_targets.is_empty() {
-                vec![format!("../benchmark/corpus/{}", entry.slug)]
+                vec![repo_dir_str.clone()]
             } else {
                 entry
                     .scan_targets
                     .iter()
-                    .map(|t| format!("../benchmark/corpus/{}/{}", entry.slug, t))
+                    .map(|t| repo_dir.join(t).to_string_lossy().to_string())
                     .collect()
             };
             overrides.insert(
@@ -94,7 +85,7 @@ pub fn to_batch_config(
             );
             RepoConfig {
                 name: entry.slug.clone(),
-                path: format!("../benchmark/corpus/{}", entry.slug),
+                path: repo_dir_str,
                 overrides,
             }
         })
@@ -145,22 +136,19 @@ mod tests {
     }
 
     #[test]
-    fn dedupes_repos_sharing_url_and_commit() {
-        let m = sample_manifest();
-        let deduped = dedupe_commits(&m.repos);
-        assert_eq!(deduped.len(), 1);
-        assert_eq!(deduped[0].slug, "servers-git-py");
-    }
-
-    #[test]
     fn translates_to_batch_config_with_scan_scope() {
         let m = sample_manifest();
-        let cfg = to_batch_config(&m, "benchmark/bench_results/run1", 2);
+        let cfg = to_batch_config(
+            &m,
+            std::path::Path::new("/tmp/bench-corpus"),
+            "benchmark/bench_results/run1",
+            2,
+        );
         assert_eq!(cfg.batch.max_parallel, 2);
         assert!(!cfg.batch.learning_bus);
         assert_eq!(cfg.batch.repos.len(), 2);
         assert_eq!(cfg.batch.repos[0].name, "servers-git-py");
-        assert_eq!(cfg.batch.repos[0].path, "../benchmark/corpus/servers-git-py");
+        assert_eq!(cfg.batch.repos[0].path, "/tmp/bench-corpus/servers-git-py");
         assert_eq!(cfg.runtime.report.formats, vec!["json".to_string()]);
     }
 

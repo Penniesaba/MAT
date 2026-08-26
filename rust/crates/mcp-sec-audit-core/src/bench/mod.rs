@@ -11,7 +11,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use tokio_util::sync::CancellationToken;
 
-pub use manifest::{BenchManifest, RepoEntry, dedupe_commits, load_manifest, to_batch_config};
+pub use manifest::{BenchManifest, RepoEntry, load_manifest, to_batch_config};
 pub use report::BenchMetrics;
 pub use scorer::{AggregateMetrics, RepoMetrics};
 
@@ -73,13 +73,30 @@ pub async fn run_bench(
     let gt_path = manifest_path.with_file_name("ground-truth.toml");
     let gt = ground_truth::load_ground_truth(&gt_path)?;
 
+    // Fail loudly on unpinned data: a `<PENDING>` marker means the verify pass
+    // has not pinned commit SHAs / sink lines yet, and benching would silently
+    // score recall≈0.
+    if manifest.repos.iter().any(|r| r.commit == "<PENDING>")
+        || gt.vulns.values().any(|e| e.sink_file == "<PENDING>")
+    {
+        anyhow::bail!(
+            "benchmark data is not pinned yet: run the verify pass (pin commit SHAs and sink lines) before benching"
+        );
+    }
+
     let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
     let timestamp = crate::reporting::current_local_timestamp();
     let out_dir = manifest_dir.join("bench_results").join(&timestamp);
     std::fs::create_dir_all(&out_dir)
         .with_context(|| format!("create bench output dir {}", out_dir.display()))?;
 
-    let batch_cfg = to_batch_config(&manifest, &out_dir.to_string_lossy(), opts.max_parallel);
+    let corpus_root = manifest_dir.join("corpus");
+    let batch_cfg = to_batch_config(
+        &manifest,
+        &corpus_root,
+        &out_dir.to_string_lossy(),
+        opts.max_parallel,
+    );
     let summary = crate::batch::run_batch(batch_cfg, cancel).await?;
 
     let mut repo_metrics = Vec::new();
@@ -220,7 +237,7 @@ fn merge_into(acc: &mut AggregateMetrics, r: &RepoMetrics) {
 mod tests {
     use super::*;
     use crate::bench::ground_truth::{GroundTruth, VulnEntry};
-    use crate::bench::scorer::{AggregateMetrics, RepoMetrics};
+    use crate::bench::scorer::RepoMetrics;
 
     fn gt() -> GroundTruth {
         GroundTruth {
