@@ -13,7 +13,7 @@ pub struct BenchManifest {
     /// Shared base runtime config (same syntax as a single-repo config file).
     #[serde(flatten)]
     pub base: RuntimeConfig,
-    #[serde(default)]
+    #[serde(default, rename = "repo")]
     pub repos: Vec<RepoEntry>,
 }
 
@@ -162,5 +162,23 @@ mod tests {
         assert_eq!(cfg.batch.repos[0].name, "servers-git-py");
         assert_eq!(cfg.batch.repos[0].path, "../benchmark/corpus/servers-git-py");
         assert_eq!(cfg.runtime.report.formats, vec!["json".to_string()]);
+    }
+
+    #[test]
+    fn repo_key_maps_to_repos_field() {
+        let toml = r#"
+[scan]
+languages = ["python"]
+
+[[repo]]
+slug = "r"
+url = "git@github.com:o/r.git"
+commit = "abc"
+language = "python"
+vulns = ["CVE-1"]
+"#;
+        let m: BenchManifest = toml::from_str(toml).expect("parse");
+        assert_eq!(m.repos.len(), 1);
+        assert_eq!(m.repos[0].slug, "r");
     }
 }
