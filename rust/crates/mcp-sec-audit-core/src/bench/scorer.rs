@@ -113,14 +113,19 @@ pub fn finding_lines(fused: &FusedFinding, result: &StaticAnalysisResult) -> Vec
 }
 
 /// A finding lands in a `known_clean` region when one of its lines matches a
-/// `known_clean` entry. Entries may be either `file:line` (match that exact
-/// line) or a bare path with no colon (match any line in that file); the file
-/// part is always compared via suffix match.
+/// `known_clean` entry. An entry may be `file:line` (match that exact line) or
+/// a bare path with no line number (match any line in that file); the file part
+/// is always compared via suffix match. `file:line` is detected here rather
+/// than via `parse_line`, which only understands `path:line:snippet` evidence
+/// strings and would reject the two-part form.
 fn clean_line_is_hit(entry: &VulnEntry, file: &str, line: u32) -> bool {
-    entry.known_clean.iter().any(|c| match parse_line(c) {
-        Some((clean_file, clean_line)) => {
-            file_suffix_matches(file, &clean_file) && clean_line == line
-        }
+    entry.known_clean.iter().any(|c| match c.rsplit_once(':') {
+        Some((clean_file, line_str)) => match line_str.parse::<u32>() {
+            Ok(clean_line) => {
+                file_suffix_matches(file, clean_file) && clean_line == line
+            }
+            Err(_) => file_suffix_matches(file, c),
+        },
         None => file_suffix_matches(file, c),
     })
 }
@@ -334,6 +339,36 @@ mod tests {
         let gt = gt_one();
         let mut result = empty_result();
         // Bare-path `known_clean` entry ("src/clean.py") marks the whole file clean.
+        result.fused_findings.push(fused(&["../x/src/clean.py:5:print()"]));
+        let metrics = score_repo("r", "ok", &gt, &result, 5);
+        assert_eq!(metrics.fp, 1);
+        assert_eq!(metrics.unconfirmed, 0);
+        assert_eq!(metrics.tp, 0);
+    }
+
+    #[test]
+    fn finding_on_file_line_known_clean_is_fp() {
+        // Two-part `file:line` known_clean entry (no snippet), on the exact line.
+        let gt = GroundTruth {
+            vulns: [(
+                "CVE-1".to_string(),
+                VulnEntry {
+                    repo_slug: "r".into(),
+                    language: "python".into(),
+                    cwe: "CWE-78".into(),
+                    category: "command_execution".into(),
+                    severity: "high".into(),
+                    evidence_tier: "cve".into(),
+                    sink_line: 12,
+                    sink_file: "src/lib.py".into(),
+                    source_urls: vec![],
+                    known_clean: vec!["src/clean.py:5".into()],
+                },
+            )]
+            .into_iter()
+            .collect(),
+        };
+        let mut result = empty_result();
         result.fused_findings.push(fused(&["../x/src/clean.py:5:print()"]));
         let metrics = score_repo("r", "ok", &gt, &result, 5);
         assert_eq!(metrics.fp, 1);
