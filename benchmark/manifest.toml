@@ -10,7 +10,7 @@ save_facts = true
 
 [static.rule]
 enabled = true
-rule_paths = ["rules/mcp", "rules/languages"]
+rule_paths = ["rules/languages"]
 
 [static.taint]
 enabled = true
