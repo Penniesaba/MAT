@@ -1,4 +1,5 @@
 mod batch;
+mod bench;
 mod logging;
 
 use std::{fs, path::PathBuf};
@@ -39,12 +40,26 @@ enum Command {
     },
     /// Analyze multiple MCP repositories in parallel.
     Batch(BatchArgs),
+    /// Score known-vulnerable MCP repositories against ground truth.
+    Bench(BenchArgs),
 }
 
 #[derive(Debug, Args)]
 struct BatchArgs {
     /// Path to the batch TOML config file.
     config: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct BenchArgs {
+    /// Path to the benchmark manifest TOML file.
+    manifest: PathBuf,
+    /// Sink-line match tolerance (±N lines).
+    #[arg(long, default_value_t = 5)]
+    tolerance: u32,
+    /// Repositories to scan concurrently.
+    #[arg(long, default_value_t = 4)]
+    max_parallel: usize,
 }
 
 #[derive(Debug, Subcommand)]
@@ -168,6 +183,35 @@ fn main() -> Result<()> {
             std::process::exit(match summary {
                 Ok(_) if ctrl_c.is_cancelled() => 130,
                 Ok(s) if s.failed > 0 || s.cancelled > 0 => 1,
+                Ok(_) => 0,
+                Err(_) => 2,
+            });
+        }
+        Some(Command::Bench(args)) => {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("build tokio runtime")?;
+            let cancel = CancellationToken::new();
+            let ctrl_c = CancellationToken::new();
+            {
+                let cancel = cancel.clone();
+                let ctrl_c = ctrl_c.clone();
+                rt.spawn(async move {
+                    if tokio::signal::ctrl_c().await.is_ok() {
+                        ctrl_c.cancel();
+                        cancel.cancel();
+                    }
+                });
+            }
+            let result = rt.block_on(bench::run(
+                &args.manifest,
+                args.tolerance,
+                args.max_parallel,
+                cancel.clone(),
+            ));
+            std::process::exit(match result {
+                Ok(_) if ctrl_c.is_cancelled() => 130,
                 Ok(_) => 0,
                 Err(_) => 2,
             });
