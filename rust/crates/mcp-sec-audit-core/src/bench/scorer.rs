@@ -88,10 +88,10 @@ pub fn finding_lines(fused: &FusedFinding, result: &StaticAnalysisResult) -> Vec
     }
     for id in &fused.related_taint_result_ids {
         if let Some(t) = result.taint_results.iter().find(|t| &t.result_id == id) {
-            for e in &t.evidence {
-                if let Some(p) = parse_line(e) {
-                    out.push(p);
-                }
+            // Spec §8.1 step 1: the sink line is the taint result's first
+            // evidence entry that parses as a location.
+            if let Some(p) = t.evidence.iter().find_map(|e| parse_line(e)) {
+                out.push(p);
             }
         }
     }
@@ -112,10 +112,16 @@ pub fn finding_lines(fused: &FusedFinding, result: &StaticAnalysisResult) -> Vec
     out
 }
 
-/// `known_clean` entries use the same normalized-relative-path + line format.
+/// A finding lands in a `known_clean` region when one of its lines matches a
+/// `known_clean` entry. Entries may be either `file:line` (match that exact
+/// line) or a bare path with no colon (match any line in that file); the file
+/// part is always compared via suffix match.
 fn clean_line_is_hit(entry: &VulnEntry, file: &str, line: u32) -> bool {
-    entry.known_clean.iter().any(|c| {
-        parse_line(c).is_some_and(|(f, l)| f == file && l == line)
+    entry.known_clean.iter().any(|c| match parse_line(c) {
+        Some((clean_file, clean_line)) => {
+            file_suffix_matches(file, &clean_file) && clean_line == line
+        }
+        None => file_suffix_matches(file, c),
     })
 }
 
@@ -321,5 +327,29 @@ mod tests {
         assert_eq!(metrics.tp, 1);
         assert_eq!(metrics.hits, vec!["CVE-1".to_string()]);
         assert!(metrics.misses.is_empty());
+    }
+
+    #[test]
+    fn finding_in_bare_path_known_clean_file_is_fp() {
+        let gt = gt_one();
+        let mut result = empty_result();
+        // Bare-path `known_clean` entry ("src/clean.py") marks the whole file clean.
+        result.fused_findings.push(fused(&["../x/src/clean.py:5:print()"]));
+        let metrics = score_repo("r", "ok", &gt, &result, 5);
+        assert_eq!(metrics.fp, 1);
+        assert_eq!(metrics.unconfirmed, 0);
+        assert_eq!(metrics.tp, 0);
+    }
+
+    #[test]
+    fn finding_outside_clean_region_is_unconfirmed() {
+        let gt = gt_one();
+        let mut result = empty_result();
+        // Matches neither the sink line nor any known-clean file.
+        result.fused_findings.push(fused(&["../x/src/other.py:20:foo()"]));
+        let metrics = score_repo("r", "ok", &gt, &result, 5);
+        assert_eq!(metrics.unconfirmed, 1);
+        assert_eq!(metrics.fp, 0);
+        assert_eq!(metrics.tp, 0);
     }
 }
