@@ -1,0 +1,182 @@
+# MCP Vulnerability Benchmark manifest (17 repos: 7 python / 4 typescript / 2 javascript / 4 rust; 20 vuln keys).
+# `commit` must be pinned to the VULNERABLE commit (not HEAD). Run fetch.sh to clone.
+
+[scan]
+exclude = ["__pycache__", ".venv", "node_modules", "target", ".git"]
+
+[static]
+enabled = true
+save_facts = true
+
+[static.rule]
+enabled = true
+rule_paths = ["rules/mcp", "rules/languages"]
+
+[static.taint]
+enabled = true
+forward = true
+backward = true
+max_depth = 8
+entrypoint_required = false
+
+[static.agent]
+enabled = false
+
+[static.codeql]
+enabled = false
+
+[fusion]
+enabled = true
+require_confirmed_by = 1
+boost_when_multiple_lines_agree = true
+agent_only_as_advisory = true
+line_proximity = 5
+rule_weight = 3
+taint_weight = 2
+agent_weight = 1
+codeql_weight = 4
+
+# --- Python (7) ---
+[[repo]]
+slug = "servers-git-py"
+url = "git@github.com:modelcontextprotocol/servers.git"
+commit = "<PENDING>"
+language = "python"
+scan_targets = ["src/git"]
+evidence_tier = "cve"
+vulns = ["CVE-2025-68144", "CVE-2025-68143"]
+
+[[repo]]
+slug = "sqlite-mcp"
+url = "git@github.com:dubydu/sqlite-mcp.git"
+commit = "<PENDING>"
+language = "python"
+evidence_tier = "cve"
+vulns = ["CVE-2026-7206"]
+
+[[repo]]
+slug = "kubectl-mcp-server"
+url = "git@github.com:rohitg00/kubectl-mcp-server.git"
+commit = "<PENDING>"
+language = "python"
+evidence_tier = "cve"
+vulns = ["CVE-2025-65719"]
+
+[[repo]]
+slug = "fastmcp"
+url = "git@github.com:jlowin/fastmcp.git"
+commit = "<PENDING>"
+language = "python"
+evidence_tier = "cve"
+vulns = ["CVE-2025-64340", "CVE-2026-32871"]
+
+[[repo]]
+slug = "litellm"
+url = "git@github.com:BerriAI/litellm.git"
+commit = "<PENDING>"
+language = "python"
+scan_targets = ["litellm/proxy"]
+evidence_tier = "cve"
+vulns = ["CVE-2026-42271"]
+
+[[repo]]
+slug = "aws-api-mcp-server"
+url = "git@github.com:awslabs/aws-api-mcp-server.git"
+commit = "<PENDING>"
+language = "python"
+evidence_tier = "cve"
+vulns = ["CVE-2026-4270"]
+
+[[repo]]
+slug = "python-sdk"
+url = "git@github.com:modelcontextprotocol/python-sdk.git"
+commit = "<PENDING>"
+language = "python"
+evidence_tier = "cve"
+vulns = ["CVE-2025-66416"]
+
+# --- TypeScript (4) ---
+[[repo]]
+slug = "servers-filesystem-ts"
+url = "git@github.com:modelcontextprotocol/servers.git"
+commit = "<PENDING>"
+language = "typescript"
+scan_targets = ["src/filesystem"]
+evidence_tier = "cve"
+vulns = ["CVE-2025-53109", "CVE-2025-53110"]
+
+[[repo]]
+slug = "inspector"
+url = "git@github.com:modelcontextprotocol/inspector.git"
+commit = "<PENDING>"
+language = "typescript"
+evidence_tier = "cve"
+vulns = ["CVE-2025-49596"]
+
+[[repo]]
+slug = "mcp-remote"
+url = "git@github.com:punkpeye/mcp-remote.git"
+commit = "<PENDING>"
+language = "typescript"
+evidence_tier = "cve"
+vulns = ["CVE-2025-6514"]
+
+[[repo]]
+slug = "figma-context-mcp"
+url = "git@github.com:GLips/Figma-Context-MCP.git"
+commit = "<PENDING>"
+language = "typescript"
+evidence_tier = "cve"
+vulns = ["CVE-2025-53967"]
+
+# --- JavaScript (2) ---
+[[repo]]
+slug = "serverless-mcp"
+url = "git@github.com:serverless/serverless.git"
+commit = "<PENDING>"
+language = "javascript"
+scan_targets = ["packages/mcp"]
+evidence_tier = "cve"
+vulns = ["CVE-2025-69256"]
+
+[[repo]]
+slug = "vulnerable-mcp-servers-lab"
+url = "git@github.com:appsecco/vulnerable-mcp-servers-lab.git"
+commit = "<PENDING>"
+language = "javascript"
+scan_targets = ["vulnerable-mcp-servers-lab/filesystem-server"]
+evidence_tier = "synthetic"
+vulns = ["LAB-filesystem-path-traversal"]
+
+# --- Rust (4) ---
+[[repo]]
+slug = "rust-sdk"
+url = "git@github.com:modelcontextprotocol/rust-sdk.git"
+commit = "<PENDING>"
+language = "rust"
+evidence_tier = "cve"
+vulns = ["RUSTSEC-2026-0189"]
+
+[[repo]]
+slug = "ruvector"
+url = "git@github.com:ruvnet/RuVector.git"
+commit = "<PENDING>"
+language = "rust"
+evidence_tier = "issue"
+vulns = ["RUVECTOR-207"]
+
+[[repo]]
+slug = "nucleus"
+url = "git@github.com:coproduct-opensource/nucleus.git"
+commit = "<PENDING>"
+language = "rust"
+evidence_tier = "issue"
+vulns = ["NUCLEUS-102"]
+
+[[repo]]
+slug = "frigg"
+url = "git@github.com:bnomei/frigg.git"
+commit = "<PENDING>"
+language = "rust"
+evidence_tier = "issue"
+vulns = ["FRIGG-symlink-traversal"]

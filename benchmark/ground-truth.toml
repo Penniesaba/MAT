@@ -1,0 +1,203 @@
+# Ground truth — one vulnerability per key. sink_line is the sink expression's
+# line number in the VULNERABLE commit (verify against the pinned commit).
+# `sink_line = 0` / `sink_file = "<PENDING>"` are placeholders resolved by a later verify pass.
+
+[vulns."CVE-2025-68144"]
+repo_slug = "servers-git-py"
+language = "python"
+cwe = "CWE-88"
+category = "command_execution"
+severity = "high"
+evidence_tier = "cve"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."CVE-2025-68143"]
+repo_slug = "servers-git-py"
+language = "python"
+cwe = "CWE-22"
+category = "path_traversal"
+severity = "high"
+evidence_tier = "cve"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."CVE-2026-7206"]
+repo_slug = "sqlite-mcp"
+language = "python"
+cwe = "CWE-89"
+category = "sql_injection"
+severity = "high"
+evidence_tier = "cve"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."CVE-2025-65719"]
+repo_slug = "kubectl-mcp-server"
+language = "python"
+cwe = "CWE-94"
+category = "command_execution"
+severity = "high"
+evidence_tier = "cve"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."CVE-2025-64340"]
+repo_slug = "fastmcp"
+language = "python"
+cwe = "CWE-78"
+category = "command_execution"
+severity = "high"
+evidence_tier = "cve"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."CVE-2026-32871"]
+repo_slug = "fastmcp"
+language = "python"
+cwe = "CWE-918"
+category = "ssrf"
+severity = "high"
+evidence_tier = "cve"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."CVE-2026-42271"]
+repo_slug = "litellm"
+language = "python"
+cwe = "CWE-78"
+category = "command_execution"
+severity = "high"
+evidence_tier = "cve"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."CVE-2026-4270"]
+repo_slug = "aws-api-mcp-server"
+language = "python"
+cwe = "CWE-284"
+category = "access_control"
+severity = "high"
+evidence_tier = "cve"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."CVE-2025-66416"]
+repo_slug = "python-sdk"
+language = "python"
+cwe = "CWE-346"
+category = "origin_validation"
+severity = "medium"
+evidence_tier = "cve"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."CVE-2025-53109"]
+repo_slug = "servers-filesystem-ts"
+language = "typescript"
+cwe = "CWE-59"
+category = "path_traversal"
+severity = "high"
+evidence_tier = "cve"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."CVE-2025-53110"]
+repo_slug = "servers-filesystem-ts"
+language = "typescript"
+cwe = "CWE-22"
+category = "path_traversal"
+severity = "high"
+evidence_tier = "cve"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."CVE-2025-49596"]
+repo_slug = "inspector"
+language = "typescript"
+cwe = "CWE-306"
+category = "auth_bypass"
+severity = "critical"
+evidence_tier = "cve"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."CVE-2025-6514"]
+repo_slug = "mcp-remote"
+language = "typescript"
+cwe = "CWE-78"
+category = "command_execution"
+severity = "high"
+evidence_tier = "cve"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."CVE-2025-53967"]
+repo_slug = "figma-context-mcp"
+language = "typescript"
+cwe = "CWE-77"
+category = "command_execution"
+severity = "high"
+evidence_tier = "cve"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."CVE-2025-69256"]
+repo_slug = "serverless-mcp"
+language = "javascript"
+cwe = "CWE-78"
+category = "command_execution"
+severity = "high"
+evidence_tier = "cve"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."LAB-filesystem-path-traversal"]
+repo_slug = "vulnerable-mcp-servers-lab"
+language = "javascript"
+cwe = "CWE-22"
+category = "path_traversal"
+severity = "high"
+evidence_tier = "synthetic"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."RUSTSEC-2026-0189"]
+repo_slug = "rust-sdk"
+language = "rust"
+cwe = "CWE-346"
+category = "origin_validation"
+severity = "medium"
+evidence_tier = "cve"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."RUVECTOR-207"]
+repo_slug = "ruvector"
+language = "rust"
+cwe = "CWE-22"
+category = "path_traversal"
+severity = "high"
+evidence_tier = "issue"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."NUCLEUS-102"]
+repo_slug = "nucleus"
+language = "rust"
+cwe = "CWE-59"
+category = "path_traversal"
+severity = "high"
+evidence_tier = "issue"
+sink_line = 0
+sink_file = "<PENDING>"
+
+[vulns."FRIGG-symlink-traversal"]
+repo_slug = "frigg"
+language = "rust"
+cwe = "CWE-59"
+category = "path_traversal"
+severity = "high"
+evidence_tier = "issue"
+sink_line = 0
+sink_file = "<PENDING>"
