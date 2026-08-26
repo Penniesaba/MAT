@@ -17,6 +17,7 @@ pub use batch::{
     load_batch_config, merge_repo_config, parse_batch_config_toml, render_batch_summary_json,
     render_batch_summary_markdown, run_batch,
 };
+pub use bench::{AggregateMetrics, BenchMetrics, BenchOptions, RepoMetrics, run_bench};
 pub use config::{
     DynamicConfig, FusionConfig, LogFormat, LogLevel, LoggingConfig, ReportConfig, RuntimeConfig,
     ScanConfig, StaticAgentConfig, StaticConfig, StaticRuleConfig, StaticTaintConfig,
