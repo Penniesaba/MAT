@@ -40,7 +40,7 @@ codeql_weight = 4
 [[repo]]
 slug = "servers-git-py"
 url = "git@github.com:modelcontextprotocol/servers.git"
-commit = "<PENDING>"
+commit = "5e84bac41739971c85aeb41d7e04c71fbaa9f16a"
 language = "python"
 scan_targets = ["src/git"]
 evidence_tier = "cve"
@@ -49,7 +49,7 @@ vulns = ["CVE-2025-68144", "CVE-2025-68143"]
 [[repo]]
 slug = "sqlite-mcp"
 url = "git@github.com:dubydu/sqlite-mcp.git"
-commit = "<PENDING>"
+commit = "139840735ff1f4c73d95b2ffb86db3ad26fd6908"
 language = "python"
 evidence_tier = "cve"
 vulns = ["CVE-2026-7206"]
@@ -57,7 +57,7 @@ vulns = ["CVE-2026-7206"]
 [[repo]]
 slug = "kubectl-mcp-server"
 url = "git@github.com:rohitg00/kubectl-mcp-server.git"
-commit = "<PENDING>"
+commit = "5515999bd5183c77de98134d85776ba731551c7f"
 language = "python"
 evidence_tier = "cve"
 vulns = ["CVE-2025-65719"]
@@ -65,7 +65,7 @@ vulns = ["CVE-2025-65719"]
 [[repo]]
 slug = "fastmcp"
 url = "git@github.com:jlowin/fastmcp.git"
-commit = "<PENDING>"
+commit = "53dab031e4fed759d4f271bd5266d041a106c8ce"
 language = "python"
 evidence_tier = "cve"
 vulns = ["CVE-2025-64340"]
@@ -73,7 +73,7 @@ vulns = ["CVE-2025-64340"]
 [[repo]]
 slug = "litellm"
 url = "git@github.com:BerriAI/litellm.git"
-commit = "<PENDING>"
+commit = "a915d896e710ffe929a5b53bfa66ea01f3a47cc3"
 language = "python"
 scan_targets = ["litellm/proxy"]
 evidence_tier = "cve"
@@ -81,7 +81,7 @@ vulns = ["CVE-2026-42271"]
 
 [[repo]]
 slug = "aws-api-mcp-server"
-url = "git@github.com:awslabs/aws-api-mcp-server.git"
+url = "git@github.com:awslabs/mcp.git"
 commit = "<PENDING>"
 language = "python"
 evidence_tier = "cve"
@@ -90,7 +90,7 @@ vulns = ["CVE-2026-4270"]
 [[repo]]
 slug = "python-sdk"
 url = "git@github.com:modelcontextprotocol/python-sdk.git"
-commit = "<PENDING>"
+commit = "fcffa14b5b90d7b3fc7989a463a782334db9b453"
 language = "python"
 evidence_tier = "cve"
 vulns = ["CVE-2025-66416"]
@@ -98,7 +98,7 @@ vulns = ["CVE-2025-66416"]
 [[repo]]
 slug = "servers-fetch-py"
 url = "git@github.com:modelcontextprotocol/servers.git"
-commit = "<PENDING>"
+commit = "5e84bac41739971c85aeb41d7e04c71fbaa9f16a"
 language = "python"
 scan_targets = ["src/fetch"]
 evidence_tier = "writeup"
@@ -107,7 +107,7 @@ vulns = ["servers-fetch-ssrf"]
 [[repo]]
 slug = "fastmcp-openapi"
 url = "git@github.com:jlowin/fastmcp.git"
-commit = "<PENDING>"
+commit = "53dab031e4fed759d4f271bd5266d041a106c8ce"
 language = "python"
 scan_targets = ["src/fastmcp/utilities/openapi"]
 evidence_tier = "cve"
@@ -116,7 +116,7 @@ vulns = ["CVE-2026-32871"]
 [[repo]]
 slug = "python-sdk-ghsa"
 url = "git@github.com:modelcontextprotocol/python-sdk.git"
-commit = "<PENDING>"
+commit = "544176770b53e6a0ae8c413d3b6c5116421f67df"
 language = "python"
 evidence_tier = "cve"
 vulns = ["GHSA-vj7q-gjh5-988w"]
@@ -125,7 +125,7 @@ vulns = ["GHSA-vj7q-gjh5-988w"]
 [[repo]]
 slug = "servers-filesystem-ts"
 url = "git@github.com:modelcontextprotocol/servers.git"
-commit = "<PENDING>"
+commit = "129d80af313c6c0ad9a929f4923c6d8a07d6a9e5"
 language = "typescript"
 scan_targets = ["src/filesystem"]
 evidence_tier = "cve"
@@ -134,7 +134,7 @@ vulns = ["CVE-2025-53109", "CVE-2025-53110"]
 [[repo]]
 slug = "inspector"
 url = "git@github.com:modelcontextprotocol/inspector.git"
-commit = "<PENDING>"
+commit = "798bc1b7933dd29275121e8a4cf2284b45270bb9"
 language = "typescript"
 evidence_tier = "cve"
 vulns = ["CVE-2025-49596"]
@@ -142,7 +142,7 @@ vulns = ["CVE-2025-49596"]
 [[repo]]
 slug = "mcp-remote"
 url = "git@github.com:punkpeye/mcp-remote.git"
-commit = "<PENDING>"
+commit = "3ad0fc047653e15b29b01d122848a729feb4ec78"
 language = "typescript"
 evidence_tier = "cve"
 vulns = ["CVE-2025-6514"]
@@ -150,7 +150,7 @@ vulns = ["CVE-2025-6514"]
 [[repo]]
 slug = "figma-context-mcp"
 url = "git@github.com:GLips/Figma-Context-MCP.git"
-commit = "<PENDING>"
+commit = "5b0d10e76eafafe972dddc40bfb601b50d5953f0"
 language = "typescript"
 evidence_tier = "cve"
 vulns = ["CVE-2025-53967"]
@@ -159,7 +159,7 @@ vulns = ["CVE-2025-53967"]
 [[repo]]
 slug = "serverless-mcp"
 url = "git@github.com:serverless/serverless.git"
-commit = "<PENDING>"
+commit = "b83fbd3b5e215a416434b0f5dc26c155e02330f6"
 language = "javascript"
 scan_targets = ["packages/mcp"]
 evidence_tier = "cve"
@@ -168,7 +168,7 @@ vulns = ["CVE-2025-69256"]
 [[repo]]
 slug = "vulnerable-mcp-servers-lab"
 url = "git@github.com:appsecco/vulnerable-mcp-servers-lab.git"
-commit = "<PENDING>"
+commit = "47b7f2082261136b667daa7be9273698e66e479e"
 language = "javascript"
 scan_targets = ["vulnerable-mcp-servers-lab/filesystem-server"]
 evidence_tier = "synthetic"
@@ -178,7 +178,7 @@ vulns = ["LAB-filesystem-path-traversal"]
 [[repo]]
 slug = "rust-sdk"
 url = "git@github.com:modelcontextprotocol/rust-sdk.git"
-commit = "<PENDING>"
+commit = "ac749e3cedfc036a5b77960337669c7cf2338035"
 language = "rust"
 evidence_tier = "cve"
 vulns = ["RUSTSEC-2026-0189"]
@@ -202,7 +202,7 @@ vulns = ["NUCLEUS-102"]
 [[repo]]
 slug = "frigg"
 url = "git@github.com:bnomei/frigg.git"
-commit = "<PENDING>"
+commit = "bdec38e473f816a8892d31a6aabcf15edbe9041f"
 language = "rust"
 evidence_tier = "issue"
 vulns = ["FRIGG-symlink-traversal"]

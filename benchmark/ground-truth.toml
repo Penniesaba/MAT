@@ -29,9 +29,8 @@ cwe = "CWE-89"
 category = "sql_injection"
 severity = "high"
 evidence_tier = "cve"
-sink_line = 0
-sink_file = "<PENDING>"
-
+sink_line = 530
+sink_file = "src/entry.py"
 [vulns."CVE-2025-65719"]
 repo_slug = "kubectl-mcp-server"
 language = "python"
