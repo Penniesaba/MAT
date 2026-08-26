@@ -14,14 +14,18 @@ for r in m.get("repo", []):
 PY
 
 mkdir -p corpus
+declare -A seen
 while IFS=$'\t' read -r slug url commit; do
   dest="corpus/$slug"
-  if [ -d "$dest/.git" ]; then
-    echo "exists: $slug"
-    git -C "$dest" fetch --depth 1 origin "$commit" || true
-  else
+  if [ -z "${seen[$url]:-}" ]; then
+    # First slug for this URL: clone once.
     echo "cloning: $slug"
     git clone "$url" "$dest"
+    seen[$url]=$slug
+  elif [ ! -d "$dest/.git" ]; then
+    # URL already cloned under another slug: copy, don't re-clone.
+    echo "copying: $slug from ${seen[$url]}"
+    cp -a "corpus/${seen[$url]}" "$dest"
   fi
   git -C "$dest" checkout "$commit"
 done < /tmp/mcp-bench-repos.tsv

@@ -90,4 +90,6 @@ sink_file = "app.py"
         .filter(|p| p.file_name().and_then(|n| n.to_str()) == Some("metrics.json"))
         .collect();
     assert_eq!(metrics_files.len(), 1);
+
+    let _ = std::fs::remove_dir_all(&root);
 }
