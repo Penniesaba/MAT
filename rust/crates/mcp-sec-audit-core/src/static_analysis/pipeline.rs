@@ -6,6 +6,8 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 
+use crate::events::{stage_percent, CodeqlStep, EvolutionStep, FinishStep, Phase1Step,
+    Phase2Step, Phase2StandardStep, SetupStep, Stage, StandardStep, ValidationStep};
 use crate::model::CodeqlOutput;
 use crate::{
     AgentOutput, ConfigSnapshot, EvolutionReport, Fact, FusedFinding, ModelCandidate, Progress,
@@ -76,6 +78,14 @@ async fn acquire_permit(
         Some(governor) => Some(governor.acquire(class).await),
         None => None,
     }
+}
+
+/// Emits a [`Stage`] progress event through the run's [`crate::events::EventSink`].
+/// With a noop sink (single-repo CLI path) this is a drop, so the legacy
+/// `progress.report(...)` stream is unchanged.
+fn emit_stage(run_ctx: &RunContext, stage: Stage) {
+    let percent = stage_percent(&stage);
+    run_ctx.events.stage_progress(stage, percent);
 }
 
 pub fn run_static_scan(
@@ -169,6 +179,7 @@ pub async fn run_static_scan_async(
         .map(PathBuf::from)
         .collect::<Vec<_>>();
 
+    emit_stage(run_ctx, Stage::Setup(SetupStep::Discover));
     progress.report(format!("Scanning {}", target_label(&targets)));
 
     if !effective_config.static_.enabled {
@@ -181,6 +192,7 @@ pub async fn run_static_scan_async(
     }
 
     let discovery = discover_files(&targets, &effective_config.scan)?;
+    emit_stage(run_ctx, Stage::Setup(SetupStep::LoadRulebook));
     progress.report(format!(
         "Discovered {} files",
         discovery.discovered_files.len()
@@ -203,6 +215,7 @@ pub async fn run_static_scan_async(
     } else {
         None
     };
+    emit_stage(run_ctx, Stage::Setup(SetupStep::LoadCatalog));
 
     let ctx = StaticScanContext::with_run_id(
         effective_config.clone(),
@@ -219,6 +232,7 @@ pub async fn run_static_scan_async(
         None => None,
     };
     let base_catalog = load_catalog_with_learned(&ctx, learned.as_ref())?;
+    emit_stage(run_ctx, Stage::Setup(SetupStep::BaselineComponents));
 
     // 基线组件指纹：四线路的能力决定性部件统一为 Component 抽象，记录各自
     // tool + fingerprint 作跨阶段对比的可观测锚点。
@@ -278,6 +292,7 @@ pub async fn run_static_scan_async(
             enabled = effective_config.static_.rule.enabled
         )
         .entered();
+        emit_stage(run_ctx, Stage::Phase1(Phase1Step::Standard(StandardStep::Rule)));
         progress.report(if effective_config.static_.rule.enabled {
             "Running rule analysis..."
         } else {
@@ -307,6 +322,7 @@ pub async fn run_static_scan_async(
             enabled = effective_config.static_.taint.enabled
         )
         .entered();
+        emit_stage(run_ctx, Stage::Phase1(Phase1Step::Standard(StandardStep::Taint)));
         progress.report(if effective_config.static_.taint.enabled {
             "Running taint analysis (phase 1)..."
         } else {
@@ -338,6 +354,7 @@ pub async fn run_static_scan_async(
             enabled = effective_config.static_.agent.enabled
         )
         .entered();
+        emit_stage(run_ctx, Stage::Phase1(Phase1Step::Agent));
         progress.report(if effective_config.static_.agent.enabled {
             "Running agent analysis..."
         } else {
@@ -382,6 +399,10 @@ pub async fn run_static_scan_async(
             enabled = effective_config.static_.codeql.enabled
         )
         .entered();
+        emit_stage(
+            run_ctx,
+            Stage::Phase1(Phase1Step::Standard(StandardStep::Codeql(CodeqlStep::Analyze))),
+        );
         progress.report(if effective_config.static_.codeql.enabled {
             "Running CodeQL analysis (phase 1)..."
         } else {
@@ -408,6 +429,7 @@ pub async fn run_static_scan_async(
     };
 
     // ---------- 门控（G1/G2）+ 试探性进化（G3） ----------
+    emit_stage(run_ctx, Stage::Evolution(EvolutionStep::GateG1G2));
     let rules = crate::models::default_package_rules();
     let mut gated: Vec<ModelCandidate> = Vec::new();
     let mut b0: Vec<ModelCandidate> = Vec::new();
@@ -455,6 +477,7 @@ pub async fn run_static_scan_async(
     );
 
     // 无进化可做时，直接以阶段 1 结果走融合+汇总，返回（不重跑阶段 2）。
+    emit_stage(run_ctx, Stage::Evolution(EvolutionStep::StageG3));
     let Some(staged) = learning::stage_catalog_evolution(&base_catalog, &gated) else {
         progress.report("Differential: no evolution candidates — skipping phase 2");
         let evolution = EvolutionReport {
@@ -472,6 +495,7 @@ pub async fn run_static_scan_async(
             facts_1,
             evolution,
             progress,
+            &run_ctx.events,
         );
     };
 
@@ -484,6 +508,7 @@ pub async fn run_static_scan_async(
         "staged catalog evolution"
     );
 
+    emit_stage(run_ctx, Stage::Evolution(EvolutionStep::Diff1));
     let diff_1 = diff::diff_lines(
         rule_results.clone(),
         taint_results_1.clone(),
@@ -544,6 +569,7 @@ pub async fn run_static_scan_async(
             enabled = effective_config.static_.taint.enabled
         )
         .entered();
+        emit_stage(run_ctx, Stage::Phase2(Phase2Step::Standard(Phase2StandardStep::Taint)));
         progress.report("Running taint analysis (phase 2)...");
         let start = std::time::Instant::now();
         let ctx_owned = ctx.clone();
@@ -571,6 +597,7 @@ pub async fn run_static_scan_async(
             enabled = effective_config.static_.agent.enabled
         )
         .entered();
+        emit_stage(run_ctx, Stage::Phase2(Phase2Step::Agent));
         progress.report("Running agent analysis (phase 2)...");
         let start = std::time::Instant::now();
         let _agent_permit = acquire_permit(run_ctx, ResourceClass::Agent).await;
@@ -612,6 +639,10 @@ pub async fn run_static_scan_async(
             enabled = effective_config.static_.codeql.enabled
         )
         .entered();
+        emit_stage(
+            run_ctx,
+            Stage::Phase2(Phase2Step::Standard(Phase2StandardStep::Codeql(CodeqlStep::Analyze))),
+        );
         progress.report("Running CodeQL analysis (phase 2)...");
         let start = std::time::Instant::now();
         let _codeql_permit = acquire_permit(run_ctx, ResourceClass::Codeql).await;
@@ -633,6 +664,7 @@ pub async fn run_static_scan_async(
         output
     };
 
+    emit_stage(run_ctx, Stage::Validation(ValidationStep::Diff2));
     let diff_2 = diff::diff_lines(
         rule_results.clone(),
         taint_results_2.clone(),
@@ -642,11 +674,13 @@ pub async fn run_static_scan_async(
     );
 
     // ---------- 迁移校验（L1）+ 固化/回退 ----------
+    emit_stage(run_ctx, Stage::Validation(ValidationStep::Migrate));
     let mut migration = validate::migrate(&diff_1, &diff_2);
     migration.b0_count = b0.len();
     tracing::info!(target: "mcp_sec_audit::validate", ?migration, "cross-stage migration");
 
     // L2：仍混沌的 b-only 条目交 agent 语义解释（只产出解释，不下结论）。
+    emit_stage(run_ctx, Stage::Validation(ValidationStep::Explain));
     let mut ambiguous = validate::ambiguous_items(&diff_1, &diff_2);
     if !ambiguous.is_empty() && effective_config.static_.agent.enabled {
         let items: Vec<agent::PromptFinding> = ambiguous
@@ -698,6 +732,7 @@ pub async fn run_static_scan_async(
         }
         if !items.is_empty() {
             let _agent_permit = acquire_permit(run_ctx, ResourceClass::Agent).await;
+            emit_stage(run_ctx, Stage::Validation(ValidationStep::Adjudicate));
             match agent::run_adjudication_async(&ctx, &items, &run_ctx.cancel).await {
                 Ok(rounds) => {
                     let resolved = agent::vote(&rounds);
@@ -784,6 +819,7 @@ pub async fn run_static_scan_async(
                 "nothing to promote — empty delta"
             );
         }
+        emit_stage(run_ctx, Stage::Validation(ValidationStep::Promote));
         persist_promotion(
             &ctx,
             run_ctx,
@@ -825,6 +861,7 @@ pub async fn run_static_scan_async(
         final_facts,
         evolution,
         progress,
+        &run_ctx.events,
     )
 }
 
@@ -1055,12 +1092,17 @@ fn finish(
     facts: Vec<Fact>,
     evolution: EvolutionReport,
     progress: &Progress,
+    events: &crate::events::EventSink,
 ) -> Result<StaticAnalysisResult> {
     let agent_results = agent_output.findings;
     let model_candidates = agent_output.model_candidates;
 
     let fused_findings = {
         let _enter = tracing::info_span!(target: "mcp_sec_audit::fusion", "fusion").entered();
+        events.stage_progress(
+            Stage::Finish(FinishStep::Fusion),
+            stage_percent(&Stage::Finish(FinishStep::Fusion)),
+        );
         progress.report("Fusing results...");
         let start = std::time::Instant::now();
         let findings = fusion::run(
@@ -1087,6 +1129,10 @@ fn finish(
         agent_results.clone(),
         codeql_output.results.clone(),
         ctx.config.fusion.line_proximity,
+    );
+    events.stage_progress(
+        Stage::Finish(FinishStep::Partition),
+        stage_percent(&Stage::Finish(FinishStep::Partition)),
     );
     progress.report(format!(
         "Differential: agreed={} standard-only={} agent-only={}",
@@ -1123,6 +1169,10 @@ fn finish(
         risk_level: compute_risk_level(&fused_findings),
     };
 
+    events.stage_progress(
+        Stage::Finish(FinishStep::Report),
+        stage_percent(&Stage::Finish(FinishStep::Report)),
+    );
     Ok(StaticAnalysisResult {
         facts,
         rule_results,
@@ -1312,6 +1362,7 @@ mod tests {
 
     use super::*;
     use crate::Fact;
+    use tokio_util::sync::CancellationToken;
 
     #[test]
     fn scan_context_carries_a_run_id() {
@@ -1348,6 +1399,46 @@ mod tests {
         });
         let seen = seen.lock().unwrap();
         assert!(seen.iter().any(|m| m.contains("Scanning")));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipeline_emits_stage_progress_when_subscribed() {
+        use crate::events::{AnalysisEvent, EventSink};
+        let (events, mut rx) = EventSink::broadcast();
+        let events = events.scoped("t");
+
+        let mut config = RuntimeConfig::default();
+        config.static_.rule.enabled = true;
+        config.static_.taint.enabled = true;
+        config.static_.agent.enabled = false;
+        config.static_.codeql.enabled = false;
+        // Use a tiny synthetic target on disk (reuse the batch test helper pattern:
+        // write a temp dir with app.py). Rule needs a rulebook, so disable rule too
+        // to keep it a pure taint+fusion path.
+        config.static_.rule.enabled = false;
+
+        let run_id = RunId::new();
+        let run_ctx = RunContext::for_repo(run_id, Progress::noop(), events, CancellationToken::new(), None, None);
+        // discovery needs a real path: point scan.targets at a temp dir
+        let dir = std::env::temp_dir().join(format!("mcp-sec-audit-stage-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        std::fs::write(dir.join("app.py"), "import subprocess\nsubprocess.run(['ls'])\n").expect("py");
+        config.scan.targets = vec![dir.display().to_string()];
+
+        let result = run_static_scan_async(&config, &[], None, &run_ctx).await.expect("scan");
+
+        let mut stages = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            if let AnalysisEvent::StageProgress { repo, stage, .. } = ev {
+                assert_eq!(repo, "t");
+                stages.push(stage);
+            }
+        }
+        assert!(stages.iter().any(|s| matches!(s, Stage::Setup(SetupStep::Discover))));
+        assert!(stages.iter().any(|s| matches!(s, Stage::Phase1(Phase1Step::Standard(StandardStep::Taint)))));
+        assert!(stages.iter().any(|s| matches!(s, Stage::Finish(FinishStep::Report))));
+        let _ = result;
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
