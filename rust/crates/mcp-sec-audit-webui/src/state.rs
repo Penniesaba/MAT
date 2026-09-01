@@ -37,31 +37,18 @@ impl<T> RingBuffer<T> {
 
 /// Live progress of one repo.
 ///
-/// `Default` is implemented manually: `RepoStatus` (in `mcp-sec-audit-core`)
-/// has no `Default`, and it has no "pending" variant, so the pre-finish
-/// placeholder is `Cancelled` ("not completed yet"). `record` overwrites
-/// `status` on `RepoFinished`, so this value is only ever transient.
-#[derive(Debug, Clone)]
+/// `status` is `None` until the repo finishes, so in-flight repos are
+/// distinguishable from genuinely-cancelled ones in `RunSnapshot` (a
+/// cancelled repo carries `status: Some(Cancelled)`). `record` sets it only in
+/// the `RepoFinished` arm.
+#[derive(Debug, Clone, Default)]
 pub struct RepoProgress {
-    pub status: RepoStatus,
+    pub status: Option<RepoStatus>,
     pub stage: Option<Stage>,
     pub percent: u8,
     pub risk_level: Option<String>,
     pub finding_count: Option<usize>,
     pub error: Option<String>,
-}
-
-impl Default for RepoProgress {
-    fn default() -> Self {
-        Self {
-            status: RepoStatus::Cancelled,
-            stage: None,
-            percent: 0,
-            risk_level: None,
-            finding_count: None,
-            error: None,
-        }
-    }
 }
 
 /// Everything needed to render the page + replay on WS connect.
@@ -137,7 +124,7 @@ impl RunManager {
             }
             AnalysisEvent::RepoFinished { repo, status, duration_ms: _, risk_level, fused_finding_count } => {
                 let p = state.repos.entry(repo.clone()).or_default();
-                p.status = *status;
+                p.status = Some(*status);
                 p.risk_level = risk_level.clone();
                 p.finding_count = *fused_finding_count;
             }
@@ -221,6 +208,30 @@ mod tests {
         assert_eq!(snap.batch_id.as_deref(), Some("b1"));
         assert_eq!(snap.repos["a"].percent, 1);
         assert_eq!(snap.logs["a"].len(), 1);
+    }
+
+    #[test]
+    fn repo_status_none_until_finished() {
+        let mgr = RunManager::new();
+        mgr.record(AnalysisEvent::RepoStarted { repo: "a".into() });
+        mgr.record(AnalysisEvent::StageProgress {
+            repo: "a".into(),
+            stage: Stage::Setup(SetupStep::Discover),
+            percent: 1,
+        });
+        // In-flight: no terminal status yet — distinct from a cancelled repo.
+        assert_eq!(mgr.snapshot().repos["a"].status, None);
+        mgr.record(AnalysisEvent::RepoFinished {
+            repo: "a".into(),
+            status: mcp_sec_audit_core::batch::RepoStatus::Ok,
+            duration_ms: 42,
+            risk_level: Some("low".into()),
+            fused_finding_count: Some(0),
+        });
+        assert_eq!(
+            mgr.snapshot().repos["a"].status,
+            Some(mcp_sec_audit_core::batch::RepoStatus::Ok)
+        );
     }
 
     #[test]
