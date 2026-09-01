@@ -3,6 +3,7 @@
 pub mod batch;
 pub mod bench;
 pub mod config;
+pub mod events;
 pub mod fixtures;
 pub mod model;
 pub mod models;
