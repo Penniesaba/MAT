@@ -37,6 +37,7 @@ use super::{
     spawn,
 };
 use crate::config::{ReportConfig, RuntimeConfig};
+use crate::events::EventSink;
 use crate::reporting::{
     JsonlRenderOptions, MarkdownRenderOptions, ReportFormat, render_json, render_jsonl,
     render_markdown, resolve_output_path,
@@ -374,7 +375,7 @@ async fn run_repo(
         }
     };
 
-    let run_ctx = RunContext::for_repo(repo_id, progress, cancel, Some(governor), bus);
+    let run_ctx = RunContext::for_repo(repo_id, progress, EventSink::noop(), cancel, Some(governor), bus);
 
     let scan = run_static_scan_async(&merged, &[], None, &run_ctx).await;
 

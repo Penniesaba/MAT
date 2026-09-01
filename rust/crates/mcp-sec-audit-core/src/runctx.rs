@@ -11,6 +11,8 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use crate::events::EventSink;
+
 /// A unique identifier for a single analysis run.
 ///
 /// Two runs never share a [`RunId`], which is what lets each run own a
@@ -202,6 +204,7 @@ const TEMP_KINDS: &[&str] = &["codeql", "sarif", "mad", "staging"];
 pub struct RunContext {
     pub run_id: RunId,
     pub progress: Progress,
+    pub events: EventSink,
     pub cancel: CancellationToken,
     /// The per-class resource governor, when this run participates in a batch.
     /// `None` (single-repo mode) keeps the pipeline acquiring no permits, so
@@ -222,6 +225,7 @@ impl RunContext {
         Self {
             run_id,
             progress: Progress::tracing(),
+            events: EventSink::noop(),
             cancel: CancellationToken::new(),
             governor: None,
             learning_bus: None,
@@ -234,6 +238,7 @@ impl RunContext {
         Self {
             run_id,
             progress,
+            events: EventSink::noop(),
             cancel: CancellationToken::new(),
             governor: None,
             learning_bus: None,
@@ -247,6 +252,7 @@ impl RunContext {
     pub fn for_repo(
         run_id: RunId,
         progress: Progress,
+        events: EventSink,
         cancel: CancellationToken,
         governor: Option<crate::batch::ResourceGovernor>,
         learning_bus: Option<crate::batch::LearningBusHandle>,
@@ -254,6 +260,7 @@ impl RunContext {
         Self {
             run_id,
             progress,
+            events,
             cancel,
             governor,
             learning_bus,
@@ -448,6 +455,8 @@ mod tests {
         assert!(ctx.governor.is_none());
         assert!(ctx.learning_bus.is_none());
         assert!(!ctx.cancel.is_cancelled());
+        // v6: noop events by default (single-repo CLI path stays byte-identical)
+        ctx.events.stage_progress(crate::events::Stage::Setup(crate::events::SetupStep::Discover), 1);
     }
 
     #[test]
