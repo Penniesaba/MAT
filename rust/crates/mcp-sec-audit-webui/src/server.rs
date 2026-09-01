@@ -30,9 +30,14 @@ impl axum::extract::FromRef<AppState> for RunManager {
 }
 
 /// Build the axum router, wiring every route with the shared [`AppState`].
-pub fn build_router() -> Router {
+///
+/// Takes the [`RunManager`] so the caller (the `serve` entry point) can install
+/// a [`crate::log_capture::CaptureLayer`] over the *same* manager the WS
+/// endpoint streams from — the two must share state for per-repo log lines to
+/// fold into the event stream.
+pub fn build_router(manager: RunManager) -> Router {
     let state = AppState {
-        manager: RunManager::new(),
+        manager,
         config: Arc::new(Mutex::new(None)),
     };
 

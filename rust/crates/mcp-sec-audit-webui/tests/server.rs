@@ -4,9 +4,11 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
+use mcp_sec_audit_webui::state::RunManager;
+
 #[tokio::test]
 async fn index_serves_html() {
-    let app = mcp_sec_audit_webui::server::build_router();
+    let app = mcp_sec_audit_webui::server::build_router(RunManager::new());
     let resp = app
         .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
         .await
@@ -16,7 +18,7 @@ async fn index_serves_html() {
 
 #[tokio::test]
 async fn import_valid_config_returns_ok() {
-    let app = mcp_sec_audit_webui::server::build_router();
+    let app = mcp_sec_audit_webui::server::build_router(RunManager::new());
     let body = "[scan]\ntargets = [\"src\"]\n";
     let resp = app
         .oneshot(
