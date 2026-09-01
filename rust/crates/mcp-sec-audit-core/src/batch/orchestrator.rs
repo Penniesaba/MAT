@@ -37,7 +37,7 @@ use super::{
     spawn,
 };
 use crate::config::{ReportConfig, RuntimeConfig};
-use crate::events::EventSink;
+use crate::events::{AnalysisEvent, EventSink};
 use crate::reporting::{
     JsonlRenderOptions, MarkdownRenderOptions, ReportFormat, render_json, render_jsonl,
     render_markdown, resolve_output_path,
@@ -114,6 +114,7 @@ struct Shared {
     governor: ResourceGovernor,
     bus: Option<LearningBusHandle>,
     progress: Progress,
+    events: EventSink,
     cancel: CancellationToken,
 }
 
@@ -125,7 +126,11 @@ struct Shared {
 /// [`CancellationToken::cancel`], after which repositories that have not yet
 /// started are recorded as `Cancelled` instead of beginning new work (the
 /// providers already reap child processes on drop/timeout, bounding cleanup).
-pub async fn run_batch(cfg: BatchConfig, cancel: CancellationToken) -> Result<BatchSummary> {
+pub async fn run_batch(
+    cfg: BatchConfig,
+    cancel: CancellationToken,
+    events: EventSink,
+) -> Result<BatchSummary> {
     // An empty repository list is a configuration error, not a valid
     // (empty) batch: reject it before any setup so the CLI maps it to exit
     // code 2 (design §10 "仓库清单为空" → 2).
@@ -153,6 +158,12 @@ pub async fn run_batch(cfg: BatchConfig, cancel: CancellationToken) -> Result<Ba
     let max_parallel_limit = cfg.batch.max_parallel.max(1);
     let max_parallel = Arc::new(Semaphore::new(max_parallel_limit));
 
+    events.emit(AnalysisEvent::BatchStarted {
+        batch_id: batch_id.as_str().to_string(),
+        repo_names: cfg.batch.repos.iter().map(|r| r.name.clone()).collect(),
+        max_parallel: max_parallel_limit,
+    });
+
     // Progress hub (design §5): repos report into one channel, a dedicated task
     // drains it into `tracing` with the `[repo]` prefix already attached by
     // `Progress::scoped`.
@@ -167,6 +178,7 @@ pub async fn run_batch(cfg: BatchConfig, cancel: CancellationToken) -> Result<Ba
         governor,
         bus: bus.clone(),
         progress: progress.clone(),
+        events: events.clone(),
         cancel: cancel.clone(),
     };
 
@@ -198,7 +210,9 @@ pub async fn run_batch(cfg: BatchConfig, cancel: CancellationToken) -> Result<Ba
         while in_flight < max_parallel_limit && next < cfg.batch.repos.len() {
             if cancel.is_cancelled() {
                 for (idx, repo) in cfg.batch.repos.iter().enumerate().skip(next) {
-                    outcomes[idx] = Some(RepoOutcome::cancelled(idx, repo, 0));
+                    let outcome = RepoOutcome::cancelled(idx, repo, 0);
+                    events.emit(repo_finished_event(&repo.name, &outcome));
+                    outcomes[idx] = Some(outcome);
                 }
                 next = cfg.batch.repos.len();
                 break;
@@ -292,7 +306,9 @@ pub async fn run_batch(cfg: BatchConfig, cancel: CancellationToken) -> Result<Ba
             Some(o) => o.into(),
             None => {
                 let error = join_errors.next().unwrap_or("panicked");
-                RepoOutcome::failed(idx, &cfg.batch.repos[idx], error).into()
+                let outcome = RepoOutcome::failed(idx, &cfg.batch.repos[idx], error);
+                events.emit(repo_finished_event(&outcome.name, &outcome));
+                outcome.into()
             }
         })
         .collect();
@@ -328,6 +344,10 @@ pub async fn run_batch(cfg: BatchConfig, cancel: CancellationToken) -> Result<Ba
         );
     }
 
+    events.emit(AnalysisEvent::BatchFinished {
+        summary: summary.clone(),
+    });
+
     Ok(summary)
 }
 
@@ -344,12 +364,16 @@ async fn run_repo(
         governor,
         bus,
         progress,
+        events,
         cancel,
     } = shared;
     let start = Instant::now();
     let name = repo.name.clone();
     let path = repo.path.clone();
     let progress = progress.scoped(&name);
+    let events = events.scoped(&name);
+
+    events.emit(AnalysisEvent::RepoStarted { repo: name.clone() });
 
     // Enter a per-repo span so every log line this repository emits (progress
     // aside, which is already `[repo]`-prefixed by the channel progress) is
@@ -361,7 +385,7 @@ async fn run_repo(
     let merged = match merge_repo_config(&base, &repo) {
         Ok(merged) => merged,
         Err(e) => {
-            return RepoOutcome {
+            let outcome = RepoOutcome {
                 idx,
                 name,
                 path,
@@ -372,10 +396,12 @@ async fn run_repo(
                 fused_finding_count: None,
                 report_paths: Vec::new(),
             };
+            events.emit(repo_finished_event(&outcome.name, &outcome));
+            return outcome;
         }
     };
 
-    let run_ctx = RunContext::for_repo(repo_id, progress, EventSink::noop(), cancel, Some(governor), bus);
+    let run_ctx = RunContext::for_repo(repo_id, progress, events.clone(), cancel, Some(governor), bus);
 
     let scan = run_static_scan_async(&merged, &[], None, &run_ctx).await;
 
@@ -431,7 +457,22 @@ async fn run_repo(
         );
     }
 
+    events.emit(repo_finished_event(&outcome.name, &outcome));
+
     outcome
+}
+
+/// Builds the [`AnalysisEvent::RepoFinished`] for an outcome, threading the
+/// outcome's status/duration/risk/count fields straight into the event so the
+/// UI can mark the repo finished without re-deriving them from the summary.
+fn repo_finished_event(repo: &str, outcome: &RepoOutcome) -> AnalysisEvent {
+    AnalysisEvent::RepoFinished {
+        repo: repo.to_string(),
+        status: outcome.status,
+        duration_ms: outcome.duration_ms,
+        risk_level: outcome.risk_level.clone(),
+        fused_finding_count: outcome.fused_finding_count,
+    }
 }
 
 /// Writes the per-repo report files, mirroring the CLI's single-repo report
@@ -593,7 +634,9 @@ mod tests {
     async fn batch_analyzes_two_repos_and_writes_both_reports() {
         let (dir_a, dir_b) = (tiny_python_repo("a"), tiny_python_repo("b"));
         let cfg = batch_config_for(&[("a", &dir_a), ("b", &dir_b)]);
-        let summary = run_batch(cfg, CancellationToken::new()).await.expect("batch");
+        let summary = run_batch(cfg, CancellationToken::new(), EventSink::noop())
+            .await
+            .expect("batch");
         assert_eq!(summary.succeeded, 2);
         assert_eq!(summary.failed, 0);
         assert_eq!(summary.cancelled, 0);
@@ -611,7 +654,9 @@ mod tests {
                 &std::path::Path::new("/nonexistent/repo").to_path_buf(),
             ),
         ]);
-        let summary = run_batch(cfg, CancellationToken::new()).await.expect("batch");
+        let summary = run_batch(cfg, CancellationToken::new(), EventSink::noop())
+            .await
+            .expect("batch");
         assert_eq!(summary.succeeded, 1);
         assert_eq!(summary.failed, 1);
         assert!(summary.repos.iter().any(|r| r.error.is_some()));
@@ -620,12 +665,39 @@ mod tests {
     #[tokio::test]
     async fn empty_repo_list_is_an_error() {
         let cfg = batch_config_for(&[]);
-        let err = run_batch(cfg, CancellationToken::new())
+        let err = run_batch(cfg, CancellationToken::new(), EventSink::noop())
             .await
             .expect_err("an empty repo list must be rejected as a config error");
         assert!(
             err.to_string().contains("no repos"),
             "unexpected error: {err}"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn run_batch_emits_lifecycle_events() {
+        use crate::events::AnalysisEvent;
+        let (dir_a, dir_b) = (tiny_python_repo("a"), tiny_python_repo("b"));
+        let cfg = batch_config_for(&[("a", &dir_a), ("b", &dir_b)]);
+        let (events, mut rx) = EventSink::broadcast();
+        let summary = run_batch(cfg, CancellationToken::new(), events)
+            .await
+            .expect("batch");
+        assert_eq!(summary.succeeded, 2);
+
+        let mut saw_started = false;
+        let mut saw_repo_a = false;
+        let mut saw_finished = false;
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                AnalysisEvent::BatchStarted { .. } => saw_started = true,
+                AnalysisEvent::RepoStarted { repo } if repo == "a" => saw_repo_a = true,
+                AnalysisEvent::BatchFinished { .. } => saw_finished = true,
+                _ => {}
+            }
+        }
+        assert!(saw_started, "no BatchStarted");
+        assert!(saw_repo_a, "no RepoStarted(a)");
+        assert!(saw_finished, "no BatchFinished");
     }
 }

@@ -19,6 +19,7 @@ pub use batch::{
     render_batch_summary_markdown, run_batch,
 };
 pub use bench::{AggregateMetrics, BenchMetrics, BenchOptions, RepoMetrics, run_bench};
+pub use events::{AnalysisEvent, EventSink, Stage};
 pub use config::{
     DynamicConfig, FusionConfig, LogFormat, LogLevel, LoggingConfig, ReportConfig, RuntimeConfig,
     ScanConfig, StaticAgentConfig, StaticConfig, StaticRuleConfig, StaticTaintConfig,

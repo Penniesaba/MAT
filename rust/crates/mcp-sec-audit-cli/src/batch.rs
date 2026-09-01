@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-use mcp_sec_audit_core::{BatchSummary, load_batch_config, run_batch};
+use mcp_sec_audit_core::{BatchSummary, EventSink, load_batch_config, run_batch};
 use tokio_util::sync::CancellationToken;
 
 /// Loads `config`, initializes logging from its `[logging]` section, and runs
@@ -17,5 +17,5 @@ use tokio_util::sync::CancellationToken;
 pub async fn run(config: &Path, cancel: CancellationToken) -> Result<BatchSummary> {
     let cfg = load_batch_config(config)?;
     crate::logging::init(&cfg.runtime.logging)?;
-    run_batch(cfg, cancel).await
+    run_batch(cfg, cancel, EventSink::noop()).await
 }

@@ -97,7 +97,7 @@ pub async fn run_bench(
         &out_dir.to_string_lossy(),
         opts.max_parallel,
     );
-    let summary = crate::batch::run_batch(batch_cfg, cancel).await?;
+    let summary = crate::batch::run_batch(batch_cfg, cancel, crate::events::EventSink::noop()).await?;
 
     let mut repo_metrics = Vec::new();
     for repo in &summary.repos {
