@@ -30,7 +30,7 @@ rust/docs/
 └── .obsidian/    Obsidian 配置（勿动）
 ```
 
-## v5.0 — 并行多仓库分析（当前）
+## v5.0 — 并行多仓库分析
 
 - [`PARALLEL_MULTI_REPO_DESIGN_20260825.md`](v5.0/PARALLEL_MULTI_REPO_DESIGN_20260825.md) — **设计规格书**（阻塞点盘点 · RunId 隔离 · 分级限流 · 学习总线 · 失败与取消语义）
 - [`plans/2026-08-25-v5-parallel-orchestration.md`](v5.0/plans/2026-08-25-v5-parallel-orchestration.md) — 实现计划（任务 0–14，TDD 步骤）
