@@ -41,7 +41,7 @@ impl<T> RingBuffer<T> {
 /// distinguishable from genuinely-cancelled ones in `RunSnapshot` (a
 /// cancelled repo carries `status: Some(Cancelled)`). `record` sets it only in
 /// the `RepoFinished` arm.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct RepoProgress {
     pub status: Option<RepoStatus>,
     pub stage: Option<Stage>,
@@ -52,7 +52,7 @@ pub struct RepoProgress {
 }
 
 /// Everything needed to render the page + replay on WS connect.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct RunSnapshot {
     pub batch_id: Option<String>,
     pub repos: BTreeMap<String, RepoProgress>,
