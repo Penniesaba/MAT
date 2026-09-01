@@ -1,8 +1,46 @@
-<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>mcp-sec-audit</title>
-  </head>
-  <body>mcp-sec-audit</body>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>mcp-sec-audit</title>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <header>
+    <h1>mcp-sec-audit</h1>
+    <p class="sub">configure &middot; run &middot; monitor</p>
+  </header>
+
+  <main>
+    <section id="config">
+      <div class="row">
+        <h2>Configuration</h2>
+        <button id="import-btn">Import TOML</button>
+        <button id="export-btn">Export TOML</button>
+        <button id="run-btn" class="primary">Run</button>
+      </div>
+      <textarea id="toml" spellcheck="false" placeholder="paste TOML or import a file"></textarea>
+      <div id="config-error" class="error" hidden></div>
+      <input id="file" type="file" accept=".toml" hidden />
+    </section>
+
+    <section id="monitor">
+      <h2>Repositories</h2>
+      <div id="repos" class="repos"></div>
+    </section>
+  </main>
+
+  <div id="modal" class="modal" hidden>
+    <div class="modal-box">
+      <div class="modal-head">
+        <span id="modal-title">repo</span>
+        <button id="modal-close">&times;</button>
+      </div>
+      <pre id="modal-logs" class="logs"></pre>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
 </html>

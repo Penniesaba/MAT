@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use axum::extract::State;
+use axum::http::header::CONTENT_TYPE;
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
@@ -43,6 +44,8 @@ pub fn build_router(manager: RunManager) -> Router {
 
     Router::new()
         .route("/", get(index))
+        .route("/static/app.css", get(app_css))
+        .route("/static/app.js", get(app_js))
         .route("/api/config", get(get_config).put(put_config))
         .route("/api/import", post(import))
         .route("/api/config/export", get(export))
@@ -54,6 +57,20 @@ pub fn build_router(manager: RunManager) -> Router {
 
 async fn index() -> Html<&'static str> {
     Html(include_str!("../static/index.html"))
+}
+
+async fn app_css() -> impl IntoResponse {
+    (
+        [(CONTENT_TYPE, "text/css")],
+        include_str!("../static/app.css"),
+    )
+}
+
+async fn app_js() -> impl IntoResponse {
+    (
+        [(CONTENT_TYPE, "text/javascript")],
+        include_str!("../static/app.js"),
+    )
 }
 
 async fn get_config(State(state): State<AppState>) -> impl IntoResponse {
