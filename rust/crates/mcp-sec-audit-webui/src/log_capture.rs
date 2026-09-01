@@ -78,6 +78,12 @@ where
         self.manager
             .record(AnalysisEvent::Log { repo, level, line: v.message });
     }
+
+    fn on_close(&self, id: Id, _ctx: Context<'_, S>) {
+        // Prune the closed span's recorded fields so `span_fields` doesn't grow
+        // without bound across runs (the layer outlives every run).
+        self.span_fields.lock().unwrap().remove(&id);
+    }
 }
 
 /// Records a span's fields into a `HashMap<String, String>`.
@@ -187,5 +193,25 @@ mod tests {
         let snap = capture_logs(|| tracing::info!("unscoped"));
         assert!(snap.logs.contains_key(""), "unscoped log should key on empty repo");
         assert_eq!(snap.logs[""][0].1, "unscoped");
+    }
+
+    #[test]
+    fn on_close_prunes_span_fields() {
+        // Regression guard: without `on_close`, `span_fields` grows without
+        // bound across runs. With it, a span's entry is removed once the span
+        // closes (the `info_span!` temporary drops at end of the statement).
+        let mgr = RunManager::new();
+        let layer = CaptureLayer::new(mgr.clone());
+        let span_fields = Arc::clone(&layer.span_fields);
+        let subscriber = tracing_subscriber::registry().with(layer);
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info_span!("repo", repo = %"excel").in_scope(|| {
+                tracing::info!("hello");
+            });
+        });
+        assert!(
+            span_fields.lock().unwrap().is_empty(),
+            "span_fields should be pruned on close"
+        );
     }
 }
