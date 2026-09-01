@@ -925,6 +925,7 @@ dependencies = [
  "clap",
  "libc",
  "mcp-sec-audit-core",
+ "mcp-sec-audit-webui",
  "tokio",
  "tokio-util",
  "tracing",

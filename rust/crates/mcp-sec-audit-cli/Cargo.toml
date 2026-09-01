@@ -15,6 +15,7 @@ anyhow.workspace = true
 clap.workspace = true
 libc.workspace = true
 mcp-sec-audit-core.workspace = true
+mcp-sec-audit-webui.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true

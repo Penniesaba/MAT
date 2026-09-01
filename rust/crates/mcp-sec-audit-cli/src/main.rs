@@ -42,6 +42,8 @@ enum Command {
     Batch(BatchArgs),
     /// Score known-vulnerable MCP repositories against ground truth.
     Bench(BenchArgs),
+    /// Serve the web UI (configure → run → monitor).
+    Webui(WebuiArgs),
 }
 
 #[derive(Debug, Args)]
@@ -60,6 +62,19 @@ struct BenchArgs {
     /// Repositories to scan concurrently.
     #[arg(long, default_value_t = 4)]
     max_parallel: usize,
+}
+
+#[derive(Debug, Args)]
+struct WebuiArgs {
+    /// Listen address.
+    #[arg(long, default_value = "127.0.0.1:8770")]
+    addr: String,
+    /// Open the browser on start.
+    #[arg(long)]
+    open: bool,
+    /// Optional config file to import at startup (unused for now; reserved).
+    #[arg(long)]
+    config: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -215,6 +230,17 @@ fn main() -> Result<()> {
                 Ok(_) => 0,
                 Err(_) => 2,
             });
+        }
+        Some(Command::Webui(args)) => {
+            // The webui path must NOT install a tracing subscriber: `serve`
+            // calls `tracing_subscriber::registry().try_init()` internally and
+            // would error if one were already active. So build the runtime and
+            // block on the server only; `axum::serve` runs until killed.
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("build tokio runtime")?;
+            rt.block_on(mcp_sec_audit_webui::serve(&args.addr, args.open))?;
         }
         None => match cli.config {
             Some(config_path) => run_static_scan_from_config(&config_path)?,
