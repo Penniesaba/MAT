@@ -66,8 +66,9 @@ struct BenchArgs {
 
 #[derive(Debug, Args)]
 struct WebuiArgs {
-    /// Listen address.
-    #[arg(long, default_value = "127.0.0.1:8770")]
+    /// Listen address. Defaults to 0.0.0.0 so the web UI is reachable on
+    /// every interface (loopback + intranet); pass --addr to restrict it.
+    #[arg(long, default_value = "0.0.0.0:8770")]
     addr: String,
     /// Open the browser on start.
     #[arg(long)]

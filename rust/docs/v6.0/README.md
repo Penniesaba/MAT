@@ -10,7 +10,7 @@ core 新增结构化事件流（`AnalysisEvent` + `EventSink`），管线按「�
 ## 运行
 
 从 `rust/` 目录执行 `cargo run -- webui`（默认二进制即 CLI，`webui` 与 `batch` 平级）。默认监听
-`127.0.0.1:8770`，可用 `--addr` 指定地址、`--open` 自动打开浏览器（详见 CLI `--help`）。
+`0.0.0.0:8770`（所有网卡，内网任意 IP 均可访问），可用 `--addr` 指定地址、`--open` 自动打开浏览器（详见 CLI `--help`）。
 
 > 注：`webui --config` 是**保留参数**（可接受但尚未接线）。启动时的 TOML 配置导入留作后续跟进，
 > v6 请在页面中填写/导入配置。
