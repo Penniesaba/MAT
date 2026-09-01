@@ -76,7 +76,13 @@ async fn app_js() -> impl IntoResponse {
 async fn get_config(State(state): State<AppState>) -> impl IntoResponse {
     let cfg = state.config.lock().expect("config mutex");
     match cfg.as_ref() {
-        Some(c) => serde_json::to_string(c).map(|s| (StatusCode::OK, s)).unwrap(),
+        Some(c) => match serde_json::to_string(c) {
+            Ok(s) => (StatusCode::OK, s),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to serialize config: {e}"),
+            ),
+        },
         None => (StatusCode::OK, "null".to_string()),
     }
 }
@@ -117,6 +123,9 @@ async fn api_run(State(state): State<AppState>) -> impl IntoResponse {
     let cfg = state.config.lock().expect("config mutex").clone();
     match cfg {
         Some(ConfigKind::Batch(b)) => {
+            if b.batch.repos.is_empty() {
+                return (StatusCode::BAD_REQUEST, "batch config has no repos".to_string());
+            }
             let _ = run::start_batch(state.manager.clone(), b);
             (StatusCode::ACCEPTED, "started batch".to_string())
         }

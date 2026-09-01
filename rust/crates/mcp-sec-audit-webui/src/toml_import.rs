@@ -18,7 +18,11 @@ pub fn parse_config(input: &str) -> Result<ConfigKind> {
         Ok(batch) if !batch.batch.repos.is_empty() || contains_batch_table(input) => {
             Ok(ConfigKind::Batch(batch))
         }
-        Ok(_) | Err(_) => {
+        // A present-but-invalid `[batch]` table must surface its error rather
+        // than silently falling through to a `Single` runtime config.
+        Err(e) if contains_batch_table(input) => Err(e),
+        // No `[batch]` table (or an empty one with no repos): a single repo.
+        _ => {
             let runtime = mcp_sec_audit_core::parse_runtime_config_toml(input)
                 .context("parse as runtime config")?;
             Ok(ConfigKind::Single(runtime))
@@ -70,6 +74,13 @@ mod tests {
     #[test]
     fn rejects_invalid_toml() {
         assert!(parse_config("not [ valid toml").is_err());
+    }
+
+    #[test]
+    fn rejects_batch_table_with_type_error() {
+        // A `[batch]` table with a mistyped value must error, not fall through
+        // to a `Single` runtime config.
+        assert!(parse_config("[batch]\nmax_parallel = \"abc\"\n").is_err());
     }
 
     #[test]

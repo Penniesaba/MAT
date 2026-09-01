@@ -8,10 +8,16 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
 /// Fixed-capacity ring buffer of log lines per repo.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct RingBuffer<T> {
     items: Vec<T>,
     cap: usize,
+}
+
+impl<T> Default for RingBuffer<T> {
+    fn default() -> Self {
+        Self::new(1)
+    }
 }
 
 impl<T> RingBuffer<T> {

@@ -1,6 +1,7 @@
 //! Launch a scan (batch or single) and pipe its events into the RunManager.
 
-use mcp_sec_audit_core::events::EventSink;
+use mcp_sec_audit_core::batch::RepoStatus;
+use mcp_sec_audit_core::events::{AnalysisEvent, EventSink};
 use mcp_sec_audit_core::runctx::Progress;
 use mcp_sec_audit_core::{BatchConfig, RuntimeConfig, RunContext, RunId, run_batch, run_static_scan_async};
 
@@ -70,7 +71,32 @@ pub fn start_single(manager: RunManager, config: RuntimeConfig) -> ActiveRun {
                 None,
                 None,
             );
+            // Emit a `RepoStarted` so the UI records the repo and can reach a
+            // terminal status (a single run has no batch orchestrator to do it).
+            events.emit(AnalysisEvent::RepoStarted { repo: "single".into() });
+            // Attribute captured log lines to `"single"` via the same span key
+            // `CaptureLayer` reads for batch repos.
+            let span = tracing::info_span!("repo", repo = "single");
+            let _enter = span.enter();
+            let started = std::time::Instant::now();
             let result = run_static_scan_async(&config, &[], None, &run_ctx).await;
+            let duration_ms = started.elapsed().as_millis() as u64;
+            match &result {
+                Ok(res) => events.emit(AnalysisEvent::RepoFinished {
+                    repo: "single".into(),
+                    status: RepoStatus::Ok,
+                    duration_ms,
+                    risk_level: Some(res.summary.risk_level.clone()),
+                    fused_finding_count: Some(res.summary.fused_finding_count),
+                }),
+                Err(_) => events.emit(AnalysisEvent::RepoFinished {
+                    repo: "single".into(),
+                    status: RepoStatus::Failed,
+                    duration_ms,
+                    risk_level: None,
+                    fused_finding_count: None,
+                }),
+            }
             // Close the event channel before awaiting the forwarder: unlike
             // `run_batch`, `run_static_scan_async` borrows its `RunContext`, so
             // both `events` and `run_ctx.events` still hold `broadcast::Sender`
