@@ -1,0 +1,9 @@
+[[sinks]]
+language = "python"
+category = "file_write"
+severity = "medium"
+confidence = "low"
+reason = "learned sink: file_write (evidence: wb.save(filepath))"
+patterns = ["openpyxl.workbook.Workbook.save"]
+source = "learned"
+learned_from = "scan/agent"

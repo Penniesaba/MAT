@@ -1,0 +1,260 @@
+# v5.0 性能验证 —— 20 仓库全开批量分析
+#
+# 仓库集：benchmark/manifest.toml 的 20 个已知漏洞 MCP 仓库（10 python / 4 typescript / 2 javascript / 4 rust），
+#         corpus 已 clone 在 ../benchmark/corpus/<slug>/，每个仓库锁定漏洞 commit。
+# 分析范围：全开 —— rule + taint + codeql + agent，fusion 开。
+# 协同：learning_bus = true（跨仓库共享学习总线，后启动仓库吃到先完成仓库成果）。
+#
+# 运行方式（在 rust/ 目录下执行）：
+#   cargo run -- batch ../test-targets/configs/benchmark-20-repos-batch.toml
+#
+# 前置条件：
+#   - codeql 二进制存在（见 [static.codeql].binary）
+#   - agent provider "claude" 调用 PATH 上的 `claude` CLI 子进程，需已登录可用
+
+[batch]
+max_parallel = 4              # 同时运行的仓库数上限（整任务许可），性能对比时可调 1/2/4/8
+learning_bus = true           # 共享学习总线（v5.0 标志特性）
+fail_fast    = false          # 单个仓库失败不中止整批
+
+[batch.limits]
+codeql = 1                    # 并发 CodeQL CLI 进程数（内存敏感）
+agent  = 1                    # 并发 agent（LLM）进程数（限流敏感）
+cpu    = 4                    # 并发 CPU 密集阶段（rule/taint/fusion/fact）
+
+# --- 共享基座（与单仓库 config 语法一致；每个 [[batch.repo]] 可覆盖） ---
+
+[scan]
+exclude = ["__pycache__", ".venv", ".mypy_cache", "node_modules", "target", ".git"]
+
+[static]
+enabled     = true
+save_facts  = true
+learned_dir = "models/learned"   # agent 跨仓学习落盘目录（learning_bus=true 需要）
+
+[static.rule]
+enabled = true
+rule_paths = ["rules/languages"]   # 注意：worktree 中 rust/rules/ 只有 languages/，无 rules/mcp
+
+[static.taint]
+enabled = true
+forward = true
+backward = true
+max_depth = 8
+entrypoint_required = false
+
+[static.agent]
+enabled = true
+provider = "claude"            # 调用 PATH 上的 claude CLI；需已登录
+max_turns = 30
+timeout_seconds = 600
+extra_args = []
+
+[static.codeql]
+enabled = true
+binary = "/home/xiao/App/codeql/codeql/codeql"
+timeout_seconds = 1200
+extra_args = []
+
+[fusion]
+enabled = true
+require_confirmed_by = 1
+boost_when_multiple_lines_agree = true
+agent_only_as_advisory = true
+line_proximity = 5
+rule_weight = 3
+taint_weight = 2
+agent_weight = 1
+codeql_weight = 4
+
+[report]
+output  = "docs/result/v5-perf-<timestamp>/<repo>"   # <timestamp> -> YYYYMMDD-HHMMSS, <repo> -> 仓库名
+formats = ["json", "markdown"]
+include_fused_results = true
+include_raw_rule_results = true
+include_raw_taint_results = true
+include_raw_agent_results = true
+include_raw_codeql_results = true
+include_facts = false
+
+[logging]
+level = "info"
+format = "compact"
+ansi = true
+show_timestamps = true
+show_progress = true
+
+[logging.scopes]
+pipeline = "info"
+codeql = "debug"
+learning = "trace"
+
+# --- 20 个仓库（来自 benchmark/manifest.toml，path 相对 rust/ 运行目录） ---
+
+# ===== Python (10) =====
+
+[[batch.repo]]
+name = "servers-git-py"
+path = "../benchmark/corpus/servers-git-py"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/servers-git-py/src/git"]
+languages = ["python"]
+
+[[batch.repo]]
+name = "sqlite-mcp"
+path = "../benchmark/corpus/sqlite-mcp"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/sqlite-mcp"]
+languages = ["python"]
+
+[[batch.repo]]
+name = "kubectl-mcp-server"
+path = "../benchmark/corpus/kubectl-mcp-server"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/kubectl-mcp-server"]
+languages = ["python"]
+
+[[batch.repo]]
+name = "fastmcp"
+path = "../benchmark/corpus/fastmcp"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/fastmcp"]
+languages = ["python"]
+
+[[batch.repo]]
+name = "litellm"
+path = "../benchmark/corpus/litellm"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/litellm/litellm/proxy"]
+languages = ["python"]
+
+[[batch.repo]]
+name = "aws-api-mcp-server"
+path = "../benchmark/corpus/aws-api-mcp-server"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/aws-api-mcp-server"]
+languages = ["python"]
+
+[[batch.repo]]
+name = "python-sdk"
+path = "../benchmark/corpus/python-sdk"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/python-sdk"]
+languages = ["python"]
+
+[[batch.repo]]
+name = "servers-fetch-py"
+path = "../benchmark/corpus/servers-fetch-py"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/servers-fetch-py/src/fetch"]
+languages = ["python"]
+
+[[batch.repo]]
+name = "fastmcp-openapi"
+path = "../benchmark/corpus/fastmcp-openapi"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/fastmcp-openapi/src/fastmcp/utilities/openapi"]
+languages = ["python"]
+
+[[batch.repo]]
+name = "python-sdk-ghsa"
+path = "../benchmark/corpus/python-sdk-ghsa"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/python-sdk-ghsa"]
+languages = ["python"]
+
+# ===== TypeScript (4) =====
+
+[[batch.repo]]
+name = "servers-filesystem-ts"
+path = "../benchmark/corpus/servers-filesystem-ts"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/servers-filesystem-ts/src/filesystem"]
+languages = ["typescript"]
+
+[[batch.repo]]
+name = "inspector"
+path = "../benchmark/corpus/inspector"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/inspector"]
+languages = ["typescript"]
+
+[[batch.repo]]
+name = "mcp-remote"
+path = "../benchmark/corpus/mcp-remote"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/mcp-remote"]
+languages = ["typescript"]
+
+[[batch.repo]]
+name = "figma-context-mcp"
+path = "../benchmark/corpus/figma-context-mcp"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/figma-context-mcp"]
+languages = ["typescript"]
+
+# ===== JavaScript (2) =====
+
+[[batch.repo]]
+name = "serverless-mcp"
+path = "../benchmark/corpus/serverless-mcp"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/serverless-mcp/packages/mcp"]
+languages = ["javascript"]
+
+[[batch.repo]]
+name = "vulnerable-mcp-servers-lab"
+path = "../benchmark/corpus/vulnerable-mcp-servers-lab"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/vulnerable-mcp-servers-lab/vulnerable-mcp-server-malicious-code-exec"]
+languages = ["javascript"]
+
+# ===== Rust (4) =====
+
+[[batch.repo]]
+name = "rust-sdk"
+path = "../benchmark/corpus/rust-sdk"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/rust-sdk"]
+languages = ["rust"]
+
+[[batch.repo]]
+name = "ruvector"
+path = "../benchmark/corpus/ruvector"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/ruvector"]
+languages = ["rust"]
+
+[[batch.repo]]
+name = "nucleus"
+path = "../benchmark/corpus/nucleus"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/nucleus"]
+languages = ["rust"]
+
+[[batch.repo]]
+name = "frigg"
+path = "../benchmark/corpus/frigg"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/frigg"]
+languages = ["rust"]

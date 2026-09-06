@@ -1,0 +1,9 @@
+[[sinks]]
+language = "python"
+category = "file_write"
+severity = "medium"
+confidence = "high"
+reason = "staged sink: file_write (evidence: wb.save(filepath))"
+patterns = ["openpyxl.workbook.workbook.Workbook.save"]
+source = "learned"
+learned_from = "scan-___test-targets_excel-mcp-server-1787372766/claude"

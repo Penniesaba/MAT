@@ -1,0 +1,6 @@
+[[sources]]
+language = "python"
+category = "prompt_injection"
+patterns = ["mcp.server.fastmcp.FastMCP.tool"]
+source = "learned"
+learned_from = "scan-___test-targets_excel-mcp-server-1787546132/claude"

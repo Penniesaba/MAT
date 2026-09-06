@@ -1,0 +1,9 @@
+[[sinks]]
+language = "python"
+category = "file_read"
+severity = "medium"
+confidence = "low"
+reason = "learned sink: file_read (evidence: wb = load_workbook(filepath, read_only=False))"
+patterns = ["openpyxl.load_workbook"]
+source = "learned"
+learned_from = "scan/agent"
