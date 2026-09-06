@@ -30,6 +30,8 @@ pub enum AnalysisEvent {
         duration_ms: u64,
         risk_level: Option<String>,
         fused_finding_count: Option<usize>,
+        /// Human-readable failure reason, set when `status` is `Failed`.
+        error: Option<String>,
     },
     StageProgress {
         repo: String,

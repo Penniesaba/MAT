@@ -21,7 +21,7 @@ pub struct ActiveRun {
 /// per-run `current_thread` runtime inside `spawn_blocking`.
 pub fn start_batch(manager: RunManager, batch: BatchConfig) -> ActiveRun {
     let mgr = manager.clone();
-    let cancel = manager.cancel_token();
+    let cancel = manager.fresh_cancel_token();
     let handle = tokio::task::spawn_blocking(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -49,7 +49,7 @@ pub fn start_batch(manager: RunManager, batch: BatchConfig) -> ActiveRun {
 /// Start a single-repo run (target = `config.scan.targets`).
 pub fn start_single(manager: RunManager, config: RuntimeConfig) -> ActiveRun {
     let mgr = manager.clone();
-    let cancel = manager.cancel_token();
+    let cancel = manager.fresh_cancel_token();
     let handle = tokio::task::spawn_blocking(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -88,13 +88,15 @@ pub fn start_single(manager: RunManager, config: RuntimeConfig) -> ActiveRun {
                     duration_ms,
                     risk_level: Some(res.summary.risk_level.clone()),
                     fused_finding_count: Some(res.summary.fused_finding_count),
+                    error: None,
                 }),
-                Err(_) => events.emit(AnalysisEvent::RepoFinished {
+                Err(e) => events.emit(AnalysisEvent::RepoFinished {
                     repo: "single".into(),
                     status: RepoStatus::Failed,
                     duration_ms,
                     risk_level: None,
                     fused_finding_count: None,
+                    error: Some(format!("{e:#}")),
                 }),
             }
             // Close the event channel before awaiting the forwarder: unlike

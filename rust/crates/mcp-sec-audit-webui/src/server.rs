@@ -44,6 +44,9 @@ pub fn build_router(manager: RunManager) -> Router {
 
     Router::new()
         .route("/", get(index))
+        .route("/config", get(config_page))
+        .route("/repos", get(repos_page))
+        .route("/about", get(about_page))
         .route("/static/app.css", get(app_css))
         .route("/static/app.js", get(app_js))
         .route("/api/config", get(get_config).put(put_config))
@@ -57,6 +60,18 @@ pub fn build_router(manager: RunManager) -> Router {
 
 async fn index() -> Html<&'static str> {
     Html(include_str!("../static/index.html"))
+}
+
+async fn config_page() -> Html<&'static str> {
+    Html(include_str!("../static/config.html"))
+}
+
+async fn repos_page() -> Html<&'static str> {
+    Html(include_str!("../static/repos.html"))
+}
+
+async fn about_page() -> Html<&'static str> {
+    Html(include_str!("../static/about.html"))
 }
 
 async fn app_css() -> impl IntoResponse {

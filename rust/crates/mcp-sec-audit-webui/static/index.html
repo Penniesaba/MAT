@@ -1,46 +1,99 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="zh-CN">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>mcp-sec-audit</title>
-  <link rel="stylesheet" href="/static/app.css" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>document.documentElement.dataset.theme=localStorage.getItem("theme")||"dark";</script>
+<title>mcp-sec-audit · 日志</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css?family=Google+Sans+Text:400,500,700,400i,500i,700i|Google+Sans:400,500|Google+Sans+Display:400,500|Google+Sans+Mono:400,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
 </head>
-<body>
-  <header>
-    <h1>mcp-sec-audit</h1>
-    <p class="sub">configure &middot; run &middot; monitor</p>
-  </header>
+<body data-page="monitor">
 
-  <main>
-    <section id="config">
-      <div class="row">
-        <h2>Configuration</h2>
-        <button id="import-btn">Import TOML</button>
-        <button id="export-btn">Export TOML</button>
-        <button id="run-btn" class="primary">Run</button>
+<header class="topbar">
+  <a class="brand" href="/">
+    <span class="brand-mark">mcp-sec-audit</span>
+    <span class="brand-version">v6.0</span>
+  </a>
+  <nav class="mainnav" aria-label="主导航">
+    <a href="/" data-page="monitor">日志</a>
+    <a href="/config" data-page="config">配置</a>
+    <a href="/repos" data-page="repos">仓库</a>
+    <a href="/about" data-page="about">关于</a>
+  </nav>
+  <div class="topbar-status">
+    <span class="status-dot" id="status-dot"></span>
+    <span id="status-label">未连接</span>
+  </div>
+  <button class="theme-toggle" id="theme-toggle" aria-label="切换日夜模式" title="切换日夜模式">
+    <svg class="ico ico-sun" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="currentColor"/><g stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/></g></svg>
+    <svg class="ico ico-moon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 9.2A5.5 5.5 0 1 1 6.8 2.5a4.5 4.5 0 0 0 6.7 6.7z" fill="currentColor"/></svg>
+  </button>
+</header>
+
+<main class="page">
+  <div class="page-inner">
+
+    <div class="pagehead">
+      <div>
+        <div class="pagehead-kicker">运行监控</div>
+        <h1>实时监控</h1>
+        <p class="pagehead-sub">批量并行分析各仓库的静态扫描进度，点击任意进度行查看该仓库的分层运行日志。</p>
       </div>
-      <textarea id="toml" spellcheck="false" placeholder="paste TOML or import a file"></textarea>
-      <div id="config-error" class="error" hidden></div>
-      <input id="file" type="file" accept=".toml" hidden />
-    </section>
+    </div>
 
-    <section id="monitor">
-      <h2>Repositories</h2>
-      <div id="repos" class="repos"></div>
-    </section>
-  </main>
-
-  <div id="modal" class="modal" hidden>
-    <div class="modal-box">
-      <div class="modal-head">
-        <span id="modal-title">repo</span>
-        <button id="modal-close">&times;</button>
+    <div class="runbar" id="runbar">
+      <div class="runbar-meta">
+        <span>状态 <b id="runbar-live">空闲</b></span>
+        <span>进度 <b id="runbar-done">0 / 0</b></span>
+        <span>批次 <b id="runbar-batch">无</b></span>
       </div>
-      <pre id="modal-logs" class="logs"></pre>
+      <div class="runbar-actions">
+        <button class="btn btn-primary" id="btn-run">
+          <svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5-9-5.5z" fill="currentColor"/></svg>
+          启动分析
+        </button>
+        <button class="btn btn-danger" id="btn-cancel" disabled>
+          <svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" fill="currentColor"/></svg>
+          取消运行
+        </button>
+      </div>
+    </div>
+
+    <div class="repo-list" id="repo-list">
+      <div class="empty">
+        <div class="empty-title">暂无运行</div>
+        在配置页启动分析后，这里会实时显示各仓库进度。<br>
+        <span class="demo-note">去「配置」页填写或导入 TOML，然后点击「启动运行」。</span>
+      </div>
+    </div>
+
+    <div class="batch-summary" id="batch-summary"></div>
+
+  </div>
+</main>
+
+<!-- 日志弹窗：宽 = 页面 1/3，高 = 页面 4/5，居中 -->
+<div class="modal-backdrop" id="modal-backdrop" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-head">
+      <span class="modal-title" id="modal-title">仓库</span>
+      <span class="modal-stage" id="modal-stage">等待中</span>
+      <button class="modal-close" id="modal-close" aria-label="关闭">
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" id="modal-body" tabindex="0"></div>
+    <div class="modal-foot">
+      <span>实时日志</span>
+      <div class="pbar" id="modal-pbar"><div class="pbar-fill" style="width:0%"></div></div>
+      <button class="follow-toggle is-on" id="modal-follow">跟随</button>
     </div>
   </div>
+</div>
 
-  <script src="/static/app.js"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>

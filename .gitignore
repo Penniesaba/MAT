@@ -38,3 +38,10 @@ rust/models/
 # Benchmark corpus (SSH-cloned) and results (generated)
 benchmark/corpus/
 benchmark/bench_results/
+
+# WebUI / batch run artifacts and design scratch (generated)
+rust/report.json
+rust/report.md
+rust/docs/result/
+WebGL-Experience.zip
+assets/

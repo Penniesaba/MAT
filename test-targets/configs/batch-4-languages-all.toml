@@ -1,0 +1,134 @@
+# v6.0 批量静态分析 —— 4 语言各选一个仓库，全功能开启
+#
+# 仓库集：benchmark/manifest.toml 的 4 个已知漏洞 MCP 仓库，每语言一个：
+#   python     -> fastmcp        (CVE-2025-64340)
+#   typescript -> inspector      (CVE-2025-49596)
+#   javascript -> serverless-mcp (CVE-2025-69256)
+#   rust       -> rust-sdk       (RUSTSEC-2026-0189)
+#   corpus 已 clone 在 ../benchmark/corpus/<slug>/，每个仓库锁定漏洞 commit。
+#
+# 分析范围：全开 —— rule + taint + codeql + agent + fusion + dynamic，learning_bus 开。
+# 协同：learning_bus = true（跨仓库共享学习总线，后启动仓库吃到先完成仓库成果）。
+#
+# 运行方式（在 rust/ 目录下执行）：
+#   cargo run -- batch ../test-targets/configs/batch-4-languages-all.toml
+#
+# 前置条件：
+#   - 先 clone 语料库：在仓库根目录执行 `bash benchmark/fetch.sh`（SSH 拉取并 checkout 漏洞 commit）
+#   - codeql 二进制存在（见 [static.codeql].binary，已指向 /home/xiao/App/codeql/codeql/codeql）
+#   - agent provider "claude" 调用 PATH 上的 `claude` CLI 子进程，需已登录可用
+#   - dynamic 需要 Docker 沙箱 + eBPF；若无环境可把 [dynamic].enabled 改为 false
+
+[batch]
+max_parallel = 4              # 4 个仓库全部并行（也可调 1/2 观察差异）
+learning_bus = true           # 共享学习总线（跨仓库学习）
+fail_fast    = false          # 单个仓库失败不中止整批
+
+[batch.limits]
+codeql = 1                    # 并发 CodeQL CLI 进程数（内存敏感）
+agent  = 1                    # 并发 agent（LLM）进程数（限流敏感）
+cpu    = 4                    # 并发 CPU 密集阶段（rule/taint/fusion/fact）
+
+# --- 共享基座（与单仓库 config 语法一致；每个 [[batch.repo]] 可覆盖） ---
+
+[scan]
+languages = ["python", "javascript", "typescript", "rust"]
+exclude   = ["__pycache__", ".venv", ".mypy_cache", "node_modules", "target", ".git"]
+
+[static]
+enabled     = true
+save_facts  = true
+learned_dir = "models/learned"   # agent 跨仓学习落盘目录（learning_bus=true 需要）
+
+[static.rule]
+enabled    = true
+rule_paths = ["rules/mcp", "rules/languages"]
+
+[static.taint]
+enabled             = true
+forward             = true
+backward            = true
+max_depth           = 8
+entrypoint_required = false
+
+[static.agent]
+enabled      = true               # 每个候选 finding 走一轮 LLM 语义复核
+provider     = "claude"           # 调用 PATH 上的 claude CLI；需已登录
+max_turns    = 30
+timeout_seconds = 600
+extra_args   = []
+
+[static.codeql]
+enabled         = true
+binary          = "/home/xiao/App/codeql/codeql/codeql"
+timeout_seconds = 1200
+extra_args      = []
+
+[dynamic]
+enabled         = true            # Docker 沙箱 + eBPF 系统调用监控；无环境则改 false
+sandbox         = "existing_python_runtime"
+timeout_seconds = 120
+
+[fusion]
+enabled                        = true
+require_confirmed_by           = 1
+boost_when_multiple_lines_agree = true
+agent_only_as_advisory         = true
+line_proximity                 = 5
+rule_weight                    = 3
+taint_weight                   = 2
+agent_weight                   = 1
+codeql_weight                  = 4
+
+[report]
+output  = "docs/result/v6-4lang-<timestamp>/<repo>"   # <timestamp> -> YYYYMMDD-HHMMSS, <repo> -> 仓库名
+formats = ["json", "markdown"]
+include_fused_results      = true
+include_raw_rule_results   = true
+include_raw_taint_results  = true
+include_raw_agent_results  = true
+include_raw_codeql_results = true
+include_facts              = true
+
+[logging]
+level            = "info"
+format           = "compact"
+ansi             = true
+show_timestamps  = true
+show_progress    = true
+# log_file = "logs/batch-4lang.log"
+
+[logging.scopes]
+codeql   = "debug"
+pipeline = "info"
+learning = "trace"
+
+# --- 仓库列表：每语言一个 ---
+
+[[batch.repo]]
+name = "fastmcp"
+path = "../benchmark/corpus/fastmcp"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/fastmcp"]
+
+[[batch.repo]]
+name = "inspector"
+path = "../benchmark/corpus/inspector"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/inspector"]
+
+[[batch.repo]]
+name = "serverless-mcp"
+path = "../benchmark/corpus/serverless-mcp"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/serverless-mcp/packages/mcp"]
+
+[[batch.repo]]
+name = "rust-sdk"
+path = "../benchmark/corpus/rust-sdk"
+
+[batch.repo.scan]
+targets = ["../benchmark/corpus/rust-sdk"]

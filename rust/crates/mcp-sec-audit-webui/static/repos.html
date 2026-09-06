@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>document.documentElement.dataset.theme=localStorage.getItem("theme")||"dark";</script>
+<title>mcp-sec-audit · 仓库</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css?family=Google+Sans+Text:400,500,700,400i,500i,700i|Google+Sans:400,500|Google+Sans+Display:400,500|Google+Sans+Mono:400,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body data-page="repos">
+
+<header class="topbar">
+  <a class="brand" href="/">
+    <span class="brand-mark">mcp-sec-audit</span>
+    <span class="brand-version">v6.0</span>
+  </a>
+  <nav class="mainnav" aria-label="主导航">
+    <a href="/" data-page="monitor">日志</a>
+    <a href="/config" data-page="config">配置</a>
+    <a href="/repos" data-page="repos">仓库</a>
+    <a href="/about" data-page="about">关于</a>
+  </nav>
+  <div class="topbar-status">
+    <span class="status-dot" id="status-dot"></span>
+    <span id="status-label">仓库</span>
+  </div>
+  <button class="theme-toggle" id="theme-toggle" aria-label="切换日夜模式" title="切换日夜模式">
+    <svg class="ico ico-sun" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="currentColor"/><g stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/></g></svg>
+    <svg class="ico ico-moon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 9.2A5.5 5.5 0 1 1 6.8 2.5a4.5 4.5 0 0 0 6.7 6.7z" fill="currentColor"/></svg>
+  </button>
+</header>
+
+<main class="page">
+  <div class="page-inner">
+
+    <div class="pagehead">
+      <div>
+        <div class="pagehead-kicker">仓库管理</div>
+        <h1>本地仓库</h1>
+        <p class="pagehead-sub">登记本地代码库路径，查看拉取状态与语言，并在此拉取、发起分析或移除仓库。</p>
+      </div>
+    </div>
+
+    <div class="repo-toolbar">
+      <span class="count" id="repo-count">0 个仓库</span>
+      <div class="spacer"></div>
+      <button class="btn btn-ghost" id="btn-pull-all">拉取全部</button>
+      <button class="btn btn-primary" id="btn-add-repo">
+        <svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+        添加仓库
+      </button>
+    </div>
+
+    <div id="add-repo-form" hidden style="border:1px solid var(--border-strong);padding:16px;margin-bottom:20px;background:var(--surface)">
+      <div class="form-grid" style="gap:12px">
+        <div class="field">
+          <label for="new-repo-name">仓库名</label>
+          <input class="input" id="new-repo-name" placeholder="例如 fastapi">
+        </div>
+        <div class="field">
+          <label for="new-repo-path">本地路径</label>
+          <input class="input" id="new-repo-path" placeholder="例如 ~/repos/fastapi">
+        </div>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:10px">
+        <button class="btn btn-primary btn-sm" id="add-repo-submit">确认添加</button>
+        <button class="btn btn-ghost btn-sm" id="add-repo-cancel">取消</button>
+      </div>
+    </div>
+
+    <table class="repo-table">
+      <thead>
+        <tr>
+          <th>仓库名</th>
+          <th>本地路径</th>
+          <th>语言</th>
+          <th>状态</th>
+          <th style="text-align:right">操作</th>
+        </tr>
+      </thead>
+      <tbody id="repo-table-body"></tbody>
+    </table>
+
+  </div>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

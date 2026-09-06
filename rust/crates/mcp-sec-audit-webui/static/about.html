@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>document.documentElement.dataset.theme=localStorage.getItem("theme")||"dark";</script>
+<title>mcp-sec-audit · 关于</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css?family=Google+Sans+Text:400,500,700,400i,500i,700i|Google+Sans:400,500|Google+Sans+Display:400,500|Google+Sans+Mono:400,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body data-page="about">
+
+<header class="topbar">
+  <a class="brand" href="/">
+    <span class="brand-mark">mcp-sec-audit</span>
+    <span class="brand-version">v6.0</span>
+  </a>
+  <nav class="mainnav" aria-label="主导航">
+    <a href="/" data-page="monitor">日志</a>
+    <a href="/config" data-page="config">配置</a>
+    <a href="/repos" data-page="repos">仓库</a>
+    <a href="/about" data-page="about">关于</a>
+  </nav>
+  <div class="topbar-status">
+    <span class="status-dot" id="status-dot"></span>
+    <span id="status-label">关于</span>
+  </div>
+  <button class="theme-toggle" id="theme-toggle" aria-label="切换日夜模式" title="切换日夜模式">
+    <svg class="ico ico-sun" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="currentColor"/><g stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/></g></svg>
+    <svg class="ico ico-moon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 9.2A5.5 5.5 0 1 1 6.8 2.5a4.5 4.5 0 0 0 6.7 6.7z" fill="currentColor"/></svg>
+  </button>
+</header>
+
+<main class="page">
+<div class="page-inner about-inner">
+
+  <section class="about-hero">
+    <div class="kicker">mcp-sec-audit</div>
+    <h1>把 MCP 服务器安全审计，从命令行带到桌面。</h1>
+    <p class="lede">一个配置、运行、监控三位一体的 Web 控制台。静态与动态混合分析，规则、污点、CodeQL、Agent 四条线融合打分，产出可复核的 fused findings。</p>
+    <div style="margin-top:40px">
+      <a class="btn btn-primary" href="/config">开始使用</a>
+    </div>
+  </section>
+
+  <section class="about-section">
+    <h2>它是什么</h2>
+    <p class="sec-desc">mcp-sec-audit 是面向 MCP（Model Context Protocol）服务器的安全审计工具。它把「纯 CLI + 冗余日志」升级为「配置 → 运行 → 监控」的可视化工作流，CLI 与 Web 并行共存，不取代后者。</p>
+    <div class="cap-list">
+      <div class="cap-item">
+        <h3>静态分析</h3>
+        <p>多语言事实提取（Python AST、JS/TS tree-sitter、Rust），构建调用图，从 sink 反向 BFS 做轻量污点分析，再经规则匹配、CodeQL 与 Agent 语义分析。</p>
+      </div>
+      <div class="cap-item">
+        <h3>动态分析</h3>
+        <p>Docker 沙箱加 eBPF 系统调用监控，捕获运行时行为作为静态分析的补充。v6 沿用开关，不在前端控制。</p>
+      </div>
+      <div class="cap-item">
+        <h3>相关性融合</h3>
+        <p>四条分析线（rule / taint / codeql / agent）结果融合打分，多线一致时加权，最终产出融合后的 findings 与风险定级。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="about-section">
+    <h2>四条分析线</h2>
+    <p class="sec-desc">每条线回答不同的问题，融合后互为印证。</p>
+    <div class="cap-list">
+      <div class="cap-item">
+        <h3>规则引擎</h3>
+        <p>确定性模式匹配，覆盖 MCP 与多语言规则目录，速度快、结果可审计。</p>
+      </div>
+      <div class="cap-item">
+        <h3>污点分析</h3>
+        <p>从 sink 反向 BFS 的轻量污点传播，追踪不可信数据到达危险汇点的路径。</p>
+      </div>
+      <div class="cap-item">
+        <h3>CodeQL</h3>
+        <p>数据库驱动的语义查询，覆盖跨文件数据流，适合深层的代码模式缺陷。</p>
+      </div>
+      <div class="cap-item">
+        <h3>Agent 语义分析</h3>
+        <p>用 LLM 复核候选 findings，结合上下文做语义判断，降低误报。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="about-section">
+    <h2>分析管线</h2>
+    <p class="sec-desc">每个仓库走一遍「两阶段 × 两线」的结构，进度条粒度由此而来。</p>
+    <div class="pipeline">
+      <div class="pipeline-row">
+        <div class="pipeline-stage">Setup</div>
+        <div class="pipeline-steps">
+          <span class="pipeline-step">Discover</span><span class="pipeline-arrow">→</span>
+          <span class="pipeline-step">LoadRulebook</span><span class="pipeline-arrow">→</span>
+          <span class="pipeline-step">LoadCatalog</span><span class="pipeline-arrow">→</span>
+          <span class="pipeline-step">BaselineComponents</span>
+        </div>
+      </div>
+      <div class="pipeline-row">
+        <div class="pipeline-stage">Phase 1</div>
+        <div class="pipeline-steps">
+          <span class="pipeline-step">Rule</span><span class="pipeline-arrow">→</span>
+          <span class="pipeline-step">Taint</span><span class="pipeline-arrow">→</span>
+          <span class="pipeline-step">CodeQL</span><span class="pipeline-arrow">→</span>
+          <span class="pipeline-step">Agent</span>
+        </div>
+      </div>
+      <div class="pipeline-row">
+        <div class="pipeline-stage">Evolution</div>
+        <div class="pipeline-steps">
+          <span class="pipeline-step">GateG1G2</span><span class="pipeline-arrow">→</span>
+          <span class="pipeline-step">StageG3</span><span class="pipeline-arrow">→</span>
+          <span class="pipeline-step">Diff1</span>
+        </div>
+      </div>
+      <div class="pipeline-row">
+        <div class="pipeline-stage">Phase 2</div>
+        <div class="pipeline-steps">
+          <span class="pipeline-step">Taint₂</span><span class="pipeline-arrow">→</span>
+          <span class="pipeline-step">CodeQL₂</span><span class="pipeline-arrow">→</span>
+          <span class="pipeline-step">Agent₂</span>
+          <span class="pipeline-arrow">←</span><span class="pipeline-step">rule 复用不重跑</span>
+        </div>
+      </div>
+      <div class="pipeline-row">
+        <div class="pipeline-stage">Validation</div>
+        <div class="pipeline-steps">
+          <span class="pipeline-step">Diff2</span><span class="pipeline-arrow">→</span>
+          <span class="pipeline-step">Migrate</span><span class="pipeline-arrow">→</span>
+          <span class="pipeline-step">Explain</span><span class="pipeline-arrow">→</span>
+          <span class="pipeline-step">Adjudicate</span><span class="pipeline-arrow">→</span>
+          <span class="pipeline-step">Promote</span>
+        </div>
+      </div>
+      <div class="pipeline-row">
+        <div class="pipeline-stage">Finish</div>
+        <div class="pipeline-steps">
+          <span class="pipeline-step">Fusion</span><span class="pipeline-arrow">→</span>
+          <span class="pipeline-step is-hot">Partition</span><span class="pipeline-arrow">→</span>
+          <span class="pipeline-step is-hot">Report</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="about-section">
+    <h2>为什么用 Web 版</h2>
+    <p class="sec-desc">把运维动作可视化，而不是盯着终端里滚动的日志。</p>
+    <div class="cap-list">
+      <div class="cap-item">
+        <h3>配置 → 运行 → 监控</h3>
+        <p>页面上填好配置（或导入现成 TOML），一键启动批量或单仓库分析，实时查看每个仓库的进度与分层日志。</p>
+      </div>
+      <div class="cap-item">
+        <h3>批量并行</h3>
+        <p>一次并行分析多个仓库，进度条纵向排列，点开任意一个即可看到它的运行细节。</p>
+      </div>
+      <div class="cap-item">
+        <h3>本地运行</h3>
+        <p>Web 进程内调用 core，不 spawn CLI 子进程、不解析 stdout，结构化事件经 WebSocket 推送。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="about-foot">
+    <h2>给工程团队一个看得见的安全审计工作台。</h2>
+    <p>从配置到运行到监控，全程在一个界面完成。</p>
+    <a class="btn" href="/config">开始配置</a>
+  </section>
+
+</div>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

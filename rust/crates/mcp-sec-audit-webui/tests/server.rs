@@ -17,6 +17,19 @@ async fn index_serves_html() {
 }
 
 #[tokio::test]
+async fn page_routes_serve_html() {
+    let app = mcp_sec_audit_webui::server::build_router(RunManager::new());
+    for uri in ["/config", "/repos", "/about"] {
+        let resp = app
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "route {uri} should serve HTML");
+    }
+}
+
+#[tokio::test]
 async fn import_valid_config_returns_ok() {
     let app = mcp_sec_audit_webui::server::build_router(RunManager::new());
     let body = "[scan]\ntargets = [\"src\"]\n";

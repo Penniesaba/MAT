@@ -68,7 +68,7 @@ pub struct RunSnapshot {
 #[derive(Clone)]
 pub struct RunManager {
     tx: broadcast::Sender<AnalysisEvent>,
-    cancel: CancellationToken,
+    cancel: std::sync::Arc<std::sync::Mutex<CancellationToken>>,
     state: std::sync::Arc<std::sync::Mutex<ManagerState>>,
 }
 
@@ -84,7 +84,7 @@ impl RunManager {
         let (tx, _) = broadcast::channel(256);
         Self {
             tx,
-            cancel: CancellationToken::new(),
+            cancel: std::sync::Arc::new(std::sync::Mutex::new(CancellationToken::new())),
             state: std::sync::Arc::new(std::sync::Mutex::new(ManagerState {
                 batch_id: None,
                 repos: BTreeMap::new(),
@@ -95,7 +95,17 @@ impl RunManager {
     }
 
     pub fn cancel_token(&self) -> CancellationToken {
-        self.cancel.clone()
+        self.cancel.lock().expect("cancel mutex").clone()
+    }
+
+    /// Swaps in a fresh cancellation token and returns it. Each run calls this
+    /// so a previous run's cancellation never leaks into the next run (a
+    /// `CancellationToken` cannot be un-cancelled).
+    pub fn fresh_cancel_token(&self) -> CancellationToken {
+        let mut guard = self.cancel.lock().expect("cancel mutex");
+        let fresh = CancellationToken::new();
+        *guard = fresh.clone();
+        fresh
     }
 
     /// A receiver that yields future events (for live WS forwarding).
@@ -128,11 +138,12 @@ impl RunManager {
                 p.stage = Some(stage.clone());
                 p.percent = *percent;
             }
-            AnalysisEvent::RepoFinished { repo, status, duration_ms: _, risk_level, fused_finding_count } => {
+            AnalysisEvent::RepoFinished { repo, status, duration_ms: _, risk_level, fused_finding_count, error } => {
                 let p = state.repos.entry(repo.clone()).or_default();
                 p.status = Some(*status);
                 p.risk_level = risk_level.clone();
                 p.finding_count = *fused_finding_count;
+                p.error = error.clone();
             }
             AnalysisEvent::Log { repo, level, line } => {
                 let buf = state.logs.entry(repo.clone()).or_insert_with(|| RingBuffer::new(500));
@@ -233,6 +244,7 @@ mod tests {
             duration_ms: 42,
             risk_level: Some("low".into()),
             fused_finding_count: Some(0),
+            error: None,
         });
         assert_eq!(
             mgr.snapshot().repos["a"].status,

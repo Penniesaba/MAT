@@ -472,6 +472,7 @@ fn repo_finished_event(repo: &str, outcome: &RepoOutcome) -> AnalysisEvent {
         duration_ms: outcome.duration_ms,
         risk_level: outcome.risk_level.clone(),
         fused_finding_count: outcome.fused_finding_count,
+        error: outcome.error.clone(),
     }
 }
 
@@ -494,6 +495,9 @@ fn write_repo_reports(
     }
 
     let output = resolve_output_path(&report.output, Some(repo_name));
+    // The output template commonly lands in a not-yet-existing directory
+    // (`docs/result/<timestamp>/<repo>`), so create the parents first.
+    ensure_parent_dir(&output)?;
     let mut written = Vec::new();
     for fmt in &report.formats {
         let Some(format) = ReportFormat::parse(fmt) else {
@@ -519,12 +523,25 @@ fn write_repo_reports(
 /// `batch-summary`.
 fn write_batch_summary(summary: &BatchSummary, report: &ReportConfig) -> Result<()> {
     let base = resolve_output_path(&report.output, Some("batch-summary"));
+    ensure_parent_dir(&base)?;
     let markdown_path = PathBuf::from(format!("{base}.md"));
     let json_path = PathBuf::from(format!("{base}.json"));
     std::fs::write(&markdown_path, render_batch_summary_markdown(summary))
         .with_context(|| format!("write batch summary to {}", markdown_path.display()))?;
     std::fs::write(&json_path, render_batch_summary_json(summary)?)
         .with_context(|| format!("write batch summary to {}", json_path.display()))?;
+    Ok(())
+}
+
+/// Creates the parent directory of an output path (best-effort: a missing
+/// parent only matters when the path actually has one).
+fn ensure_parent_dir(output: &str) -> Result<()> {
+    if let Some(parent) = std::path::Path::new(output).parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create report dir {}", parent.display()))?;
+    }
     Ok(())
 }
 
